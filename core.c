@@ -6,7 +6,14 @@
 #include <stdint.h>
 #include <assert.h>
 #include <math.h>
+
+#define JULEN_LOCAL 1
+#if JULEN_LOCAL
+#include <linux/time.h>
+#else
 #include <time.h>
+#endif
+
 #include <limits.h>
 #include <stdbool.h>
 
@@ -15,7 +22,7 @@
 #include "perf_hash.h"
 
 // Buffer size for row-string conversion, enough for INT_MAX digits plus null terminator
-#define ROW_STR_SIZE (snprintf(NULL, 0, "%d", INT_MAX) + 1)  
+#define ROW_STR_SIZE (snprintf(NULL, 0, "%d", INT_MAX) + 1)
 
 // Global dictionary mapping variables in the csv file to their indices during parsing
 Dictionary *var_dict;  
@@ -258,7 +265,7 @@ void print_mat_line(int *row, int m){
     printf("]\n");
 }
 
-
+// NOTE: not used
 /**
  * @brief Compares two MGU matrices for equality
  * @param my_mgu     Pointer to first matrix array of size n*m
@@ -400,6 +407,7 @@ int read_num_blocks(FILE *stream, unsigned *s) {
     char *line = NULL;
     size_t len = 0;
 
+    // TODO: in these cases, 1 should be returned, no?
     if (getline(&line, &len, stream) == -1) return 0; // Failed to read the line
     if (strstr(line, "BEGIN") == NULL) {free(line); return 0;} // Not the correct line
 
@@ -472,7 +480,7 @@ void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
  * Tokenizes input on commas/newlines. If token begins with uppercase letter, treats as variable:
  *   - If unseen, installs in var_dict with current column index, row[col]=0
  *   - If seen, row[col]= –(definition index)
- * If token begins lowercase/digit, looks up constant value in symbol table and writes s->value
+ * If token begins with lowercase/digit, looks up constant value in symbol table and writes s->value
  * Clears var_dict before iteration, because variables are independent from row to row
  */
 void read_line(char *line, int *row, bool skip_first) {
@@ -618,6 +626,8 @@ void read_operand_matrix(FILE *stream, operand_block *ob) {
             break;
         
         // Get first token, which tells the number of exception blocks
+        // NOTE: instead of duplicating the entire line, another possibility would be to call the other version
+        //  of strtok, decrement the pointer and restore the ','.
         char *line_copy = strdup(line);
         char *tok = strtok(line_copy, ",");
         unsigned e = (unsigned)strtoul(tok, NULL, 10);
@@ -650,7 +660,7 @@ void read_operand_matrix(FILE *stream, operand_block *ob) {
  * 
  * Reads header “% BEGIN: Matrix subset t1-t2 (r1-r2,c1-c2,c)”
  * Result matrix subsets that combine two lineal operand matrix subsets have one unique mapping common to all unified rows
- * For convenience, it is red once but copied to each result_block.main_term's struct. Not memory efficient, but makes treatment later homogeneous 
+ * For convenience, it is read once but copied to each result_block.main_term's struct. Not memory efficient, but makes treatment later homogeneous 
  */
 void read_result_matrix(FILE *stream, result_block *rb) {
     char *line = NULL;
@@ -678,6 +688,7 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     // Info for all possible main terms from the unification of M1 block (r1) and M2 block (r2)
     rb->r = rb->r1*rb->r2;
     rb->terms = (main_term*)malloc(rb->r * sizeof(main_term));
+    // NOTE: simply calloc for valid
     rb->valid = (unsigned*) malloc(rb->r * sizeof(unsigned));
     for (size_t aux = 0; aux < rb->r; aux++)
     {
@@ -752,9 +763,11 @@ void read_result_matrix(FILE *stream, result_block *rb) {
 
         // Initialize the exception blocks
         rb->terms[row] = create_empty_main_term(rb->c,e);
+        // NOTE: rb-valid[row] == 0 always, no? Assert...
         if (rb->valid[row]!=1) rb->valid[row] = 0;
 
         // Get a pointer to the main term for easier working
+        // NOTE: this could come before previous two lines
         main_term *mt = &(rb->terms[row]);
 
         // Read the rest of the line
@@ -767,8 +780,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         if (e) read_exception_blocks(stream, mt, true);
 
         // Add mapping to main_term only if the result_block is not formed between two lineal matrix subset operands, so mgu_schema cannot be reused
-        if (rb->lineal_lineal) {
-            mt->ms = NULL;
+        if (rb->lineal_lineal) { // NOTE: potential non-initialization, no? Only set to true before, but it isn't 0 (False) initialized
+            mt->ms = NULL; // NOTE: this should be NULL initialized, no? Assert...
         } else {
             mt->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
         }
@@ -885,7 +898,7 @@ int unifier_a_b(int *row_a, const unsigned indexA, int *row_b, const unsigned in
     // A is constant
 	if (a>0 && b > 0 && a!=b) // B is constant too and they don't match
 		return 1;
-	else if (a>0 && b <= 0)   // B is constant, add to unifier (b<-a)
+	else if (a>0 && b <= 0)   // B is constant, add to unifier (b<-a) // NOTE: B variable
     {
         unifier[1+indexUnifier]   = indexB + m1;
         unifier[1+indexUnifier+1] = indexA; 
@@ -913,7 +926,7 @@ int unifier_a_b(int *row_a, const unsigned indexA, int *row_b, const unsigned in
  */
 int unifier_rows(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *unifier){
     const unsigned m = ms->n_common;
-    for (unsigned i = 0; i < m; i++)
+    for (unsigned i = 0; i < m; i++) // NOTE: increment by 2 instead of multiplying by 2, start at 1...
     {
         if (unifier_a_b(mt1->row, ms->common_L[i]-1, mt2->row, ms->common_R[i]-1, unifier, 2*i, mt1->c, ms->new_a, mt2->c)) return 1; // If it is not unifiable already, do not bother continuing
     }
@@ -950,7 +963,7 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
     }
 
     // For each element pair, get indexes and perform (x<-y)
-    for (i=0; i<2*m; i+=2)
+    for (i=0; i<2*m; i+=2)  // NOTE: i = 1, ...
     {
         unsigned x = unifier[1+i]; 
         unsigned y = unifier[1+i+1];
@@ -1224,14 +1237,14 @@ void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned
                     if (same_row && x>y) // in this case we interchange x and y
                     {
                         row_a[x] = -(y+1); 
-                        same_row=false;
+                        same_row=false; // NOTE: already done later?
                         snprintf(y_str, length, "%d", x);
                         install(unif_dict,y_str,y);
                     } 
                     else if (same_row)
                     {
                         row_a[y] = -(x+1);
-                        same_row=false;
+                        same_row=false; // NOTE: already done later?
                         install(unif_dict,y_str,x);
                     }
                     else install(unif_dict,y_str,x);
@@ -1401,7 +1414,7 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
     my_rb.t1 = 1;
     my_rb.t2 = 1;
     unsigned i, ind_A, ind_B;
-    for (i=0; i<my_rb.r; i++) my_rb.valid[i] = 2;
+    for (i=0; i<my_rb.r; i++) my_rb.valid[i] = 2; // NOTE: aren't they already set to 2?
     for (i=0; i<unif_count; i++)
     {
         ind_A = unifiers[i*unifier_size+unifier_size-2];

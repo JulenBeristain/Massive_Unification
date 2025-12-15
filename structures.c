@@ -320,6 +320,8 @@ mgu_schema* create_empty_mgu_schema(const unsigned n_common) {
     if (ms->common_L)       memset(ms->common_L,       0, n_common         * sizeof(unsigned));
     if (ms->common_R)       memset(ms->common_R,       0, n_common         * sizeof(unsigned));
     
+    // NOTE: ms->new_a/b not initialized to 0. It is done in create_mgu_from_mapping
+
     return ms;
 }
 
