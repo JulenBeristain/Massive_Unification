@@ -10,46 +10,6 @@
 /**
  * MurmurHash (https://en.wikipedia.org/wiki/MurmurHash)
  */
-/*
-static inline uint32_t murmur_32_scramble(uint32_t k) {
-    k *= 0xcc9e2d51;
-    k = (k << 15) | (k >> 17);
-    k *= 0x1b873593;
-    return k;
-}
-uint32_t murmur3_32(const uint8_t* key, size_t len, uint32_t seed) {
-	uint32_t h = seed;
-    uint32_t k;
-    // Read in groups of 4.
-    for (size_t i = len >> 2; i; i--) {
-        // Here is a source of differing results across endiannesses.
-        // A swap here has no effects on hash properties though.
-        memcpy(&k, key, sizeof(uint32_t));
-        key += sizeof(uint32_t);
-        h ^= murmur_32_scramble(k);
-        h = (h << 13) | (h >> 19);
-        h = h * 5 + 0xe6546b64;
-    }
-    // Read the rest.
-    k = 0;
-    for (size_t i = len & 3; i; i--) {
-        k <<= 8;
-        k |= key[i - 1];
-    }
-    // A swap is *not* necessary here because the preceding loop already
-    // places the low bytes in the low places according to whatever endianness
-    // we use. Swaps only apply when the memory is copied in a chunk.
-    h ^= murmur_32_scramble(k);
-    // Finalize.
-	h ^= len;
-	h ^= h >> 16;
-	h *= 0x85ebca6b;
-	h ^= h >> 13;
-	h *= 0xc2b2ae35;
-	h ^= h >> 16;
-	return h;
-}
-*/
 /* 
    NOTE:
 
@@ -121,6 +81,9 @@ static inline bool lookup_linked_list_variables(LinkedListVariablesNode *linked_
 // Creation and clearing
 // Because its only 16 Bytes, we pass and return it by value
 
+/**
+ * Precondition: num_buckets > 0 (if not, calloc undefined behavior)
+ */
 HashSetVariables create_hash_set_variables(uint32_t num_buckets) {
     HashSetVariables hs;
     hs.num_variables = 0;
@@ -170,6 +133,9 @@ static inline float load_factor(HashSetVariables hs) {
     return (float)hs.num_variables / (float)hs.num_buckets;
 }
 
+/**
+ * Precondition: hs->num_buckets > 0 (if not, calloc undefined behavior)
+ */
 static inline void resize_hash_set_variables(HashSetVariables *hs){
     uint32_t new_num_buckets = hs->num_buckets * 2;
     LinkedListVariablesNode **new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
@@ -195,12 +161,12 @@ static inline void resize_hash_set_variables(HashSetVariables *hs){
     //hs->num_variables remains equal
 }
 
-void insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
+SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
     uint32_t bucket_i = hash(v) % hs->num_buckets;
     LinkedListVariablesNode **linked_list_ptr = hs->listsVariables + bucket_i;
     
     if(lookup_linked_list_variables(*linked_list_ptr, v)){
-        return;
+        return SET_INSERT_ALREADY_CONTAINED;
     }
 
     insert_to_linked_list_variables_head(linked_list_ptr, v);
@@ -209,7 +175,32 @@ void insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
     static const float MAX_LOAD_FACTOR = 0.75f;
     if(load_factor(*hs) > MAX_LOAD_FACTOR){
         resize_hash_set_variables(hs);
+        return SET_INSERT_ADDED_RESIZING;
     }
+
+    return SET_INSERT_ADDED;
+}
+
+/**
+ * Version where we don't check if v is already in the dictionary, for cases where
+ * we already know it is the case.
+ * 
+ * NOTE: not used for now... Candidate to deletion...
+ */
+SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
+    uint32_t bucket_i = hash(v) % hs->num_buckets;
+    LinkedListVariablesNode **linked_list_ptr = hs->listsVariables + bucket_i;
+
+    insert_to_linked_list_variables_head(linked_list_ptr, v);
+    ++(hs->num_variables);
+
+    static const float MAX_LOAD_FACTOR = 0.75f;
+    if(load_factor(*hs) > MAX_LOAD_FACTOR){
+        resize_hash_set_variables(hs);
+        return SET_INSERT_ADDED_RESIZING;
+    }
+
+    return SET_INSERT_ADDED;
 }
 
 // Lookup

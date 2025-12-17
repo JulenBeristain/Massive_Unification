@@ -32,7 +32,8 @@ HashSetVariables create_hash_set_variables(uint32_t num_buckets);
 HashSetVariables create_hash_set_variables_defsize();
 void free_hash_set_variables(HashSetVariables hs);
 void clear_hash_set_variables(HashSetVariables hs);
-void insert_to_hash_set_variables(HashSetVariables *hs, Variable v);
+SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable v);
+SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs, Variable v);
 bool lookup_hash_set_variables(HashSetVariables hs, Variable v);
 void print_hash_set_variables(HashSetVariables hs);
 //
@@ -44,8 +45,17 @@ typedef HashSetVariables SetVariables;
 #define free_set free_hash_set_variables
 #define clear_set clear_hash_set_variables
 #define insert_to_set insert_to_hash_set_variables
+#define unchecked_insert_to_set unchecked_insert_to_hash_set_variables
 #define lookup_set lookup_hash_set_variables
 #define print_set print_hash_set_variables
+//
+
+// Operations return code types
+typedef enum SetInsertReturnCode { 
+    SET_INSERT_ADDED,
+    SET_INSERT_ADDED_RESIZING,
+    SET_INSERT_ALREADY_CONTAINED
+} SetInsertReturnCode;
 //
 
 #endif // SET_VARIABLES_H
