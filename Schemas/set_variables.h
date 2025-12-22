@@ -28,6 +28,15 @@ struct HashSetVariables {
     LinkedListVariablesNode **listsVariables;
 };
 
+// Operations return code types
+typedef enum SetInsertReturnCode SetInsertReturnCode;
+enum SetInsertReturnCode { 
+    SET_INSERT_ADDED,
+    SET_INSERT_ADDED_RESIZING,
+    SET_INSERT_ALREADY_CONTAINED
+};
+//
+
 HashSetVariables create_hash_set_variables(uint32_t num_buckets);
 HashSetVariables create_hash_set_variables_defsize();
 void free_hash_set_variables(HashSetVariables hs);
@@ -50,12 +59,5 @@ typedef HashSetVariables SetVariables;
 #define print_set print_hash_set_variables
 //
 
-// Operations return code types
-typedef enum SetInsertReturnCode { 
-    SET_INSERT_ADDED,
-    SET_INSERT_ADDED_RESIZING,
-    SET_INSERT_ALREADY_CONTAINED
-} SetInsertReturnCode;
-//
 
 #endif // SET_VARIABLES_H
