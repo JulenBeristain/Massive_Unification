@@ -82,7 +82,7 @@ static inline bool lookup_linked_list_variables(LinkedListVariablesNode *linked_
 // Because its only 16 Bytes, we pass and return it by value
 
 /**
- * Precondition: num_buckets > 0 (if not, calloc undefined behavior)
+ * Precondition: num_buckets > 0 (if not, calloc undefined behavior and resizing logic wouldn't work)
  */
 HashSetVariables create_hash_set_variables(uint32_t num_buckets) {
     HashSetVariables hs;
@@ -134,8 +134,10 @@ static inline float load_factor(HashSetVariables hs) {
 }
 
 /**
- * Precondition: hs->num_buckets > 0 (if not, calloc undefined behavior)
+ * Precondition: hs->num_buckets > 0 (if not, calloc undefined behavior and resizing logic wouldn't work)
  */
+// TODO: check if we could take advantage of already created nodes instead of creating hole new ones...
+//  Shouldn't insert to head of linked list simply receive a node?
 static inline void resize_hash_set_variables(HashSetVariables *hs){
     uint32_t new_num_buckets = hs->num_buckets * 2;
     LinkedListVariablesNode **new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
@@ -157,12 +159,12 @@ static inline void resize_hash_set_variables(HashSetVariables *hs){
         }
     }
 
+    free_hash_set_variables(*hs);
+
     hs->listsVariables = new_buckets;
     hs->num_buckets = new_num_buckets;
     //hs->num_variables remains equal
 }
-
-#define MAX_LOAD_FACTOR 0.75f
 
 SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
     uint32_t bucket_i = hash(v) % hs->num_buckets;
@@ -175,11 +177,12 @@ SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable 
     insert_to_linked_list_variables_head(linked_list_ptr, v);
     ++(hs->num_variables);
 
-    
+    #define MAX_LOAD_FACTOR 0.75f
     if(load_factor(*hs) > MAX_LOAD_FACTOR){
         resize_hash_set_variables(hs);
         return SET_INSERT_ADDED_RESIZING;
     }
+    #undef MAX_LOAD_FACTOR
 
     return SET_INSERT_ADDED;
 }
@@ -197,10 +200,12 @@ SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs,
     insert_to_linked_list_variables_head(linked_list_ptr, v);
     ++(hs->num_variables);
 
+    #define MAX_LOAD_FACTOR 0.75f
     if(load_factor(*hs) > MAX_LOAD_FACTOR){
         resize_hash_set_variables(hs);
         return SET_INSERT_ADDED_RESIZING;
     }
+    #undef MAX_LOAD_FACTOR
 
     return SET_INSERT_ADDED;
 }

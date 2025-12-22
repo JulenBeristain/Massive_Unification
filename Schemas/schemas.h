@@ -35,8 +35,15 @@ union Schema {
     };
 };
 
-// TODO: we are going to parse some file to term structs like this? Or are we going to directly parse terms into
-//  Schemas? The latter is strange, we should have the terms we are working with somehow in memory...
+// NOTE: useful for arraylists of pointers to Schemas
+typedef Schema *SchemaPtr;
+
+// NOTE: set-schemas can be represented simply as (generic) schemas! If not, we could define arraylist of schemas.
+//  ArrayList of schemas could also be used for subschemas, instead of plain arrays (but then, it would be interesting
+//  to optimize the space ocupied by arity with the size of the ArrayList).
+
+// NOTE: we won't be using these kind of inductevely defined terms in C. We are going to work directly with
+//  flattened matrices and their corresponding Schemas (which will be inductive).
 /**
  * Very similar to Schemas, but with the extra main symbol.
  */
@@ -60,12 +67,22 @@ union Term {
     };
 };
 
+// TODO: init schema from file; set-schemas as arraylist<Schema> representation; set of dependencies representation; 
+//  common-schemas combination function; common-set-schema combination function; theta operator over sets of dependency;
+//  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
+// NOTE: the functions for extending matrices based on the calculated common-set-schemas and dependency sets are not
+//  implemented because we work with already flattened matrices
+
 void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema(Schema *schema, unsigned arity);
-void init_schema_from_term_and_variables(Schema *schema, Term *term, SetVariables set_variables);
-void init_schema_from_term(Schema *schema, Term *term);
+//void init_schema_from_term_and_variables(Schema *schema, Term *term, SetVariables set_variables);
+//void init_schema_from_term(Schema *schema, Term *term);
 unsigned schema_size(Schema *s);
 
-SetVariables repeated_vars_in_term(Term *t);
+//SetVariables repeated_vars_in_term(Term *t);
+
+// NOTE: for arraylist of pointers to Schemas
+bool equal_schemas(Schema *s1, Schema *s2);
+void print_schema(Schema *s);
 
 #endif //SCHEMAS_H

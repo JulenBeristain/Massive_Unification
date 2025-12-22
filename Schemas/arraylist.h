@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include "schemas.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// DECLARATION OF ARRAYLIST TYPES MACRO ////////////////////////////////////////////////////////////////////////////////////////////
@@ -43,7 +44,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     ArrayList##Name create_array_list_##name##_defsize();                                    \
     static inline void free_array_list_##name(ArrayList##Name list){ free(list.array); }     \
     static inline void clear_array_list_##name(ArrayList##Name *list){ list->size = 0; }     \
-    int add_to_array_list_##name(ArrayList##Name *list, int element);                        \
+    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
     int remove_index_from_array_list_##name(ArrayList##Name *list, uint32_t index);          \
     int remove_element_from_array_list_##name(ArrayList##Name *list, type element);          \
     int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
@@ -54,7 +55,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     ArrayList##Name create_array_list_##name##_defsize();                                    \
     void free_array_list_##name(ArrayList##Name list);                                       \
     void clear_array_list_##name(ArrayList##Name *list);                                     \
-    int add_to_array_list_##name(ArrayList##Name *list, int element);                        \
+    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
     int remove_index_from_array_list_##name(ArrayList##Name *list, uint32_t index);          \
     int remove_element_from_array_list_##name(ArrayList##Name *list, type element);          \
     int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
@@ -79,6 +80,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 
 DECLARE_ARRAYLIST(Int, int, int)
 
-//TODO: for ordered set of terms and schemas (set-schemas)
+DECLARE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr)
+
 
 #endif // ARRAYLIST_H

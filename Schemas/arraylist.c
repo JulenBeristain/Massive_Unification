@@ -181,3 +181,8 @@ static inline void print_int(int i) { printf("%d", i); }
 
 DEFINE_ARRAYLIST(Int, int, int, equal_ints, print_int)
 //----------------------------------------------------------------------------------------------------------------
+
+// ArrayList of pointers to Schemas ------------------------------------------------------------------------------
+
+DEFINE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr, equal_schemas, print_schema)
+//----------------------------------------------------------------------------------------------------------------
