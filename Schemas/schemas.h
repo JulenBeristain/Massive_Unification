@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "set_variables.h"
+#include "set_dependencies.h"
 
 /**
  * The structure that represents a Schema. It is inductively defined. It can be:

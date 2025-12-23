@@ -122,8 +122,50 @@ void print_schema(Schema *s){
 
 
 // TODO:
-//  common-schemas combination function; common-set-schema combination function; theta operator over sets of dependency;
+//  common-set-schema combination function; theta operator over sets of dependency;
 //  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
 
+// PRE: common should have been just defined or allocated, and the set of dependencies should be empty in the first call (not
+//  in the recursive ones, since we are calcullating the union of all the dependencies).
+// RES: further subschemas are allocated when needed. Shallow copies of the tail schemas are made in case of schemas with 
+//  different arities. We insert all the dependencies found into the set of dependencies passed by reference.
+void common_schema(Schema *s1, Schema *s2, Schema *common, SetDependencies *dependencies){
+    // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange...
+    // TODO: in the set of dependencies we have pointers to Schemas as values. Be careful with dangling pointers (see where 
+    //  the schemas are freed).
+    if (s1->type == VARIABLE_SCHEMA) {
+        init_variable_schema(common, s1->v);
+        insert_to_set_dependencies(dependencies, s1->v, s2);
+    } else if (s2->type == VARIABLE_SCHEMA) {
+        init_variable_schema(common, s2->v);
+        insert_to_set_dependencies(dependencies, s2->v, s1);
+    } else {
+        size_t min_len, max_len;
+        Schema *longest_schema;
+        if (s1->arity < s2->arity) {
+            min_len = s1->arity;
+            max_len = s2->arity;
+            longest_schema = s2;
+        } else {
+            min_len = s2->arity;
+            max_len = s1->arity;
+            longest_schema = s1;
+        }
+
+        init_general_schema(common, max_len); // .size = 1
+        size_t i = 0;
+        for(; i < min_len; ++i){
+            common_schema(s1->subschemas + i, s2->subschemas + i, common->subschemas + i, dependencies);
+            common->size += common->subschemas[i].size;
+        }
+        for(; i < max_len; ++i){
+            // TODO: appropriate to have all subschemas in the same array (and not have an extra indirection)?
+            //  Here we are doing shallow copies. Deep copies needed?...
+            //  Garbage collection needed? We will see in what circumstances we should free the schemas...
+            common->subschemas[i] = longest_schema->subschemas[i]; //NOTE: shallow copy...
+            common->size += common->subschemas[i].size;
+        }
+    }
+}
 
 // TODO: init (set-)schema from file; (after understanding the Prolog source code perfectly)
