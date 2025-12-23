@@ -8,22 +8,22 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include <stdio.h>
 
 void test_set_variables(){
-    SetVariables set = create_set_defsize();
+    SetVariables set = create_set_variables_defsize();
 
     for(Variable v = 1; v <= 10; ++v){
-        insert_to_set(&set, v);
+        insert_to_set_variables(&set, v);
     }
-    print_set(set); printf("\n");
+    print_set_variables(set); printf("\n");
 
     for(Variable v = 1; v <= 20; ++v){
-        char *inSet = lookup_set(set, v) ? "True" : "False";
+        char *inSet = lookup_set_variables(set, v) ? "True" : "False";
         printf("%d in set = %s\n", v, inSet);
     }
 
-    clear_set(set);
-    print_set(set); printf("\n");
+    clear_set_variables(set);
+    print_set_variables(set); printf("\n");
 
-    free_set(set);
+    free_set_variables(set);
 }
 
 void test_typeof_or_auto_type(){

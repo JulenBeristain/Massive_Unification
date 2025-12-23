@@ -49,9 +49,18 @@ HashMapDependencies create_hash_map_dependencies_defsize();
 void free_hash_map_dependencies(HashMapDependencies hm);
 void clear_hash_map_dependencies(HashMapDependencies hm);
 int insert_to_hash_map_dependencies(HashMapDependencies *hm, Variable v, Schema *s);
-ArrayListSchemaPtr lookup_hash_map_dependencies(HashMapDependencies hm, Variable v);
+ArrayListSchemaPtr *lookup_hash_map_dependencies(HashMapDependencies hm, Variable v);
 void print_hash_map_dependencies(HashMapDependencies hm);
 void print_hash_map_dependencies_separator(HashMapDependencies hm, const char *separator);
+
+// Foreach macro
+#define foreach_pair_in_hashmap_dependencies_ptr(set_dependencies, pair_ptr)                                    \
+    for(HashMapDependenciesNode **list_dependencies_ptr = (set_dependencies)->lists_dependencies,               \
+                                **end = list_dependencies_ptr + (set_dependencies)->num_buckets;                \
+        list_dependencies_ptr < end;                                                                            \
+        ++list_dependencies_ptr                                                                                 \
+    )                                                                                                           \
+        for(HashMapDependenciesNode *pair_ptr = *list_dependencies_ptr; pair_ptr; pair_ptr = pair_ptr->next)
 
 // Default types and operations for sets of dependencies
 typedef HashMapDependencies SetDependencies;

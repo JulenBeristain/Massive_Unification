@@ -203,12 +203,16 @@ int insert_to_hash_map_dependencies(HashMapDependencies *hm, Variable v, Schema 
 // Again, simply pass by value
 // The ArrayList of pointers to Schemas is also returned by value (just 16 Bytes)
 
-// NOTE: another possibility is to return a pointer to the node instead of the value 
+// NOTE: another possibility is to return a pointer to the node instead of to the value 
 //  contained in it.
-ArrayListSchemaPtr lookup_hash_map_dependencies(HashMapDependencies hm, Variable v){
+ArrayListSchemaPtr *lookup_hash_map_dependencies(HashMapDependencies hm, Variable v){
     uint32_t bucket_i = hash(v) % hm.num_buckets;
     HashMapDependenciesNode *linked_list = hm.lists_dependencies[bucket_i];
-    return lookup_linked_list_dependencies(linked_list, v)->schemas;
+    HashMapDependenciesNode *node = lookup_linked_list_dependencies(linked_list, v);
+    if(node){
+        return &node->schemas;
+    }
+    return NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////

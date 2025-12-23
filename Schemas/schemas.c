@@ -28,7 +28,7 @@ void init_general_schema(Schema *s, unsigned arity) {
 //  terms in C.
 void init_schema_from_term_and_variables(Schema *schema, Term *term, SetVariables set_variables){
     if(term->type == VARIABLE_TERM){
-        if(lookup_set(set_variables, term->v)){
+        if(lookup_set_variables(set_variables, term->v)){
             init_variable_schema(schema, term->v);
         } else {
             init_general_schema(schema, 0);
@@ -68,16 +68,16 @@ unsigned schema_size(Schema *s){
  * NOTE: these functions won't be used because we are not working with inductive terms in C.
  */
 SetVariables repeated_vars_in_term(Term *t){
-    SetVariables vars = create_set_defsize();
-    SetVariables repeated_vars = create_set_defsize();
+    SetVariables vars = create_set_variables_defsize();
+    SetVariables repeated_vars = create_set_variables_defsize();
     repeated_vars_in_term_(t, &vars, &repeated_vars);
     return repeated_vars;
 }
 static void repeated_vars_in_term_(Term *t, SetVariables *vars, SetVariables *repeated_vars){
     if(t->type == VARIABLE_TERM){
-        SetInsertReturnCode code = insert_to_set(vars, t->v);
+        SetInsertReturnCode code = insert_to_set_variables(vars, t->v);
         if(code == SET_INSERT_ALREADY_CONTAINED) {
-            insert_to_set(repeated_vars, t->v);
+            insert_to_set_variables(repeated_vars, t->v);
         }
     } else {
         Term *subterm = t->subterms;
@@ -120,11 +120,6 @@ void print_schema(Schema *s){
     }
 }
 
-
-// TODO:
-//  common-set-schema combination function; theta operator over sets of dependency;
-//  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
-
 // PRE: common should have been just defined or allocated, and the set of dependencies should be empty in the first call (not
 //  in the recursive ones, since we are calcullating the union of all the dependencies).
 // RES: further subschemas are allocated when needed. Shallow copies of the tail schemas are made in case of schemas with 
@@ -140,25 +135,25 @@ void common_schema(Schema *s1, Schema *s2, Schema *common, SetDependencies *depe
         init_variable_schema(common, s2->v);
         insert_to_set_dependencies(dependencies, s2->v, s1);
     } else {
-        size_t min_len, max_len;
+        size_t min_arity, max_arity;
         Schema *longest_schema;
         if (s1->arity < s2->arity) {
-            min_len = s1->arity;
-            max_len = s2->arity;
+            min_arity = s1->arity;
+            max_arity = s2->arity;
             longest_schema = s2;
         } else {
-            min_len = s2->arity;
-            max_len = s1->arity;
+            min_arity = s2->arity;
+            max_arity = s1->arity;
             longest_schema = s1;
         }
 
-        init_general_schema(common, max_len); // .size = 1
+        init_general_schema(common, max_arity); // .size = 1
         size_t i = 0;
-        for(; i < min_len; ++i){
+        for(; i < min_arity; ++i){
             common_schema(s1->subschemas + i, s2->subschemas + i, common->subschemas + i, dependencies);
             common->size += common->subschemas[i].size;
         }
-        for(; i < max_len; ++i){
+        for(; i < max_arity; ++i){
             // TODO: appropriate to have all subschemas in the same array (and not have an extra indirection)?
             //  Here we are doing shallow copies. Deep copies needed?...
             //  Garbage collection needed? We will see in what circumstances we should free the schemas...
@@ -166,6 +161,141 @@ void common_schema(Schema *s1, Schema *s2, Schema *common, SetDependencies *depe
             common->size += common->subschemas[i].size;
         }
     }
+}
+
+// NOTE: special version for the theta operator that only calculates dependencies.
+void common_schema_dependencies(Schema *s1, Schema *s2, SetDependencies *dependencies){
+    // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange...
+    // TODO: in the set of dependencies we have pointers to Schemas as values. Be careful with dangling pointers (see where 
+    //  the schemas are freed).
+    if (s1->type == VARIABLE_SCHEMA) {
+        insert_to_set_dependencies(dependencies, s1->v, s2);
+    } else if (s2->type == VARIABLE_SCHEMA) {
+        insert_to_set_dependencies(dependencies, s2->v, s1);
+    } else {
+        size_t min_arity, max_arity;
+        Schema *longest_schema;
+        if (s1->arity < s2->arity) {
+            min_arity = s1->arity;
+            max_arity = s2->arity;
+            longest_schema = s2;
+        } else {
+            min_arity = s2->arity;
+            max_arity = s1->arity;
+            longest_schema = s1;
+        }
+
+        size_t i = 0;
+        for(; i < min_arity; ++i){
+            common_schema_dependencies(s1->subschemas + i, s2->subschemas + i, dependencies);
+        }
+    }
+}
+
+// NOTE: common-set-schema combination function, if we are just using Schemas to represent common-schemas, is
+//  simply the common_schema function itself!
+
+
+bool is_self_dependency(Variable v, Schema *schema){
+    // TODO: if this is the first case; i.e., the Schema is the Variable v itself? If we need a special treatment for this
+    //  we can implement a separate non-recursive interface function that handles this special case and then calls to this
+    //  function.
+    if(schema->type == VARIABLE_SCHEMA){
+        return v == schema->v;
+    }
+    
+    Schema *subschema = schema->subschemas, *end = schema->subschemas + schema->arity;
+    for(; subschema < end; ++subschema){
+        if(is_self_dependency(v, subschema)){
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_self_dependency(ArrayListSchemaPtr schemas, Variable v){
+    foreach_in_arraylist(SchemaPtr, schema, schemas){
+        if(is_self_dependency(v, *schema)){
+            return true;
+        }
+    }
+    return false;
+}
+
+bool contains_self_dependency(SetDependencies dependencies, Variable v){
+    ArrayListSchemaPtr *schemas = lookup_set_dependencies(dependencies, v);
+    if(schemas){
+        return has_self_dependency(*schemas, v);
+    }
+    return false;
+}
+
+// TODO:
+//  theta operator over sets of dependency;
+//  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
+
+// TODO: as fast as a self-dependency is detected this should halt (so returning a status value is necessary too...)
+void theta_rule1(SetDependencies *dependencies){
+    foreach_pair_in_hashmap_dependencies_ptr(dependencies, node){
+        ArrayListSchemaPtr schemas = node->schemas;
+        for(size_t i = 0; i < schemas.size; ++i){
+            for(size_t j = i + 1; j < schemas.size; ++j){
+                common_schema_dependencies(schemas.array + i, schemas.array + j, dependencies);
+            }
+        }
+    }
+}
+
+SetVariables variables_in_schema(Schema *schema){
+    SetVariables vars = create_set_variables_defsize();
+    variables_in_schema_(schema, &vars);
+    return vars;
+}
+void variables_in_schema_(Schema *schema, SetVariables *vars){
+    if(schema->type == VARIABLE_SCHEMA){
+        insert_to_set_variables(vars, schema->v);
+    } else {
+        Schema *subschema = schema->subschemas, *end = schema->subschemas + schema->arity;
+        for(; subschema < end; ++subschema){
+            variables_in_schema_(subschema, vars);
+        }
+    }
+}
+
+// TODO: as fast as a self-dependency is detected this should halt (so returning a status value is necessary too...)
+void theta_rule2(SetDependencies *dependencies){
+    //foreach variable v in set dependencies
+    //foreach schema gamma v depends on
+    //foreach variable w that appears in gamma
+    //->lookup w in the set of dependencies
+    //foreach schema gamma' that w depends on
+    //calculate the schema gamma'' = gamma[w <- gamma']
+    //add gamma'' to the array of schemas v depends on
+    foreach_pair_in_hashmap_dependencies_ptr(dependencies, node){
+        Variable v = node->v;
+        ArrayListSchemaPtr schemas = node->schemas;
+        foreach_in_arraylist(SchemaPtr, schema, schemas){
+            Schema *gamma = *schema;
+            //TODO: two options: 
+            //  1) calculate all variables in gamma and do a simple for-each (no early return, but conceptually clearer
+            //     and possible parallelization...) --> This is my choice
+            //  2) implement an auxiliar recursive function to iterate over all variables in a schema and perform
+            //     the rest of the operations (possible early return)
+        
+            SetVariables ws = variables_in_schema(gamma);
+            foreach_in_setvariables(ws, node){
+                Variable w = node->v;
+                //TODO: finish the steps...
+            }
+        }
+    }
+}
+
+// TODO: think if for some reason (like cache-locality) collapsing both rules in the single theta_operator function would be
+//  more efficient...
+// TODO: think how both rules feedback each other, for the most optimal calling strategy...
+void theta_operator(SetDependencies *dependencies){
+
 }
 
 // TODO: init (set-)schema from file; (after understanding the Prolog source code perfectly)

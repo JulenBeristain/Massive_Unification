@@ -95,9 +95,9 @@ HashSetVariables create_hash_set_variables(uint32_t num_buckets) {
     HashSetVariables hs;
     hs.num_variables = 0;
     hs.num_buckets = num_buckets;
-    hs.listsVariables = calloc(num_buckets, sizeof(*hs.listsVariables));
+    hs.list_variables = calloc(num_buckets, sizeof(*hs.list_variables));
 
-    if (hs.listsVariables == NULL) {
+    if (hs.list_variables == NULL) {
         perror("calloc failed to allocate memory");
         exit(EXIT_FAILURE);
     }
@@ -110,25 +110,25 @@ HashSetVariables create_hash_set_variables_defsize(){
 }
 
 void free_hash_set_variables(HashSetVariables hs) {
-    LinkedListVariablesNode **current_bucket = hs.listsVariables;
-    LinkedListVariablesNode **end = hs.listsVariables + hs.num_buckets;
+    LinkedListVariablesNode **current_bucket = hs.list_variables;
+    LinkedListVariablesNode **end = hs.list_variables + hs.num_buckets;
     for(; current_bucket < end; ++current_bucket){
         LinkedListVariablesNode *linked_list = *current_bucket;
         free_linked_list_variables(linked_list);
     }
 
-    free(hs.listsVariables);
+    free(hs.list_variables);
 }
 
 void clear_hash_set_variables(HashSetVariables hs) {
-    LinkedListVariablesNode **current_bucket = hs.listsVariables;
-    LinkedListVariablesNode **end = hs.listsVariables + hs.num_buckets;
+    LinkedListVariablesNode **current_bucket = hs.list_variables;
+    LinkedListVariablesNode **end = hs.list_variables + hs.num_buckets;
     for(; current_bucket < end; ++current_bucket){
         LinkedListVariablesNode *linked_list = *current_bucket;
         free_linked_list_variables(linked_list);
     }
 
-    memset(hs.listsVariables, 0, hs.num_buckets * sizeof(*hs.listsVariables));
+    memset(hs.list_variables, 0, hs.num_buckets * sizeof(*hs.list_variables));
     hs.num_variables = 0;
     //hs.num_buckets remains equal (TODO: add deleting and shrinking logic if needed)
 }
@@ -153,8 +153,8 @@ static inline void resize_hash_set_variables(HashSetVariables *hs){
         exit(EXIT_FAILURE);
     }
 
-    LinkedListVariablesNode **current_bucket = hs->listsVariables;
-    LinkedListVariablesNode **end = hs->listsVariables + hs->num_buckets;
+    LinkedListVariablesNode **current_bucket = hs->list_variables;
+    LinkedListVariablesNode **end = hs->list_variables + hs->num_buckets;
     for(; current_bucket < end; ++current_bucket){
         LinkedListVariablesNode *linked_list = *current_bucket;
         LinkedListVariablesNode *current_node = linked_list;
@@ -165,15 +165,15 @@ static inline void resize_hash_set_variables(HashSetVariables *hs){
         }
     }
 
-    free(hs->listsVariables);
-    hs->listsVariables = new_buckets;
+    free(hs->list_variables);
+    hs->list_variables = new_buckets;
     hs->num_buckets = new_num_buckets;
     //hs->num_variables remains equal
 }
 
 SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
     uint32_t bucket_i = hash(v) % hs->num_buckets;
-    LinkedListVariablesNode **linked_list_ptr = hs->listsVariables + bucket_i;
+    LinkedListVariablesNode **linked_list_ptr = hs->list_variables + bucket_i;
     
     if(lookup_linked_list_variables(*linked_list_ptr, v)){
         return SET_INSERT_ALREADY_CONTAINED;
@@ -201,7 +201,7 @@ SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable 
  */
 SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs, Variable v){
     uint32_t bucket_i = hash(v) % hs->num_buckets;
-    LinkedListVariablesNode **linked_list_ptr = hs->listsVariables + bucket_i;
+    LinkedListVariablesNode **linked_list_ptr = hs->list_variables + bucket_i;
 
     LinkedListVariablesNode *new_head = create_linked_list_variables_node(v);
     insert_to_linked_list_variables_head(linked_list_ptr, new_head);
@@ -222,7 +222,7 @@ SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs,
 
 bool lookup_hash_set_variables(HashSetVariables hs, Variable v){
     uint32_t bucket_i = hash(v) % hs.num_buckets;
-    LinkedListVariablesNode *linked_list = hs.listsVariables[bucket_i];
+    LinkedListVariablesNode *linked_list = hs.list_variables[bucket_i];
     return lookup_linked_list_variables(linked_list, v);
 }
 
@@ -234,7 +234,7 @@ void print_hash_set_variables(HashSetVariables hs){
     printf("{");
     bool first = true;
     for(uint32_t i = 0; i < hs.num_buckets; ++i){
-        LinkedListVariablesNode *node = hs.listsVariables[i];
+        LinkedListVariablesNode *node = hs.list_variables[i];
         for(; node; node=node->next){
             if(!first){
                 printf(", ");
