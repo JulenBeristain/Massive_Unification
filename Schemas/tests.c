@@ -13,7 +13,7 @@ void test_set_variables(){
     for(Variable v = 1; v <= 10; ++v){
         insert_to_set(&set, v);
     }
-    print_set(set);
+    print_set(set); printf("\n");
 
     for(Variable v = 1; v <= 20; ++v){
         char *inSet = lookup_set(set, v) ? "True" : "False";
@@ -21,7 +21,7 @@ void test_set_variables(){
     }
 
     clear_set(set);
-    print_set(set);
+    print_set(set); printf("\n");
 
     free_set(set);
 }
@@ -38,13 +38,13 @@ void test_typeof_or_auto_type(){
 void test_arraylist_ints(){
     ArrayListInt list = create_array_list_int_defsize();
 
-    print_array_list_int(list);
+    print_array_list_int(list); printf("\n");
 
     for(int i = 0; i < 20; ++i){
         add_to_array_list_int(&list, i);
     }
 
-    print_array_list_int(list);
+    print_array_list_int(list); printf("\n");
 
     int first, median, last;
     get_from_array_list_int(list, 0, &first);
@@ -56,11 +56,11 @@ void test_arraylist_ints(){
     remove_index_from_array_list_int(&list, list.size / 2);
     remove_index_from_array_list_int(&list, list.size - 1);
 
-    print_array_list_int(list);
+    print_array_list_int(list); printf("\n");
 
     remove_element_from_array_list_int(&list, 7);
 
-    print_array_list_int(list);
+    print_array_list_int(list); printf("\n");
 }
 
 int main(/*int argc, char const *argv[]*/)

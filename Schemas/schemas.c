@@ -121,7 +121,7 @@ void print_schema(Schema *s){
 }
 
 
-// TODO: set of dependencies representation;
+// TODO:
 //  common-schemas combination function; common-set-schema combination function; theta operator over sets of dependency;
 //  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
 

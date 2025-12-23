@@ -43,8 +43,25 @@ enum MapInsertReturnCode {
 };
 //
 
-// TODO: add declarations...
+// Function declarations
+HashMapDependencies create_hash_map_dependencies(uint32_t num_buckets);
+HashMapDependencies create_hash_map_dependencies_defsize();
+void free_hash_map_dependencies(HashMapDependencies hm);
+void clear_hash_map_dependencies(HashMapDependencies hm);
+int insert_to_hash_map_dependencies(HashMapDependencies *hm, Variable v, Schema *s);
+ArrayListSchemaPtr lookup_hash_map_dependencies(HashMapDependencies hm, Variable v);
+void print_hash_map_dependencies(HashMapDependencies hm);
+void print_hash_map_dependencies_separator(HashMapDependencies hm, const char *separator);
 
-// TODO: add default typenames, defines of operations...
+// Default types and operations for sets of dependencies
+typedef HashMapDependencies SetDependencies;
+#define create_set_dependencies create_hash_map_dependencies
+#define create_set_dependencies_defsize create_hash_map_dependencies_defsize
+#define free_set_dependencies free_hash_map_dependencies
+#define clear_set_dependencies clear_hash_map_dependencies
+#define insert_to_set_dependencies insert_to_hash_map_dependencies
+#define lookup_set_dependencies lookup_hash_map_dependencies
+#define print_set_dependencies print_hash_map_dependencies
+#define print_set_dependencies_separator print_hash_map_dependencies_separator
 
 #endif

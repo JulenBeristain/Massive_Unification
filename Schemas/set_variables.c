@@ -38,6 +38,17 @@ static inline uint32_t hash(uint32_t k) {
 /// Auxiliary functions of Linked Lists of Variables ///////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
 
+// NOTE: node->next is not set to NULL! (because insert_to_linked_list_variables_head is used later...)
+static inline LinkedListVariablesNode *create_linked_list_variables_node(Variable v){
+    LinkedListVariablesNode *node = malloc(sizeof(*node));
+    if(node == NULL){
+        perror("malloc failed to allocate memory");
+        exit(EXIT_FAILURE);
+    }
+    node->v = v;
+    return node;
+}
+
 static inline void free_linked_list_variables(LinkedListVariablesNode *linked_list){
     LinkedListVariablesNode *current = linked_list;
     while(current){
@@ -47,13 +58,9 @@ static inline void free_linked_list_variables(LinkedListVariablesNode *linked_li
     }
 }
 
-static inline void insert_to_linked_list_variables_head(LinkedListVariablesNode **linked_list_ptr, Variable v){
-    LinkedListVariablesNode *new_head = malloc(sizeof(*new_head));
-    if(new_head == NULL){
-        perror("malloc failed to allocate memory");
-        exit(EXIT_FAILURE);
-    }
-    new_head->v = v;
+static inline void insert_to_linked_list_variables_head(
+    LinkedListVariablesNode **linked_list_ptr, LinkedListVariablesNode *new_head)
+{
     new_head->next = *linked_list_ptr;
     *linked_list_ptr = new_head;
 }
@@ -152,15 +159,13 @@ static inline void resize_hash_set_variables(HashSetVariables *hs){
         LinkedListVariablesNode *linked_list = *current_bucket;
         LinkedListVariablesNode *current_node = linked_list;
         for(; current_node; current_node = current_node->next){
-            Variable v = current_node->v;
-            uint32_t new_bucket_i = hash(v) % new_num_buckets;
+            uint32_t new_bucket_i = hash(current_node->v) % new_num_buckets;
             LinkedListVariablesNode **new_linked_list_ptr = new_buckets + new_bucket_i;
-            insert_to_linked_list_variables_head(new_linked_list_ptr, v);
+            insert_to_linked_list_variables_head(new_linked_list_ptr, current_node);
         }
     }
 
-    free_hash_set_variables(*hs);
-
+    free(hs->listsVariables);
     hs->listsVariables = new_buckets;
     hs->num_buckets = new_num_buckets;
     //hs->num_variables remains equal
@@ -174,7 +179,8 @@ SetInsertReturnCode insert_to_hash_set_variables(HashSetVariables *hs, Variable 
         return SET_INSERT_ALREADY_CONTAINED;
     }
 
-    insert_to_linked_list_variables_head(linked_list_ptr, v);
+    LinkedListVariablesNode *new_head = create_linked_list_variables_node(v);
+    insert_to_linked_list_variables_head(linked_list_ptr, new_head);
     ++(hs->num_variables);
 
     #define MAX_LOAD_FACTOR 0.75f
@@ -197,7 +203,8 @@ SetInsertReturnCode unchecked_insert_to_hash_set_variables(HashSetVariables *hs,
     uint32_t bucket_i = hash(v) % hs->num_buckets;
     LinkedListVariablesNode **linked_list_ptr = hs->listsVariables + bucket_i;
 
-    insert_to_linked_list_variables_head(linked_list_ptr, v);
+    LinkedListVariablesNode *new_head = create_linked_list_variables_node(v);
+    insert_to_linked_list_variables_head(linked_list_ptr, new_head);
     ++(hs->num_variables);
 
     #define MAX_LOAD_FACTOR 0.75f
@@ -236,7 +243,7 @@ void print_hash_set_variables(HashSetVariables hs){
             printf("%u", (unsigned)node->v);
         }
     }
-    printf("}\n");
+    printf("}");
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////

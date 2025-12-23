@@ -142,7 +142,7 @@ int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *resul
             printf(", ");                                   \
             print_function(list.array[i]);                  \
         }                                                   \
-        printf("]\n");                                      \
+        printf("]");                                        \
     }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
