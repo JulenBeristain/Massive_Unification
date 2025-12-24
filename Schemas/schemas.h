@@ -68,9 +68,6 @@ union Term {
     };
 };
 
-// TODO: init schema from file; set-schemas as arraylist<Schema> representation; set of dependencies representation; 
-//  common-schemas combination function; common-set-schema combination function; theta operator over sets of dependency;
-//  check self dependency in set of dependencies (halt theta as soon as one self-dependency is found) --> check isFiniteSchema;
 // NOTE: the functions for extending matrices based on the calculated common-set-schemas and dependency sets are not
 //  implemented because we work with already flattened matrices
 
@@ -85,5 +82,16 @@ unsigned schema_size(Schema *s);
 // NOTE: for arraylist of pointers to Schemas
 bool equal_schemas(Schema *s1, Schema *s2);
 void print_schema(Schema *s);
+
+// TODO: declare the public functions that are going to be used in the main.c module.
+
+/**
+ * FUTURE WORK:
+ * Finish the managing of schemas and obtention of column index mapping
+ * Optimize further the core of the unification with matrices (and parallelize it)
+ * Postprocess results to normalize the mappings...
+ * Manage the inductive terms; i.e., implement flatenning matrix extension in C
+ * Implement boolean operations between matrices in C
+ */
 
 #endif //SCHEMAS_H

@@ -53,7 +53,15 @@ ArrayListSchemaPtr *lookup_hash_map_dependencies(HashMapDependencies hm, Variabl
 void print_hash_map_dependencies(HashMapDependencies hm);
 void print_hash_map_dependencies_separator(HashMapDependencies hm, const char *separator);
 
-// Foreach macro
+// Foreach macros
+#define foreach_pair_in_hashmap_dependencies(set_dependencies, pair_ptr)                                        \
+    for(HashMapDependenciesNode **list_dependencies_ptr = (set_dependencies).lists_dependencies,                \
+                                **end = list_dependencies_ptr + (set_dependencies).num_buckets;                 \
+        list_dependencies_ptr < end;                                                                            \
+        ++list_dependencies_ptr                                                                                 \
+    )                                                                                                           \
+        for(HashMapDependenciesNode *pair_ptr = *list_dependencies_ptr; pair_ptr; pair_ptr = pair_ptr->next)
+
 #define foreach_pair_in_hashmap_dependencies_ptr(set_dependencies, pair_ptr)                                    \
     for(HashMapDependenciesNode **list_dependencies_ptr = (set_dependencies)->lists_dependencies,               \
                                 **end = list_dependencies_ptr + (set_dependencies)->num_buckets;                \
