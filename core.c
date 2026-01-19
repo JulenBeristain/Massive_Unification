@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <math.h>
-#include <linux/time.h> // NOTE: in my local computer VS Code gives errors with a define (CLOCK_MONOTONIC_RAW)
+#include <time.h>
 #include <limits.h>
 #include <stdbool.h>
 

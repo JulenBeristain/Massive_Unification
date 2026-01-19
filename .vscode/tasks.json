@@ -1,0 +1,120 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build tests (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-g",
+				"-O0",
+				"-Wall",
+				"-Wextra",
+				"Schemas/arraylist.c",
+				"Schemas/set_variables.c",
+				"Schemas/tests.c",
+				"-o",
+				"build/tests"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "build alex COM for debugging (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"structures.c",
+				"perf_hash.c",
+				"-DCOM",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "build alex AGT for debugging (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"structures.c",
+				"perf_hash.c",
+				"-DAGT",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "build alex COM optimized (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-O3",
+				"structures.c",
+				"perf_hash.c",
+				"-DCOM",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "build alex AGT optimized (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-O3",
+				"structures.c",
+				"perf_hash.c",
+				"-DAGT",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		}
+	]
+}
