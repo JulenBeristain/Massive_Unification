@@ -30,7 +30,7 @@ union Schema {
         unsigned arity;
         // TODO: see if an extra indirection (**subschemas) is necessary/helpful.
         Schema *subschemas;
-        size_t size;        // Note, candidate for uint16/32_t if padding may arise | 
+        size_t ___;        // Note, candidate for uint16/32_t if padding may arise | 
                             //TODO: might be interesting to define a Schema wrapper if we are only interested in the 
                             //      sizes of the outermost Schemas, so not every sub-schema stores its size.
     };
@@ -92,6 +92,7 @@ void print_schema(Schema *s);
  * Postprocess results to normalize the mappings...
  * Manage the inductive terms; i.e., implement flatenning matrix extension in C
  * Implement boolean operations between matrices in C
+ * Repropose the code removing a dimension from the matrix...
  */
 
 #endif //SCHEMAS_H

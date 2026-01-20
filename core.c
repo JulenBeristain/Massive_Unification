@@ -702,6 +702,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
             rb->lineal_lineal = true;
         }
     }
+    // NOTE: rb->lineal_lineal_ was not set to false in the initialization, so unless it is the first subset
+    // and it is lineal, it can have any value!!!
 
     // Skip flattened schema
     if (!first_is_non_lineal) getline(&line, &len, stream);
@@ -752,7 +754,7 @@ void read_result_matrix(FILE *stream, result_block *rb) {
 
         // Initialize the exception blocks
         rb->terms[row] = create_empty_main_term(rb->c,e);
-        if (rb->valid[row]!=1) rb->valid[row] = 0;
+        if (rb->valid[row]!=1) rb->valid[row] = 0;  // NOTE: completely unnecessary, no? valid_ was already 0-initialized...
 
         // Get a pointer to the main term for easier working
         main_term *mt = &(rb->terms[row]);
@@ -863,20 +865,23 @@ int unifier_a_b(int *row_a, const unsigned indexA, int *row_b, const unsigned in
 
     const unsigned m1 = cA + n_cA; // The number of columns in row_a is the old number of columns plus the new columns
 
+    //NOTE: me extrañan las comprobaciones... No se pueden meter variables frescas entre medias? Las comprobaciones dan a entender que no...
     // A is from the new columns of row_a, that is, always a variable. Add (a<-b) to the unifier, don't care about B
-    if (indexA >= cA)
+    if (indexA >= cA) // NOTE: comprobación que funciona por "chiripa", cuando indexA == UINT32_MAX por hacer (unsigned)0 - 1 ... Pero funcionar funciona perfectamente para lo que pretende :)
     {
-        unifier[1+indexUnifier]   = indexA;
-        unifier[1+indexUnifier+1] = indexB + m1; 
+        unifier[1+indexUnifier]   = indexA; //Esto ya sí que no debería funcionar! Se supone que tenemos que guardar pares de índices de columnas de las filas que estamos unificando
+        unifier[1+indexUnifier+1] = indexB + m1; // y esto? Si m1 ya es la cantidad final de columnas en el resultado, el índice este no es legal ni siquiera en las filas extendidas resultantes... Tal vez es una forma de indicar implícitamente que es un índice de M2, al ser > m1...
         return 0;
     } 
     // Else, B is from the new columns of row_b, so always a variable. Add (b<-a) to the unifier, don't care about A
-    else if (indexB >= cB)
+    else if (indexB >= cB) // NOTE: mismo problema que con indexA... (indexB == 4294967295) 
     {
-        unifier[1+indexUnifier]   = indexB + m1;
+        unifier[1+indexUnifier]   = indexB + m1;  //por wrapping esto valdrá m1 - 1 (cantidad de columnas nuevas menos 1)
         unifier[1+indexUnifier+1] = indexA; 
         return 0;
     }
+    //NOTE: although the previous seems problematic, what value should we insert for new fresh variables instead? They have no 
+    //indexes in the operand M1/2 matrices... But, unless, shouldn't each new fresh variable have a unique index?
 
     // If they are from the old columns, get elements
     const int a = row_a[indexA];
@@ -895,6 +900,7 @@ int unifier_a_b(int *row_a, const unsigned indexA, int *row_b, const unsigned in
         unifier[1+indexUnifier]   = indexA;
         unifier[1+indexUnifier+1] = indexB + m1; 
 	}
+    //NOTE: if both equal constants, the unifier is left as the default [0,0]
 
 	return 0;
 }
@@ -915,6 +921,7 @@ int unifier_rows(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *unifi
     const unsigned m = ms->n_common;
     for (unsigned i = 0; i < m; i++)
     {
+        // NOTE: tremendamente feo!!! common_L/R tienen 0 donde se introducen nuevas variables, por lo que al restar uno tenemos UINT32_MAX!!!
         if (unifier_a_b(mt1->row, ms->common_L[i]-1, mt2->row, ms->common_R[i]-1, unifier, 2*i, mt1->c, ms->new_a, mt2->c)) return 1; // If it is not unifiable already, do not bother continuing
     }
     
@@ -941,7 +948,7 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
     const unsigned m  = ms->n_common;
     const int *row_a = mt1->row;
     const int *row_b = mt2->row;
-    unsigned lst_length = m*2;
+    unsigned lst_length = m*2; // NOTE: supongo que es porque en el peor de los casos, M2 tiene las mismas columnas que M3 y por tanto el index mayor en el unifier row que nos podemos encontrar es precisamente 2*m
     unsigned i;
 
     L2 *lst = (L2*) malloc (lst_length*sizeof(L2));
@@ -964,6 +971,7 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
             x = -(row_a[x]+1);
         else if (x >= m && (x-m) < c2 && row_b[x-m] < 0) 
             x = -(row_b[x-m]+1) + m;
+        //NOTE: can't we optimize this only checking for one? If x comes from M1, y comes from M2...
         if (y < c1 && row_a[y] < 0) 
             y = -(row_a[y]+1);
         else if (y >= m && (y-m) < c2 && row_b[y-m] < 0)
@@ -971,6 +979,8 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
 
 
         // If any of them was substituted before, get the corresponding elements
+        // NOTE: if the indexes refer to a function symbol, their .count will remain 0 (no substitution)
+        // otherwise, if they refer to a variable, the indexes correspond to their first appearence (0 in row_a/b)
         if (lst[x].count > 0) x = lst[x].by;
         if (lst[y].count > 0) y = lst[y].by;
         if (x==y) continue; 
@@ -978,7 +988,8 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
 
         // Get the value of x and y
         if (x < c1) val_x = row_a[x];
-        else if (x < m) val_x = 0;
+        else if (x < m) val_x = 0;  // NOTE: this seems a HACK for the _ in mapping in testing files (the BUG detected previously...)
+                                    // this will be the case only if previously indexB == UINT32_MAX --> +m --> m-1, AND c1 < m
         else if ((x-m) < c2) val_x = row_b[(x-m)];
         else val_x = 0;
 
@@ -1013,6 +1024,7 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
             L3* newNode = create_L3(y, NULL);
 
             // Appending it to X’s list (or make it head if empty)
+            // NOTE: in case of constants, their L2.count/by/ind are not modified, but .head/tail are
             if (lst[x].head == NULL) {
                 lst[x].head = newNode;
                 lst[x].tail = newNode;
@@ -1022,7 +1034,7 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
                 lst[x].tail       = newNode;
             }
 
-            // Appending Y's chain
+            // Appending Y's chain // NOTE: the problematic value is tail, not head (but both are NULL or not-NULL at the same time, so valid condition)
             if (lst[y].head != NULL) {
                 newNode->next = lst[y].head;
                 lst[x].tail   = lst[y].tail;
@@ -1080,8 +1092,8 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
     // For each element, add the substitutions to the unifier
     for (i=0; i<lst_length; i++)
     {
-        int y = i;
-        int x;
+        int y = i; // NOTE: why not as the direct loop var...
+        int x;     // NOTE: only inside while... why not defined there...
         if (lst[y].count == 0 && lst[y].head)
         {
             // Get substitutions (x <- y)
@@ -1278,6 +1290,7 @@ void reorder_unified(main_term *mt, mgu_schema *ms)
     memset(duplicated,0,c*sizeof(bool));
 
     // Need a first pass to correct the state that apply_unifier_left ended in
+    // NOTE: finish unifying references of duplicated variables if it was unified in the original position (where it should be 0)
     for (unsigned i = 0; i < c; i++)
     {
         int ref = before[i];
@@ -1290,7 +1303,7 @@ void reorder_unified(main_term *mt, mgu_schema *ms)
 
     for (unsigned i_after = 0; i_after < c; i_after++)
     {
-        unsigned i_before = ms->common_L[i_after]-1;
+        unsigned i_before = ms->common_L[i_after]-1; //NOTE: in the case of _, in common_L = 0 so we would get i_before = UINT32_MAX
         // If the before column appears more than once in ms.common_L
         if (before_after[i_before] != -1) 
         {
@@ -1398,7 +1411,7 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
     if (verbose) printf("\tApplying all unifiers . . . \n");
     clock_gettime(CLOCK_MONOTONIC_RAW, &start_unification);
     result_block my_rb = create_empty_result_block(ob1->r,ob2->r,ob1->c,ob2->c,rb->c,rb->ms);
-    my_rb.t1 = 1;
+    my_rb.t1 = 1;  // NOTE: why concretely 1-1? Doesn't matter? It isn't verified because it isn't important? I guess...
     my_rb.t2 = 1;
     unsigned i, ind_A, ind_B;
     for (i=0; i<my_rb.r; i++) my_rb.valid[i] = 2;
