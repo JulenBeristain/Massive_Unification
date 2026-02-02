@@ -506,7 +506,7 @@ void read_line(char *line, int *row, bool skip_first) {
  * @return void
  * 
  * Tokenizes on space/comma/newline. For each token containing ‘-’, splits into first/second
- * Converts each side to unsigned via atoi, treating “_” as zero, although with last format of test files no "_" should happen
+ * Converts each side to unsigned via atoi, treating “_” as zero, although with last format of test files no "_" should happen //NOTE: en ese caso, por qué mis tests sí que lo contienen? Conceptualmente son fresh variables, por qué no deberían aparecer? Acaso ignorar esos mapeos no es impedimento para hacer la unificación?
  * Stores sequentially in mapping[]
  */
 void get_mapping(char *line, unsigned n_pairs, unsigned *mapping){
@@ -705,7 +705,7 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     // NOTE: rb->lineal_lineal_ was not set to false in the initialization, so unless it is the first subset
     // and it is lineal, it can have any value!!!
 
-    // Skip flattened schema
+    // Skip flattened schema // NOTE: ERRONEO en el segundo fragmento del M3 resultante en el test 119!!! En este punto apunta a la línea del mapping, no debería saltarlo...
     if (!first_is_non_lineal) getline(&line, &len, stream);
 
     // Iterate the main term rows
@@ -719,9 +719,9 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         // Get the mapping for each line, but initialize mgu_schema later
         if (not_first_subset)
         {
-            // Make a modifiable copy of the line to trim off the 'Mapping X-Y:'
+            // Make a modifiable copy of the line to trim off the 'Mapping X-Y:' // NOTE: en las versiones de mis tests no tenemos los mappings precedidos por Mapping X-Y!!! (en los nuevos tests pasados por Javier hay algunos ficheros finales que sí que lo contienen...)
             char *line_ptr = line;  
-            line_ptr = strchr(line_ptr, ':') + 2;
+            line_ptr = strchr(line_ptr, ':') + 2; // NOTE: debido a la falta del Mapping X-Y:, strchr devuelve NULL, y por lo tanto el get_mapping recibe la dirección 0x2 (2), resultando en segmentation fault en strtok...
             get_mapping(line_ptr, rb->c, mapping);
             getline(&line, &len, stream); // For reading line info
         }
@@ -734,6 +734,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         }
         else if (strstr(line, "not unifiable") != NULL)
         {
+            //NOTE: es necesario modificar el term? Si no unifican las filas correspondientes, para qué te creas una fila (main_term) vacía, y además el mgu_schema?
+            //  si estoy en lo cierto, en compare_results solo comparamos términos si los valid[i] de ambos result_blocks son 0 (han unificado)...
             rb->terms[row] = create_null_main_term();
             rb->terms[row].ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
             rb->valid[row] = 2;
@@ -951,25 +953,25 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
     unsigned lst_length = m*2; // NOTE: supongo que es porque en el peor de los casos, M2 tiene las mismas columnas que M3 y por tanto el index mayor en el unifier row que nos podemos encontrar es precisamente 2*m
     unsigned i;
 
-    L2 *lst = (L2*) malloc (lst_length*sizeof(L2));
-    for (i=0;i<lst_length;i++){
-        lst[i] = create_L2_empty();
+    L2 *lst = (L2*) malloc (lst_length*sizeof(L2)); // NOTE: el propio índice del array de L2s identifica la columna de los operandos (0..m-1 columnas de frag_M1 extended; m..2*m-1 columnas de frag_M2 extended)
+    for (i=0;i<lst_length;i++){                     // así, las listas de L3 que contiene cada uno se usa para identificar los índices de las variables (en los rangos anteriores) que han sido sustituidos por esa misma variable
+        lst[i] = create_L2_empty();                 // Por tanto, los L2 correspondientes a constantes/símbolos_de_función e incluso variables que no sustituyen a otras quedarán vacías.
     }
 
     // For each element pair, get indexes and perform (x<-y)
     for (i=0; i<2*m; i+=2)
     {
-        unsigned x = unifier[1+i]; 
-        unsigned y = unifier[1+i+1];
-        int val_y;
+        unsigned x = unifier[1+i];      // NOTE: we know x corresponds to a variable (y could correspond to another variable or not...)
+        unsigned y = unifier[1+i+1];    // NOTE: no two x-s nor two y-s will be equal (each (extended) column is unified with a unique (extended) column from the other row)
+        int val_y;                      //  pero más adelante, si una columna distinta corresponde a una variable repetida, pillamos el índice de su primera aparición
         int val_x; 
 
-        if (x == y && x == 0) continue; // Empty case
+        if (x == y && x == 0) continue; // Empty case //NOTE: equal constant symbols
 
         // If any of the two elements is a repeated variable, get real index
         if (x < c1 && row_a[x] < 0)
             x = -(row_a[x]+1);
-        else if (x >= m && (x-m) < c2 && row_b[x-m] < 0) 
+        else if (x >= m && (x-m) < c2 && row_b[x-m] < 0) //NOTE: the second check, although good practice for the latter array access, should be guaranteed if the first condition is met (and the data structure is as intended) --> change to an assert instead
             x = -(row_b[x-m]+1) + m;
         //NOTE: can't we optimize this only checking for one? If x comes from M1, y comes from M2...
         if (y < c1 && row_a[y] < 0) 
@@ -1004,12 +1006,12 @@ int correct_unifier(main_term *mt1, main_term *mt2, mgu_schema *ms, unsigned *un
         else if (val_x > 0 && val_y > 0) continue;             // And match
 
         // If x is constant and y is variable
-        if (val_x > 0 && val_y == 0) // (y<-x)
+        if (val_x > 0 && val_y == 0) // (y<-x) // NOTE: maybe an assert !(val_y < 0) would be helpful...
         {   
             // make the replacement on y
             lst[y].count = 1;
             lst[y].by    = x;
-            lst[y].ind   = y;
+            lst[y].ind   = y; // NOTE: este valor no se usa en ningún punto ... (en todo caso, serviría para contar la cantidad de variables que han sido sustituidos por algo en algún punto, para lo que ya tienes count...)
 
 
             // Update all variables replaced by y to be replaced by x
@@ -1152,15 +1154,18 @@ unsigned unifier_matrices(operand_block *ob1, operand_block *ob2, result_block *
             unsigned index_mt = i*rb->r2+j;
             mgu_schema *schema_holder = rb->lineal_lineal ? rb->ms : rb->terms[index_mt].ms;
             code = unifier_rows(&ob1->terms[i], &ob2->terms[j], schema_holder, unifier);
-            if (code != 0) continue; // Rows cannot be unified
-
+            if (code != 0) continue; // Rows cannot be unified // NOTE: cómo identificamos este caso más adelante en base al unificador? Porque no se modifica rb->valid[index_mt] = 2?
+                                                               // Además, el unificador correspondiente en el array unifiers queda sin inicializar!!!
+                                                               // --> No hace falta identificar. En unifiers, todos los unificadores correctos estarán contiguos, y se usará el
+                                                               //   last_unifier calculado aquí para saber cuantos hay (por eso se guarda al final de los unificadores los indices
+                                                               //   de las filas a las que corresponden, ya que esa información no está implícita en el array unifiers...)
 
             code = correct_unifier(&ob1->terms[i], &ob2->terms[j], schema_holder, unifier);
-            if (code != 0) continue; // Rows cannot be unified
-
+            if (code != 0) continue; // Rows cannot be unified // NOTE: number of substitutions calculado
+                                                               // 
             
-            unifier[1+(2*m)]   = i;
-            unifier[1+(2*m)+1] = j;
+            unifier[1+(2*m)]   = i; // NOTE: si una pareja de columnas no unifican, entonces estos identificadores habrán quedado como 0 0 
+            unifier[1+(2*m)+1] = j; //  no obstante, esta es una pareja válida ...
             memcpy(&unifiers[last_unifier*unifier_size],unifier,unifier_size*sizeof(unsigned));
             last_unifier++;
         }
@@ -1191,7 +1196,7 @@ unsigned unifier_matrices(operand_block *ob1, operand_block *ob2, result_block *
  */
 void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned *unifier){
     
-    const unsigned n = unifier[0]*2;
+    const unsigned n = unifier[0]*2;    //NOTE: this definitions can be introduced to more local scopes... (don't know if that would be harmful for use of CUDA...)
     const unsigned c1 = mt1->c;
     const unsigned c2 = mt2->c;
     const unsigned m  = mt3->c; 
@@ -1204,22 +1209,22 @@ void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned
     int length = (int)log10(2*m) + 2;
     char *y_str = (char *)malloc(length * sizeof(char));
     
-    // Copy the left row to the result row
-    memcpy(mt3->row, mt1->row, c1*sizeof(int));
-    int *row_a = mt3->row;
+    // Copy the left row to the result row      //NOTE: this is strange too... Since extra columns can be introduced in between the original columns of the
+    memcpy(mt3->row, mt1->row, c1*sizeof(int)); // fragment from M1... even columns for constants in M1 can be changed in M3...
+    int *row_a = mt3->row;                      // The rest of the row (columns c1 .. m-1) remains at 0.
     const int *row_b = mt2->row;
 
     for (i = 1; i < n; i+=2)
     {
-        x = unifier[i];
+        x = unifier[i];     // NOTE: sabemos que es un índice que se refiere a una columna correspondiente a una variable
         y = unifier[i+1];
         
-        if (x < m) // Only apply changes to left row
+        if (x < m) // Only apply changes to left row //NOTE: even with corrections to previous bugs, this seems fine (as long as new variables added to M1 are identified with c1..m-1)
         {
-            if (y < m) {val_y = row_a[y]; same_row=true;}
+            if (y < m) {val_y = row_a[y]; same_row=true;} // NOTE: if the first step of copying left row is changed, this has to be changed too...
             // else if (y < m) val_y = 0; // don't need this since row_a now is of size m, with the new columns already set to 0 on creation
             else if ((y-m) < c2) val_y = row_b[y-m];
-            else val_y = 0;
+            else val_y = 0; // NOTE: is this case even valid? Maybe as a hack for fresh variables...
 
             if (val_y > 0) // y is a constant, substitute all x references for the constant in y
             {
@@ -1229,21 +1234,21 @@ void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned
             else // y is a variable, so it can get tricky
             {
                 snprintf(y_str, length, "%d", y);
-                struct nlist *entry = lookup(unif_dict,y_str);
+                struct nlist *entry = lookup(unif_dict,y_str); // NOTE: unif_dict = var_index_str -> var_index_substituted
                 if (entry==NULL) // First appearance of y, do not substitute anything, but add appearance of y linked with x
                 {
                     // If some variable is substituted by a variable previous to itself, need to put it as reference 
                     if (same_row && x>y) // in this case we interchange x and y
                     {
                         row_a[x] = -(y+1); 
-                        same_row=false;
+                        same_row=false; // NOTE: unnecessary thanks to the set at the end of the iteration...
                         snprintf(y_str, length, "%d", x);
                         install(unif_dict,y_str,y);
                     } 
-                    else if (same_row)
+                    else if (same_row) // NOTE: is it guaranteed that the == case won't appear?
                     {
                         row_a[y] = -(x+1);
-                        same_row=false;
+                        same_row=false; // NOTE: unnecessary thanks to the set at the end of the iteration...
                         install(unif_dict,y_str,x);
                     }
                     else install(unif_dict,y_str,x);
@@ -1251,11 +1256,11 @@ void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned
                 else // Not first appearance: need to point all x references to previous (x<-y) [effectively (x<-(-z))]
                 {
                     int z = entry->defn;
-                    row_a[x] = -(z+1);
+                    row_a[x] = -(z+1);  // NOTE: couldn't we simply (to avoid post-reordering) check which one is bigger, and set -(smaller_i+1) to that? The entry would also be changed to point to the smaller index...
                     for (j=0;j<m;j++) if (row_a[j]==(int)(-(x+1))) row_a[j] = -(z+1);
                 }
             }
-            same_row = false;
+            same_row = false; // NOTE: I would put this at the beginning of the iteration...
         }
     }
 
@@ -1274,7 +1279,7 @@ void apply_unifier_left(main_term *mt1, main_term *mt2, main_term *mt3, unsigned
  * Performs necesary passes to correct chained references
  * Writes reordered values back into mt->row
  */
-void reorder_unified(main_term *mt, mgu_schema *ms)
+void reorder_unified(main_term *mt, mgu_schema *ms) //NOTE: i would say that this function can be cleaned, or even make it unnecessary with changes to the previous code...
 {
     // This can be handy since the main term needs to be the resulting main term, not the operand. This assertion does not guarantee that though
     unsigned c = mt->c;
@@ -1295,16 +1300,16 @@ void reorder_unified(main_term *mt, mgu_schema *ms)
     {
         int ref = before[i];
         unsigned reference = -(ref+1);
-        if (ref<0 && before[reference]!=0)
-        {
-            before[i] = before[reference];
+        if (ref<0 && before[reference]!=0) //NOTE: >0 should never happen (?, assert...), <0 maybe, so instead of several references we put the immediate one (this can happen?)...
+        {                                  // If this can happen, why it couldn't happen recursively? (several indirections...)
+            before[i] = before[reference]; // I would put a counter here to see how many times this happens... (or try to deduce from the previous code if this can happen at all...)
         }
     }
 
     for (unsigned i_after = 0; i_after < c; i_after++)
     {
         unsigned i_before = ms->common_L[i_after]-1; //NOTE: in the case of _, in common_L = 0 so we would get i_before = UINT32_MAX
-        // If the before column appears more than once in ms.common_L
+        // If the before column appears more than once in ms.common_L // NOTE: this shouldn't occur, no? Each column is unified with a single column from the other extended row...
         if (before_after[i_before] != -1) 
         {
             if (before[i_before]>0) after[i_after] = before[i_before]; // If the column is a constant, just copy the constant
@@ -1315,7 +1320,7 @@ void reorder_unified(main_term *mt, mgu_schema *ms)
         else
         {
             after[i_after] = before[i_before];
-            before_after[i_before] = i_after;
+            before_after[i_before] = i_after; // NOTE: this is not just for the check (current_idx obtained with this in the next loop)
         } 
     }
     

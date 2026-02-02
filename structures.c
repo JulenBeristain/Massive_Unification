@@ -211,7 +211,7 @@ void print_operand_block(operand_block* ob, unsigned matrix_idx, int verbosity) 
 
 // ===<<< BEGIN RESULT BLOCK >>>=== //
 result_block create_null_result_block() {
-    result_block rb;
+    result_block rb; // NOTE: this function is equivalent to: result_block rb = {}; // A zero-initialization of a struct (the latter is the preferred option...)
     rb.t1 = 0;
     rb.t2 = 0;
     rb.r1 = 0;
@@ -223,6 +223,7 @@ result_block create_null_result_block() {
     rb.terms = NULL;
     rb.valid = NULL;
     rb.ms = NULL;
+    rb.lineal_lineal = false;   // NOTE: this was causing non-linear blocks to fail the obtention of the mgu_schema in the parsing phase...
     return rb;
 }
 

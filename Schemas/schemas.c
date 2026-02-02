@@ -301,7 +301,7 @@ void variables_in_schema_(Schema *schema, SetVariables *vars){
 //  avoiding even shallow copies. It would be interesting to investigate how functional/logic/
 //  declarative programming languages handle this situation where we want to obtain a new object
 //  modifying just some recursive subparts of it (if possible avoiding copying the part that original
-//  and result keep in common by means of the possibilities of immutable data structures...).
+//  and result keep in common by means of the possibilities of immutable data structures...) --> persistent data structures.
 Schema *substitute(Schema *original, Variable v, Schema *substitution){
     Schema *result = malloc(sizeof(*result));
     if(result == NULL){

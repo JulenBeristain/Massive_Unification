@@ -88,8 +88,10 @@ void print_schema(Schema *s);
 /**
  * FUTURE WORK:
  * Finish the managing of schemas and obtention of column index mapping
- * Optimize further the core of the unification with matrices (and parallelize it)
+ * Optimize AND SIMPLIFY further the core of the unification with matrices (and parallelize it)
  * Postprocess results to normalize the mappings...
+ * Management of exception blocks...
+ * 
  * Manage the inductive terms; i.e., implement flatenning matrix extension in C
  * Implement boolean operations between matrices in C
  * Repropose the code removing a dimension from the matrix...

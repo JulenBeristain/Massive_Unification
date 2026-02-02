@@ -33,7 +33,18 @@
 /**
  * NOTE: the size and capacity that were remaining are not important. 
  *       After a free, the ArrayList shouldn't be used more.
- * NOTE: be careful with dangling pointers...
+ * TODO: be careful with dangling pointers. If, for example, schemas
+ *       are freed starting from the root of the "tree", then all 
+ *       these pointers in the dependency list will be dangling
+ *       (on the other hand, we are going to do a change from 
+ *       ArrayList to HashSet there...). We should have to versions
+ *       for freeing an ArrayList of pointers: on where free is
+ *       called upon each pointer (for the cases where malloc 
+ *       was called with the pointer in the array itself) and 
+ *       the other where free isn't called (for when we only
+ *       have references to already malloced structures elsewhere),
+ *       this sounds something like the ownership-borrowing concepts
+ *       in Rust...
  */
 #define DEFINE_ARRAYLIST_OF_POINTERS_DELETION(Name, name, type) \
                                                                 \

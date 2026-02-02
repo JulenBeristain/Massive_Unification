@@ -200,6 +200,34 @@
                 "ignoreFailures": true
             }
         ]
+    },
+    {
+        "name": "Debug Alex core.c test0110 original matrix (gdb)",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/c",
+        "args": ["${workspaceFolder}/data/original_matrices/AGT006+1/test0110M1.csv", 
+                 "${workspaceFolder}/data/original_matrices/AGT006+1/test0110M2.csv",
+                 "${workspaceFolder}/data/original_matrices/AGT006+1/test0110M3.csv"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "preLaunchTask": "build tests (gcc)",
+        "setupCommands": [
+            {
+                "description": "Enable pretty-printing for gdb",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": true
+            },
+            {
+                "description": "Set Disassembly Flavor to Intel",
+                "text": "-gdb-set disassembly-flavor intel",
+                "ignoreFailures": true
+            }
+        ]
     }
     ]
 }

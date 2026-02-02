@@ -1,0 +1,246 @@
+    NOTAS SOBRE CORE.C Y NUESTROS FICHEROS TEST
+
+=================================================================================================================
+
+Descripción de los ficheros test:
+
+    Los ficheros test que tengo parecen coincider bastante bien con los parsers del código, a excepción
+    de dos puntos que hacen que la ejecución falle (especialmente el primero):
+    
+    1. En los ficheros de las matrices M3, en las líneas que mapean los índices de las columnas originales,
+        las nuevas variables (es decir, columnas) introducidas para extender las filas originales en los 
+        ficheros M1 y M2 se identifican con '_', lo cual contradice a la documentación en los comentarios de
+        la función get_mapping.
+
+    2. En los fragmentos resultantes en M3 que no son el primero (no lineales), las líneas que corresponden al mapping 
+        de los índices de las columnas no están precedidas por "Mapping X-Y:". 
+
+    Si miramos el mapping del fichero del test 119, es muy diferente al de los dos anteriores: las primeras 13 columnas 
+    se unifican entre si, después se han tenido que añadir 3 columnas adicionales para M2, y por último las columnas 
+    restantes se unifican entre si. Es un mapeo bastante natural y esperable.
+    
+    En cambio, los mapeos de los tests 2 y 10 son un tanto extraños. Parece como si simplemente estuviera extendiendo 
+    la fila de M1 con la de M2 (en el test 10 sí que hay un par de columnas que se tratan de unificar, pero en el resto 
+    de los casos las columnas originales están mapeadas a una columna nueva de la otra matriz).
+
+    Los tests proceden del conjunto AGT.
+
+=================================================================================================================
+
+Funcionamiento esperado de las funciones principales de core.c (en matrix_intersection):
+    
+    - get_mapping: al obtener los mapeos parsea todas las '_' como 0, ya que indica que el formato actual de los
+        ficheros no debería incluir ese símbolo en los mapping de columnas (mis casos de test sí que lo hacen).
+    
+    - unifier_matrices: calcula los unificadores de todos los pares de filas de los fragmentos de entrada. Cada 
+    array unificador contiene: 1) el número de duplas válidas, 2) duplas de índices y  3) un par de números 
+    más que identifican las filas a las que corresponde el unificador. Las duplas de índices son mapeos de las 
+    columnas originales. Por cada par de filas:
+
+        - unifier_rows: hace tres cosas: los indices 1-based del mapping en los ficheros pasan a ser 0-based; 
+        como simplemente el índice no basta para saber si nos referimos a una columna de M1 o M2, sumamos la 
+        cantidad de columnas en la fila extendida resultante (que es mayor o igual al número de columnas del 
+        fragmento de M1) a los índices de M2 (así, sabemos que los que superen ese valor son índices de M2 que 
+        podemos recuperar restando ese mismo valor); y por último, swapeamos los índices que aparecen en el 
+        mapping del fichero si el de M2 indica una variable y el de M1 una constante.
+
+        - correct_unifier: genera un array de 2*m L2s (siendo m la cantidad de columnas en la fila extendida, es 
+        decir, en M3). Los índices del array están particionados de esta forma: [0, c1), los índices de las 
+        columnas originales de M1; [c1, m), relleno (en caso de que c1=m, no habría L2s de relleno);
+        [m, m+c2), los índices de las columnas originales de M2 (desplazados por m); [m+c2, 2*m), relleno 
+        (en caso de que c2=m, no habría este relleno final). Cada L2 contiene información sobre el propio
+        símbolo de su índice correspondiente más una lista de L3s. La información sobre el propio símbolo se 
+        modifica solo en el caso de variables, ya que lo que se guarda es por qué otro símbolo (constante o 
+        variable) se ha modificado. En cambio, en la lista de L3s se guardan los índices correspondientes a 
+        las variables que han sido sustituidos por el símbolo al que corresponde el L2 (que puede ser una 
+        constante perfectamente). Una vez construido este array, se itera sobre todos los L2, y en caso de que 
+        sea una constante o una variable que no ha sido sustituida, se itera sobre su lista de L3s incluyendo
+        en el unificador final los pares indiceL3-indiceL2. Para terminar, en la iteración anterior se ha 
+        contado la cantidad de pares incluidos en el unificador, asignando al primer unsigned del unificador
+        dicho número (para saber cuantos mapeos hay que tener en cuenta en apply_unifier_left).
+
+    Se completa cada unificador añadiendo explícitamente la pareja de índices de filas a la que corresponde. Así, 
+    los unificadores calculados están todos contiguos en el array de unificadores, no en posiciones más fragmentadas 
+    dependientes de las filas que unifican. Gracias a ello, posteriormente es suficiente con iterar sobre las 
+    primeras posiciones del array de unificadores, ya que cada unificador tiene la información de cuales son las 
+    filas que unifica. Por cada unificador se llama a estas dos funciones:
+
+    - apply_unifier_left: empieza por copiar la fila de M1 en la fila M3 resultante que se computa (no la leída
+    del fichero)*, ya que aplicar el unificador en cualquiera de las dos filas da el mismo resultado por el propio
+    funcionamiento de la unificación. Después, itera sobre todos los pares (sustituciones) x-y (índices) en el 
+    unificador. Solo si x está en la partición [0, m), pasamos a hacer la sustitución row[x]=val_y. La casuística
+    de val_y es variada*, dependiendo de si viene de M1 o M2, si es constante o variable, si es una variable que 
+    antes ya ha sustituido a otra variable, etc. Como detalle importante, unif_dict contiene pares de índices 
+    (aunque el primero como string) de variables, donde cada par significa que en row, en la posición del primer 
+    índice, se ha sustituido una referencia a la variable del segundo índice (es decir, -(segundo_indice + 1)). Por 
+    ello, el primer índice siempre es mayor que el segundo.
+
+    * Mirar dudas abajo...
+
+    - reorder_unified: hace cuatro iteraciones sobre row con copias intermedias para corregir referencias a otras 
+    variable y/o cadenas de referencias. Por ejemplo, si en un índice tenemos una referencia a una columna posterior,
+    el valor 0 debería estar en el índice menor, y el mayor debería tener la referencia a la columna de menor índice.
+    Por otro lado, si hay referencias encadenadas, se simplifican para que todas las referencias apunten a la primera
+    aparición de la variable, es decir, justo la columna donde tenemos el valor 0.
+
+=================================================================================================================
+
+Fallos al ejecutar el código:
+
+Test 2 / 10 / 119(fragmento resultante 1) - verbose:
+    Llegamos a ejecutar print_mgu_schema con un null pointer (pasándole el mgu_schema de un 
+    main_term en concreto en vez del mgu_schema apuntado por el result_block, cuando al ser 
+    un fragmento lineal, para guardar memoria, solo el result_block apunta al mgu_schema común 
+    a todas las filas), provocando un segmentation fault. Este print en modo verbose se ejecuta 
+    al comparar el result_block calculado y el leído del fichero. En los casos 2 y 10, porque 
+    tenemos valores distintos en los array valid; en el caso 119, porque las filas unificadas
+    resultantes son ligeramente distintas (falla en compare_main_terms). Es decir, en el fichero 
+    vemos que unifican, pero en la ejecución no se ha podido llevar a cabo la unificación o 
+    hemos obtenido filas distintas. Este segmentation fault en si no es el verdadero problema,
+    sino que llegamos a una parte del código en un estado que no esperábamos por un comportamiento
+    inesperado previo.
+
+    El verdadero problema empieza en get_mapping al leer los ficheros M3. Las '_' deberían corresponder a variables 
+    frescas que han sido introducidas al extender los fragmentos de las matrices para poder unificarlas.
+    Son sustituidos todas por 0, y como más tarde este valor no tiene un tratamiento especial, el programa
+    interpreta que todas las variables nuevas introducidas son una misma variable, cuando, en todo caso,
+    solo las extensiones de las variables repetidas debería repetirse a su vez. En cualquier otro caso, 
+    deberían ser variables distintas.
+
+    Cuando llegamos a unifier_matrices, ya en unifier_rows vemos comportamientos extraños: al cambiar a 0-based, 
+    es decir, al restar 1 en la llamada a unifier_a_b, en el caso de las variables nuevas el argumento queda con el 
+    valor UINT32_MAX. Por tanto, en el caso de índice de M2, al sumarle el número de columnas en la matriz extendida, 
+    queda esa cantidad menos 1. Además, al comienzo de esta última función, la comprobación de si algún índice es de 
+    las nuevas columnas (es decir, de una variable fresca) no coincide con haber guardado los '_' como 0 al leer el 
+    fichero. En vez de comprobar simplemente si son iguales a 0 (o UINT32_MAX) se comprueba si el índice es mayor a la
+    cantidad de columnas en el fragmento original, como si las columnas de las variables nuevas empezaran a identificarse
+    a partir del número de columnas original más 1.
+
+    Así, tras unifier_rows, en el unificador los índices de todas las variables nuevas de M1 quedan con el mismo valor,
+    UINT32_MAX (para M2 es la cantidad de columnas de la fila extendida menos 1).
+
+    Siguiendo en unifier_matrices, en correct_unifier, los valores especiales anteriores para las variables frescas de 
+    M1 y M2 pueden dar problemas. Al inicio, al tratar de comprobar si es una variable repetida, las comprobaciones de
+    si el índice corresponde a M1 o M2 en el caso de las variables nuevas no funciona. Por lo tanto, nos quedaríamos sin 
+    obtener el índice de la primera aparición de variables frescas repetidas (las que extienden a variables repetidas 
+    originales). Este problema no lo experimentamos porque en los ficheros de prueba no hay variables repetidas. 
+    Además, hay un caso concreto que es problemático (que sí se da en el test 119): si el número de columnas de M1 es 
+    igual al de la fila extendida (m), una variable nueva de M2 (con índice (erroneo) m-1) se interpretará como variable 
+    de M1, potencialmente coincidiendo con una variable original repetida y por tanto cambiando el índice a la primera 
+    aparición de dicha variable en M1 (este potencial cambio no se da en el test 119, sino otro problema explicado abajo). 
+    Después, al cambiar los índices si la variable ha sido sustituido previamente, podría darse el caso de que 
+    x = UINT32_MAX, y por tanto, estaríamos accediendo fuera del array de L2s, con posible segmentation fault 
+    (en las ejecuciones de 2 y 10 no ocurre porque antes de llegar a ese caso ocurre un clash artificial, y en el 119 
+    porque no se ha tenido que extender M1). Justo después, cuando no estamos ante un índice inesperado
+    (como la situación que estamos comentando) los val_x/y se inicializan a 0, lo cual solo es correcto si estamos hablando
+    de variables frescas no repetidas (este problema no se da en los tests). Luego vienen las comparaciones con los val_x/y. 
+    El manejo de estos y los L2s es correcto. Eso sí, por los errores anteriores con los índices de las variables nuevas, 
+    se dan clashes artificiales en los test 2 y 10, justamente por lo que hemos comentado antes: considera a todas las 
+    variables nuevas introducidas al extender M2 (y a M1) como la misma variable, por lo que dos variables nuevas distintas
+    que unificarían sin problemas con dos constantes distintas producen un clash.
+
+    En el caso de los tests 2 y 10, no es capaz de calcular ningún unificador: es decir, en todos los casos de pares 
+    de filas llegamos a producir un clash artificial.
+    
+    En el caso del primer fragmento del test 119 calcula 472 unificadores, pero incorrectos, al menos para la fila 2450. 
+    Las filas anteriores pasan el test de corrección simplemente porque de hecho no unifican y esos clashes reales se
+    detectan en unifier_rows. Parece que no ocurren clashes artificiales porque la variable nueva (que deberían ser 
+    tres) que extiende a M2 se unifica con tres variables distintas de M1. Cuando llegamos al primer par de filas que 
+    unifican (11-1), entonces tres variables distintas originales de M1 (columnas 13, 14, 15) unifican con la variable 
+    fresca de M2, pero además, como resulta que el número de columnas de M1 es el mismo que el de M3, al llegar al 
+    mapeo 35-32 (35 es el número de columnas extendida menos 1, es decir, el índice que hemos dado a la variable 
+    fresca de M2), correct_unifier interpreta que nos estamos refiriendo a la variable de 15 (la variable fresca
+    ya se ha unificado con 13, 14 y 15), no al 35 real (la última variable de M1 se pierde!), y por tanto dichas tres 
+    variables de M1 (y la variable fresca de M2) unifican con la última columna de M2 (que es otra variable).
+
+    Así, después de apply_unifier_left, 13, 14 y 35 apuntan a 15 (-16), es decir, se han unificado a la misma variable. 
+    El problema es que 35 debería haberse unificado con otra variable de M2, no el mismo que los otros tres, quedando 
+    row_M3[35] = 0. Además, los tres 13, 14 y 15, y no solo 15, deberían estar a 0, ya que son tres variables nuevas 
+    distintas.
+
+    Por último, en reorder_unified se arreglan las referencias de columnas menores a mayores. Es decir, la columna que
+    pasa a tener el valor 0 es 13, y las demás (14, 15 y 35) pasan a referencia a esta columna (valor -14). Como vemos,
+    eso no arregla el hecho de que todas esas columna han unificado a una misma variable, cuando deberían ser todos 
+    distintos, fallando posteriormente en compare_results->compare_main_terms.
+
+
+Test 2 / 10 - no verbose:
+    Ocurre el mismo error anterior, pero al no llegar a producirse ningún segmentation fault por
+    alguna llamada con un valor no esperado, la ejecución termina. En los print finales vemos que 
+    el result_block calculado no es igual al esperado:
+
+    M1 blocks 1, M2 blocks 1, Not OK, 1/1, 0.037207888, 0.008794240, 0.000368232, 0.009162472, 0.046687816
+    M1 blocks 1, M2 blocks 1, Not OK, 1/1, 1.810061772, 0.335755848, 0.088431990, 0.424187838, 2.264028303
+
+Test 119(fragmento resultante 2) - no verbose:
+    En este caso, parecido al caso no verbose anterior, el primer fragmento es distinto al esperado* por los 
+    motivos que ya hemos explicado. Aún así, la ejecución sigue con el siguiente fragmento resultante, pero
+    en este caso lo que falla es que read_result_matrix espera que las líneas que contienen los mapeos de los
+    fragmentos no lineales empiecen por "Mapping <X>-<Y>: [...]". Eso no se da en los .csv de prueba que tengo. 
+    Además, debido a la lógica usada con first_is_non_lineal y not_first_subset se han leído ciertas
+    líneas de más, saltándose la línea que contiene el mapeo (no precedido por "Mapping"). Con todo ello, 
+    la llamada get_mapping recibe el valor 2 como puntero a la línea, y por tanto strtok falla con un segmentation
+    fault.
+
+    *               x  0  1 2 3 4  5   6  7   8  9        13 14  15                                                              35
+    mt3  (me):      0,283,0,0,0,0,280,283,21,283,22,0,0,0,0,-14,-14,23,282,280,283,21,283,22,0,0,0,23,282,280,283,21,283,22,0,0,-14
+    mt3 (csv):      0,283,0,0,0,0,280,283,21,283,22,0,0,0,0, 0 , 0 ,23,282,280,283,21,283,22,0,0,0,23,282,280,283,21,283,22,0,0, 0
+                                                             ^   ^                                                               ^   
+=================================================================================================================
+
+Notas:
+    - La versión optimizada falla en los mismos puntos.
+
+=================================================================================================================
+
+Dudas:
+
+    - En la experimentación, ¿los ficheros de testeo que se utilizaron tenían otro formato ligeramente distinto?
+    ¿Cómo se identificaron en los mapeos de los índices de columnas las nuevas columnas introducidas? ¿Con nuevos
+    números entre el número de columnas original y de la fila extendida? ¿O resulta que justo las instancias que 
+    se usaron en la experimentación no tenían necesidad de introducir nuevas columnas?
+
+    - En la experimentación, ¿los ficheros de testeo de M3 tenían el prefijo "Mapping X-Y:" en el caso de los 
+    mapeos de los fragmentos no lineales (es decir, todos salvo el primero)?
+
+    - En apply_unifier_left, ¿realmente se puede copiar directamente la fila original de M1 en la fila resultante de M3?
+    Al extender M1 las columnas nuevas pueden introducirse entre medias, no solo al final, y por tanto, incluso las 
+    columnas originales correspondientes a constantes en M1 pueden ser desplazados hacia la derecha en M3, si no me 
+    equivoco.
+    
+        Justo en el test 119 ocurre que M1 y M3 tienen las mismas columnas, por lo tanto no vemos el efecto que
+    acabo de comentar. Los tests 2 y 10 no llegan a ejecutar esta función porque no se calcula ningún unificador.
+
+        En la experimentación, ¿esta parte del código no dio problemas porque en todos los casos la cantidad de columnas
+    de la matriz resultante coincidía con el número de columnas de la primera matriz?
+
+    - También en apply_unifier_left, en el caso de que un 'y' ya estuviera en unif_dict (es decir, que ya hubiera 
+    sustituido a otra variable) no se hacen comprobaciones parecidas a la otra parte de este condicional 
+    (donde se comprueba si x>y). Se podrían comparar 'x' y 'z' para ver cuál es el índice menor, y asi decidir
+    sobre cual hacer la sustitución (es decir, saber cuál es el índice mayor en el que sustituir la referencia 
+    al otro índice menor), ajustando la entrada en unif_dict. ¿Este ajuste sería suficiente para hacer innecesario
+    la llamada posterior a reorder_unified? ¿O hay otras partes del código aparte del mencionado que puede introducir
+    referencias invertidas o concatenadas?
+
+=================================================================================================================
+
+Comentarios sobre las dudas:
+    
+    - Las dudas clave son las dos primeras (incluso la pregunta final en la tercera), que tienen que ver con el formato
+    de los tests que se usó en la experimentación, dado que tengo la sensación de que fue ligeramente distinto al 
+    de los tests de prueba que tengo. Los ajustes a hacer al aclarar cómo se identifican las variables nuevas 
+    introducidas al extender las filas en los ficheros deberían ser sencillos.
+
+    - La tercera duda también puede estar relacionado con posibles errores que podrían ocurrir en casos de prueba 
+    distintos a los que tengo. Tal y como entiendo el algoritmo, las matrices M1 y M2 ya están fragmentadas, y cada
+    fragmento ya está extendido en función del esquema común del fragmento. No obstante, al combinar pares de filas de 
+    pares de fragmentos, se tiene que calcular (es lo que estoy implementando ahora, lo que por ahora se hace solo en el 
+    código de Prolog y se refleja en los ficheros de M3) el esquema común de los esquemas de los dos fragmentos que 
+    se están combinando. En base a ese esquema común, se vuelven a extender las filas de M1 y M2 para que los dos tengan 
+    la misma cantidad de columnas, igual a la cantidad de columnas de la fila unificada resultante para este fragmento 
+    en concreto de M3. Al calcular la fila unificada resultante, lo que se podría copiar en la fila de M3 sería la fila 
+    de M1 extendida, más que la fila original. En core.c creo que en ningún punto se extiende explícitamente la fila de M1
+    en un array, sino que jugamos con el mgu_schema obtenido del mapeo de las columnas. Creo que este planteamiento es 
+    válido, pero requiere un ajuste en esa copia directa de la fila original de M1 a la de M3.
+
+    - La cuarta duda es más sobre una posible optimización y simplificación del código.
