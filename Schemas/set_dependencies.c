@@ -1,5 +1,6 @@
 #include "set_dependencies.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 /// HASH FUNCTION //////////////////////////////////////////////////////////////////////////
@@ -238,4 +239,15 @@ void print_hash_map_dependencies_separator(HashMapDependencies hm, const char *s
         }
     }
     printf("}");
+}
+
+
+/////////////////////////////////////////////////////////////
+/// SIMPLER VERSION OF SET OF DEPENDENCIES FOR A BASELINE
+/////////////////////////////////////////////////////////////
+
+void print_dependency_pair(DependencyPair pair){
+    printf("($%u <- ", pair.v);
+    print_array_list_schema(pair.schemas);
+    printf(")");
 }

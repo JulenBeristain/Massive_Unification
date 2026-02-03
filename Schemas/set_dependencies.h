@@ -3,7 +3,7 @@
 
 #include "set_variables.h"  // For Variable
 #include "schemas.h"        // For Schema
-#include "arraylist.h"      // For ArrayListSchemaPtr
+#include "arraylist.h"      // For ArrayListSchemaPtr and ArrayListSchema
 #include <stdint.h>
 
 /**
@@ -80,5 +80,19 @@ typedef HashMapDependencies SetDependencies;
 #define lookup_set_dependencies lookup_hash_map_dependencies
 #define print_set_dependencies print_hash_map_dependencies
 #define print_set_dependencies_separator print_hash_map_dependencies_separator
+
+
+/////////////////////////////////////////////////////////////
+/// SIMPLER VERSION OF SET OF DEPENDENCIES FOR A BASELINE
+/////////////////////////////////////////////////////////////
+
+// We are going to use a simple ArrayList of these DependencyPairs. See arraylist.c/h
+
+typedef struct DependencyPair {
+    Variable v;                 // NOTE: in this case, we could use a uint64_t to take advantage of the inevitable padding
+    ArrayListSchema schemas;
+} DependencyPair;
+
+void print_dependency_pair(DependencyPair pair);
 
 #endif

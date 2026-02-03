@@ -7,8 +7,8 @@
  */
 void init_variable_schema(Schema *s, Variable v){
     s->type = VARIABLE_SCHEMA;
-    s->v = v;
     s->size = 1;
+    s->v = v;
 }
 
 /**
@@ -17,6 +17,7 @@ void init_variable_schema(Schema *s, Variable v){
  */
 void init_general_schema(Schema *s, unsigned arity) {
     s->type = GENERAL_SCHEMA;
+    s->size = 1;
     s->arity = arity;
     if (arity) {
         s->subschemas = malloc(arity * sizeof(*(s->subschemas)));
@@ -25,31 +26,6 @@ void init_general_schema(Schema *s, unsigned arity) {
             exit(EXIT_FAILURE);
         }
     }
-    s->size = 1;
-}
-
-// NOTE: this initialization functions won't be used because we are not going to work with inductive
-//  terms in C.
-void init_schema_from_term_and_variables(Schema *schema, Term *term, SetVariables set_variables){
-    if(term->type == VARIABLE_TERM){
-        if(lookup_set_variables(set_variables, term->v)){
-            init_variable_schema(schema, term->v);
-        } else {
-            init_general_schema(schema, 0);
-        }
-    } else {
-        init_general_schema(schema, term->arity);
-        Schema *subschema = schema->subschemas;
-        Term *subterm = term->subterms;
-        for(uint32_t i = term->arity; i; --i, ++subschema, ++subterm){
-            init_schema_from_term_and_variables(subschema, subterm, set_variables);
-            schema->size += subschema->size;
-        }
-    }
-}
-void init_schema_from_term(Schema *schema, Term *term) {
-    SetVariables rep_t = repeated_vars_in_term(term);
-    init_schema_from_term_and_variables(schema, term, rep_t);
 }
 
 /**
@@ -65,41 +41,17 @@ unsigned schema_size(Schema *s){
     return total_size;
 }
 
-
-/**
- * NOTE: pointers to repeated_vars and vars are perfectly valid candidates for
- *       the term struct.
- * NOTE: these functions won't be used because we are not working with inductive terms in C.
- */
-SetVariables repeated_vars_in_term(Term *t){
-    SetVariables vars = create_set_variables_defsize();
-    SetVariables repeated_vars = create_set_variables_defsize();
-    repeated_vars_in_term_(t, &vars, &repeated_vars);
-    return repeated_vars;
-}
-static void repeated_vars_in_term_(Term *t, SetVariables *vars, SetVariables *repeated_vars){
-    if(t->type == VARIABLE_TERM){
-        SetInsertReturnCode code = insert_to_set_variables(vars, t->v);
-        if(code == SET_INSERT_ALREADY_CONTAINED) {
-            insert_to_set_variables(repeated_vars, t->v);
-        }
-    } else {
-        Term *subterm = t->subterms;
-        for(unsigned i = t->arity; i; --i, ++subterm){
-            repeated_vars_in_term_(subterm, vars, repeated_vars);
-        }
-    }
-}
-
+// TODO: implement a "disjoint" version that first checks if the pointers are equal (useful at all? In what
+//  case would we call to this function with the same pointer as both arguments?). Note
+//  that if we end up caching all the schemas so no Schema appears more than once in memory, this function  
+//  can be simplified to a pointer comparison.
 // NOTE: useful for arraylist of pointers to Schemas
 bool equal_schemas(Schema *s1, Schema *s2){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v) { return true; }
     if(s1->type == GENERAL_SCHEMA && s2->type == GENERAL_SCHEMA && s1->arity == s2->arity) {
-        unsigned arity = s1->arity;
-        if(arity == 0) { return true; }
         Schema *sub1 = s1->subschemas;
         Schema *sub2 = s2->subschemas;
-        for(; arity; --arity, ++sub1, ++sub2){
+        for(unsigned arity = s1->arity; arity; --arity, ++sub1, ++sub2){
             if(!equal_schemas(sub1, sub2)) { return false; }
         }
         return true;
@@ -107,6 +59,7 @@ bool equal_schemas(Schema *s1, Schema *s2){
     return false;
 }
 
+// TODO: modify or add an extra version to mimic Javier's format when printing schemas
 // NOTE: useful for arraylist of pointers to Schemas
 void print_schema(Schema *s){
     if(s->type == VARIABLE_SCHEMA){
@@ -124,14 +77,22 @@ void print_schema(Schema *s){
     }
 }
 
+// TODO: implement read_schema | read_dependencies
+
+// TODO: implement a version that receives two set of dependencies? Or is it enough to instantiate a single set of dependencies
+//  and insert to it the dependencies of both set-schemas? Is this problematic? ...
+// TODO: even here should we check for self dependencies to avoid unnecessary computation
 // PRE: common should have been just defined or allocated, and the set of dependencies should be empty in the first call (not
 //  in the recursive ones, since we are calcullating the union of all the dependencies).
 // RES: further subschemas are allocated when needed. Shallow copies of the tail schemas are made in case of schemas with 
 //  different arities. We insert all the dependencies found into the set of dependencies passed by reference.
 void common_schema(Schema *s1, Schema *s2, Schema *common, SetDependencies *dependencies){
-    // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange...
+    // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange... -->
+    //  --> start by NOT inserting it in the set of dependencies...
     // TODO: in the set of dependencies we have pointers to Schemas as values. Be careful with dangling pointers (see where 
-    //  the schemas are freed).
+    //  the schemas are freed) --> Remove the schemas freeing only the set schema that contains them. Anywhere else, don't
+    //  call free upon them (dangling pointer).
+    // TODO: modify insert to set dependencies as needed to avoid having the same dependency more than once (respect set semantics)
     if (s1->type == VARIABLE_SCHEMA) {
         init_variable_schema(common, s1->v);
         insert_to_set_dependencies(dependencies, s1->v, s2);
@@ -175,8 +136,6 @@ void common_schema(Schema *s1, Schema *s2, Schema *common, SetDependencies *depe
  */
 int common_schema_dependencies(Schema *s1, Schema *s2, SetDependencies *dependencies){
     // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange...
-    // TODO: in the set of dependencies we have pointers to Schemas as values. Be careful with dangling pointers (see where 
-    //  the schemas are freed).
     if (s1->type == VARIABLE_SCHEMA) {
         if(is_self_dependency(s1->v, s2)){ return -1; }
         insert_to_set_dependencies(dependencies, s1->v, s2);
@@ -205,22 +164,22 @@ int common_schema_dependencies(Schema *s1, Schema *s2, SetDependencies *dependen
     size_t i = 0;
     for(; i < min_arity; ++i){
         int num_new_deps = common_schema_dependencies(s1->subschemas + i, s2->subschemas + i, dependencies);
-        if(num_new_deps == -1){
-            return -1;
-        }
+        if(num_new_deps == -1){ return -1; }
         num_new_dependencies += num_new_deps;
     }
     return num_new_dependencies;
 }
 
-// NOTE: common-set-schema combination function, if we are just using Schemas to represent common-schemas, is
-//  simply the common_schema function itself!
+// TODO: common-set-schema combination function (just an iteration over schemas).
+//  When dealing with M1 and M2 matrices, to have set-schemas with the same length, first is necessary to 
+//  set an ordering of all free variables...
 
 
 bool is_self_dependency(Variable v, Schema *schema){
     // TODO: if this is the first case; i.e., the Schema is the Variable v itself? If we need a special treatment for this
     //  we can implement a separate non-recursive interface function that handles this special case and then calls to this
-    //  function.
+    //  function. --> At first, we are ignoring v->v dependencies, so, as we know that we won't encounter that case, we don't
+    //  need that special treatment.
     if(schema->type == VARIABLE_SCHEMA){
         return v == schema->v;
     }
@@ -234,6 +193,7 @@ bool is_self_dependency(Variable v, Schema *schema){
     return false;
 }
 
+// TODO: if dependencies of a variable change their data structure, modify this too...
 bool has_self_dependency(ArrayListSchemaPtr schemas, Variable v){
     foreach_in_arraylist(SchemaPtr, schema, schemas){
         if(is_self_dependency(v, *schema)){
@@ -260,17 +220,20 @@ int theta_rule1(SetDependencies *dependencies, HashMapDependenciesNode *node_dep
     int num_new_dependencies = 0;
     ArrayListSchemaPtr schemas = node_dep->schemas;
     // NOTE: since we are making a local copy of the schemas struct, schemas.size will remain the same even if 
-    //       new dependencies would be added to schemas.array (so only node->schemas is modified!).
+    //       new dependencies would be added to schemas.array (so only node->schemas is modified!). That way, 
+    //       we ensure that we only take into account the schemas that were initially stored in the list of 
+    //       dependencies of the variable at the start of this loop iteration.
+    // TODO: There are three options: the new schema is added to the current node->schemas; or it's added to a previous
+    //  node_pre; or it's added to a posterior node_post. In the latter case we don't have a problem, the new
+    //  schema will be taken into account in this loop. In the second case, the simplest option to take it into
+    //  account is to keep looping while new dependencies are added; the strategy of avoiding the same gamma x gamma_
+    //  operations can remove this necessity. Finally, we could take into account the newly added schemas to the 
+    //  current node_dep, but we would need an extra (nested) loop in this function (for each new schema added
+    //  to node_dep, we would need to compute the common schema between it and the schemas that were already in node_dep).
     for(size_t i = 0; i < schemas.size; ++i){
         for(size_t j = i + 1; j < schemas.size; ++j){
             int num_new_deps = common_schema_dependencies(schemas.array + i, schemas.array + j, dependencies);
-            // NOTE: since we stop as soon as a self-dependency is found, we are not modifying the same
-            //       schemas arraylist we are iterating over. Even in that case, since schemas.size remains the same
-            //       (see previous note), we would only apply this rule to the schemas that were initially in the arraylist.
-        
-            if(num_new_deps == -1){
-                return -1;
-            }
+            if(num_new_deps == -1){ return -1; }
             num_new_dependencies += num_new_deps;
         }
     }
@@ -317,7 +280,7 @@ void substitute_(Schema *original, Variable v, Schema *substitution, Schema *res
         if(original->v == v){
             *result = *substitution;
         } else {
-            init_variable_schema(result, v);
+            init_variable_schema(result, original->v);
         }
     } else {
         init_general_schema(result, original->arity); // NOTE: ->subschemas allocated; ->size = 1
@@ -352,7 +315,7 @@ int theta_rule2(SetDependencies *dependencies, HashMapDependenciesNode *node_dep
         //  2) implement an auxiliar recursive function to iterate over all variables in a schema and perform
         //     the rest of the operations (possible early return)
         //TODO: would be interesting to consider having a pointer to the set of variables in the Schema struct itself,
-        //  to avoid recalculating it in each successive call to theta_rule2...
+        //  to avoid recalculating it in each successive call to theta_rule2... watch out modifications!
         SetVariables ws = variables_in_schema(gamma);
         foreach_in_setvariables(ws, node_var){
             Variable w = node_var->v;
@@ -370,9 +333,7 @@ int theta_rule2(SetDependencies *dependencies, HashMapDependenciesNode *node_dep
                 //          we would arrive to the same base case...)
                 //  Related to this: num_new_dependencies has to be updated accordingly. It doesn't have to be incremented each time, but only when
                 //  a NEW dependency is added.
-                if(is_self_dependency(v, gamma__)){
-                    return -1;
-                }
+                if(is_self_dependency(v, gamma__)){ return -1; }
                 ++num_new_dependencies;
                 add_to_array_list_schema_ptr(schemas, gamma__);
             }
@@ -402,11 +363,10 @@ int theta_operator(SetDependencies *dependencies){
         //  new nodes could be inserted before or after the current node...
         foreach_pair_in_hashmap_dependencies_ptr(dependencies, node_dep){
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_, because the resulting
-            //  derived dependencies in the common_schemas operation will always be the same... See next TODO...
+            //  derived dependencies in the common_schemas operation will always be the same... See next TODO... + set semantics is not
+            //  only for efficiency. If it works like this, it will cycle infinitely!
             int num1 = theta_rule1(dependencies, node_dep);
-            if(num1 == -1){
-                return -1;
-            }
+            if(num1 == -1){ return -1; }
             num_new_deps1 += num1;
 
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_, because the resulting
@@ -415,9 +375,7 @@ int theta_operator(SetDependencies *dependencies){
             //  identifiers to pointers to Schemas would also be helpful, and that way, the ID would be implicit in that mapping...) 
             //  (but good to think other possibilities...).
             int num2 = theta_rule2(dependencies, node_dep);
-            if(num2 == -1){
-                return -1;
-            }
+            if(num2 == -1){ return -1; }
             num_new_deps2 += num2;
         }
         num_new_dependencies += num_new_deps1 + num_new_deps2;
@@ -448,3 +406,116 @@ bool is_finite_schema(SetDependencies *dependencies){
 }
 
 // TODO: init (set-)schema from file; (after understanding the Prolog source code perfectly)
+
+///////////////////////////////////////////////////////////////////
+/// BASIC IMPLEMENTATION WITH SIMPLE STRUCTURES FOR A BASELINE
+///////////////////////////////////////////////////////////////////
+
+
+void common_set_schema_baseline(
+    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
+    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies)
+    {
+        assert(set_schema1->size == set_schema2->size);
+        unsigned num_schemas = set_schema1->size; //num columns
+        
+        *common_set_schema = create_array_list_schema(num_schemas);
+        ArrayListDependencyPair new_dependencies = create_array_list_dependency_pair_defsize(); //TODO: defsize is misleading, in reallity, it's default capacity
+        
+        for(unsigned i = 0; i < num_schemas; ++i){
+            Schema *s1 = set_schema1->array + i;
+            Schema *s2 = set_schema2->array + i;
+            
+            Schema *common_schema = common_set_schema + i;
+            common_schema_baseline(s1, s2, common_schema, &new_dependencies); // TODO_YA: finish this function
+        }
+        
+        *common_dependencies = create_array_list_dependency_pair(dependencies1->size + dependencies2->size + new_dependencies.size);
+        // NOTE: capacity can be greater than final size (we can have dependencies of the same variable in several sets)
+        extend_array_list_dependency_pair(common_dependencies, dependencies1);
+        
+        for(unsigned i = 0; i < dependencies2->size; ++i){
+            DependencyPair pair2 = dependencies2->array[i];
+            Variable v = pair2.v;
+            ArrayListSchema schemas2 = pair2.schemas;
+
+            unsigned j = 0;
+            for(; j < common_dependencies->size; ++j){
+                if(common_dependencies->array[j].v == v){
+                    break;
+                }
+            }
+            if(j == common_dependencies->size){ //nobreak = not found
+                add_to_array_list_dependency_pair(common_dependencies, pair2);
+            }
+            else { //found
+                extend_not_repeated_array_list_schema(&common_dependencies->array[j].schemas, &schemas2);
+            }
+        }
+        // TODO: refactor this to a union of sets of dependencies function
+        for(unsigned i = 0; i < new_dependencies.size; ++i){
+            DependencyPair pair_new = new_dependencies.array[i];
+            Variable v = pair_new.v;
+            ArrayListSchema schemas_new = pair_new.schemas;
+
+            unsigned j = 0;
+            for(; j < common_dependencies->size; ++j){
+                if(common_dependencies->array[j].v == v){
+                    break;
+                }
+            }
+            if(j == common_dependencies->size){ //nobreak = not found
+                add_to_array_list_dependency_pair(common_dependencies, pair_new);
+            }
+            else { //found
+                extend_not_repeated_array_list_schema(&common_dependencies->array[j].schemas, &schemas_new);
+            }
+        }
+        
+
+        // TODO_YA: call to the theta operator...
+    }
+    
+// TODO: even here should we check for self dependencies to avoid unnecessary computation? Yes!
+void common_schema_baseline(Schema *s1, Schema *s2, Schema *common, SetDependencies *dependencies){
+    // TODO: what if both schemas represent the same variable in the first case? Dependency v->v is strange... -->
+    //  --> start by NOT inserting it in the set of dependencies...
+    // TODO: in the set of dependencies we have pointers to Schemas as values. Be careful with dangling pointers (see where 
+    //  the schemas are freed) --> Remove the schemas freeing only the set schema that contains them. Anywhere else, don't
+    //  call free upon them (dangling pointer).
+    // TODO: modify insert to set dependencies as needed to avoid having the same dependency more than once (respect set semantics)
+    if (s1->type == VARIABLE_SCHEMA) {
+        init_variable_schema(common, s1->v);
+        insert_to_set_dependencies(dependencies, s1->v, s2);
+    } else if (s2->type == VARIABLE_SCHEMA) {
+        init_variable_schema(common, s2->v);
+        insert_to_set_dependencies(dependencies, s2->v, s1);
+    } else {
+        size_t min_arity, max_arity;
+        Schema *longest_schema;
+        if (s1->arity < s2->arity) {
+            min_arity = s1->arity;
+            max_arity = s2->arity;
+            longest_schema = s2;
+        } else {
+            min_arity = s2->arity;
+            max_arity = s1->arity;
+            longest_schema = s1;
+        }
+
+        init_general_schema(common, max_arity); // .size = 1
+        size_t i = 0;
+        for(; i < min_arity; ++i){
+            common_schema(s1->subschemas + i, s2->subschemas + i, common->subschemas + i, dependencies);
+            common->size += common->subschemas[i].size;
+        }
+        for(; i < max_arity; ++i){
+            // TODO: appropriate to have all subschemas in the same array (and not have an extra indirection)?
+            //  Here we are doing shallow copies. Deep copies needed?...
+            //  Garbage collection needed? We will see in what circumstances we should free the schemas...
+            common->subschemas[i] = longest_schema->subschemas[i]; //NOTE: shallow copy...
+            common->size += common->subschemas[i].size;
+        }
+    }
+}

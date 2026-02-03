@@ -22,7 +22,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NOTE: the functions simply return ints. These codes are used for every type of ArrayList.
-typedef enum ArrayListAddReturnCode { NOT_RESIZED, RESIZED } ArrayListAddReturnCode;
+typedef enum ArrayListAddReturnCode { NOT_RESIZED, RESIZED, CONTAINED } ArrayListAddReturnCode;
 typedef enum ArrayListRemoveReturnCode { OUT_OF_BOUNDS, SUCCESSFUL_REMOVAL } ArrayListRemoveReturnCode;
 typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetReturnCode;
 
@@ -61,6 +61,15 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
     void print_array_list_##name(ArrayList##Name list);
 
+#define DECLARE_ARRAYLIST_FUNCTIONS_NOT_REMOVAL(Name, name, type)                            \
+    ArrayList##Name create_array_list_##name(uint32_t capacity);                             \
+    ArrayList##Name create_array_list_##name##_defsize();                                    \
+    static inline void free_array_list_##name(ArrayList##Name list){ free(list.array); }     \
+    static inline void clear_array_list_##name(ArrayList##Name *list){ list->size = 0; }     \
+    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
+    int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
+    void print_array_list_##name(ArrayList##Name list);
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// DECLARATIONS OF ARRAYLIST MACROS ////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -74,6 +83,10 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     DECLARE_ARRAYLIST_TYPE(Name, type)                  \
     DECLARE_ARRAYLIST_OF_POINTERS_FUNCTIONS(Name, name, type)
 
+#define DECLARE_ARRAYLIST_NOT_REMOVAL(Name, name, type)         \
+    DECLARE_ARRAYLIST_TYPE(Name, type)                          \
+    DECLARE_ARRAYLIST_FUNCTIONS_NOT_REMOVAL(Name, name, type)
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// CONCRETE DECLARATIONS OF ARRAYLIST TYPES ////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -82,5 +95,16 @@ DECLARE_ARRAYLIST(Int, int, int)
 
 DECLARE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr)
 
+DECLARE_ARRAYLIST(Schema, schema, Schema)
+//TODO: incorporate these to the macro
+int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element);
+int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list);
+#define DECLARE_ARRAYLIST_EXTENSION(Name, name, type)                                   \
+int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list);
+DECLARE_ARRAYLIST_EXTENSION(Schema, schema, Schema)
+DECLARE_ARRAYLIST_EXTENSION(DependencyPair, dependency_pair, DependencyPair)
+
+
+DECLARE_ARRAYLIST_NOT_REMOVAL(DependencyPair, dependency_pair, DependencyPair)
 
 #endif // ARRAYLIST_H

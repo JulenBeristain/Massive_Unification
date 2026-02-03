@@ -83,6 +83,67 @@ int add_to_array_list_##name(ArrayList##Name *list, type element){              
     return code;                                                                    \
 }
 
+int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element){
+    foreach_in_arraylistptr(Schema, itptr, list){
+        if(equal_schemas(itptr, &element)){
+            return CONTAINED;
+        }
+    }
+    return add_to_array_list_schema(list, element);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// EXTENSION ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO: add this to the macro that is used to define each arraylist type's functions
+#define DEFINE_ARRAYLIST_EXTENSION(Name, name, type)                                                                        \
+int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list){                                        \
+    int code = NOT_RESIZED;                                                                                                 \
+                                                                                                                            \
+    unsigned extended_size = list_to_extend->size + list->size;                                                             \
+    if(extended_size > list_to_extend->capacity){                                                                           \
+        list_to_extend->capacity = 2 * extended_size;                                                                       \
+        list_to_extend->array = realloc(list_to_extend->array, list_to_extend->capacity * sizeof(*list_to_extend->array));  \
+        if (list_to_extend->array == NULL){                                                                                 \
+            perror("extend_array_list: realloc failed to allocate memory");                                                 \
+            exit(EXIT_FAILURE);                                                                                             \
+        }                                                                                                                   \
+        code = RESIZED;                                                                                                     \
+    }                                                                                                                       \
+                                                                                                                            \
+    foreach_in_arraylistptr(type, elemptr, list){                                                                           \
+        add_to_array_list_##name(list_to_extend, *elemptr);                                                                 \
+    }                                                                                                                       \
+                                                                                                                            \
+    return code;                                                                                                            \
+}
+
+DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema);
+DEFINE_ARRAYLIST_EXTENSION(DependencyPair, dependency_pair, DependencyPair);
+
+int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list){
+    int code = NOT_RESIZED; 
+  
+    unsigned maximum_extended_size = list_to_extend->size + list->size; 
+    if(maximum_extended_size > list_to_extend->capacity){
+        list_to_extend->capacity = 2 * maximum_extended_size; 
+        list_to_extend->array = realloc(list_to_extend->array, list_to_extend->capacity * sizeof(*list_to_extend->array));
+        if (list_to_extend->array == NULL){
+            perror("extend_array_list: realloc failed to allocate memory");
+            exit(EXIT_FAILURE);
+        } 
+        code = RESIZED; 
+    } 
+
+    foreach_in_arraylistptr(Schema, elemptr, list){
+        add_not_repeated_to_array_list_schema(list_to_extend, *elemptr);
+    }
+
+    return code; 
+}
+
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// REMOVING ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +188,18 @@ int add_to_array_list_##name(ArrayList##Name *list, type element){              
         return remove_index_from_array_list_##name(list, index);                            \
     }
 
+#define DEFINE_ARRAYLIST_REMOVAL_VALUE_WITH_POINTER(Name, name, type, equal_function)       \
+    int remove_element_from_array_list_##name(ArrayList##Name *list, type *element){        \
+        type *iter = list->array;                                                           \
+        type *end = list->array + list->size;                                               \
+        while((iter < end) && (!equal_function(iter, element))){                            \
+            ++iter;                                                                         \
+        }                                                                                   \
+        uint32_t index = iter - list->array;                                                \
+                                                                                            \
+        return remove_index_from_array_list_##name(list, index);                            \
+    }
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// GETTING /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -156,6 +229,17 @@ int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *resul
         printf("]");                                        \
     }
 
+#define DEFINE_PRINT_ARRAYLIST_WITH_POINTER(Name, name, print_function)     \
+    void print_array_list_##name(ArrayList##Name list){                     \
+        printf("[");                                                        \
+        if(list.size){ print_function(&list.array[0]); }                    \
+        for(size_t i = 1; i < list.size; ++i){                              \
+            printf(", ");                                                   \
+            print_function(&list.array[i]);                                 \
+        }                                                                   \
+        printf("]");                                                        \
+    }
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// COMPLETE DEFINES ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -167,6 +251,14 @@ int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *resul
     DEFINE_ARRAYLIST_REMOVAL_INDEX(Name, name, type)                        \
     DEFINE_ARRAYLIST_REMOVAL_VALUE(Name, name, type, equal_function)        \
     DEFINE_PRINT_ARRAYLIST(Name, name, print_function)
+
+#define DEFINE_ARRAYLIST_EQ_PRINT_POINTERS(Name, name, type, equal_function, print_function)    \
+    DEFINE_ARRAYLIST_CREATION(Name, name)                                                       \
+    DEFINE_ARRAYLIST_ADDITION(Name, name, type)                                                 \
+    DEFINE_ARRAYLIST_GETTING(Name, name, type)                                                  \
+    DEFINE_ARRAYLIST_REMOVAL_INDEX(Name, name, type)                                            \
+    DEFINE_ARRAYLIST_REMOVAL_VALUE_WITH_POINTER(Name, name, type, equal_function)               \
+    DEFINE_PRINT_ARRAYLIST_WITH_POINTER(Name, name, print_function)
 
 #define DEFINE_ARRAYLIST_OF_POINTERS(Name, name, type, equal_function, print_function)  \
     DEFINE_ARRAYLIST_CREATION(Name, name)                                               \
@@ -195,5 +287,17 @@ DEFINE_ARRAYLIST(Int, int, int, equal_ints, print_int)
 
 // ArrayList of pointers to Schemas ------------------------------------------------------------------------------
 
-DEFINE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr, equal_schemas, print_schema)
+DEFINE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr, equal_schemas, print_schema) //TODO: ensure new print version is called here
+//----------------------------------------------------------------------------------------------------------------
+
+// ArrayList of Schemas ------------------------------------------------------------------------------------------
+
+DEFINE_ARRAYLIST_EQ_PRINT_POINTERS(Schema, schema, Schema, equal_schemas, print_schema) //TODO: ensure new print version is called here
+//----------------------------------------------------------------------------------------------------------------
+
+// ArrayList of DependencyPairs ----------------------------------------------------------------------------------
+DEFINE_ARRAYLIST_CREATION(DependencyPair, dependency_pair)
+DEFINE_ARRAYLIST_ADDITION(DependencyPair, dependency_pair, DependencyPair)
+DEFINE_ARRAYLIST_GETTING(DependencyPair, dependency_pair, DependencyPair)
+DEFINE_PRINT_ARRAYLIST(DependencyPair, dependency_pair, print_dependency_pair)
 //----------------------------------------------------------------------------------------------------------------
