@@ -66,6 +66,12 @@
 /// ADDITION ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// NOTE: if we have an ArrayList of values of some type (i.e., the type is not a pointer type to some other concrete one), is because
+//  the type is small enough (and we don't have further algorithms, like caching, to take advantage of the use of pointers) that is
+//  more efficient to have all the values directly consecutive in memory (for cache locality).
+// TODO: nonetheless, could be interesting to have an add version that receives a pointer to the element and makes a copy of it 
+//  in the array...
+
 #define DEFINE_ARRAYLIST_ADDITION(Name, name, type)                                 \
 int add_to_array_list_##name(ArrayList##Name *list, type element){                  \
     int code = NOT_RESIZED;                                                         \
@@ -84,7 +90,7 @@ int add_to_array_list_##name(ArrayList##Name *list, type element){              
 }
 
 int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element){
-    foreach_in_arraylistptr(Schema, itptr, list){
+    foreach_in_arraylistptr(Schema, itptr, list){   // TODO: refactor this to a contains function --> Then, this function could be unnecessary
         if(equal_schemas(itptr, &element)){
             return CONTAINED;
         }

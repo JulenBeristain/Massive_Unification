@@ -109,25 +109,25 @@ Schema read_schema(char **schema_str){
 unsigned scan_num_schemas_in_set(char *line){
     unsigned num_cols = 0;
     unsigned brackets = 0;
-    for(char *lineptr = line; lineptr; ++lineptr){
+    for(; *line; ++line){
         unsigned v, arity;
-        if(sscanf(lineptr, "$%u,", &v) == 1){
+        if(sscanf(line, "$%u,", &v) == 1){
             if(brackets == 0) { ++num_cols; }
-            lineptr += 1 + num_digits(v);
+            line += 1 + num_digits(v);
         }
-        else if (sscanf(lineptr, "%u:[", &arity) == 1){
+        else if (sscanf(line, "%u:[", &arity) == 1){
             if(brackets == 0) { ++num_cols; }
             ++brackets;
-            lineptr += num_digits(arity) + 2;
+            line += num_digits(arity) + 2;
         }
-        else if (*lineptr == '\n'){
+        else if (*line == '\n'){
             continue;
         }
         else {
             fprintf(stderr, "read_set_schema: Unexpected set schema format!\n");
             exit(2);
         }
-        if(*lineptr == ']') { --brackets; }
+        if(*line == ']') { --brackets; }
     }
     return num_cols;
 }
@@ -139,7 +139,7 @@ ArrayListSchema read_set_schema(char *line){
     
     // Parse each schema
     unsigned i = 0;
-    while(*line != '\0' && *line != '\n'){
+    while(*line != '\0' && *line != '\n'){ // NOTE: we could also use num_cols as a counter...
         // NOTE: we can directly set without bound checking thanks to the precalculation of the number of columns
         set_schema.array[i++] = read_schema(&line);
         // Skip the comma separating the schemas in the set-schema (or the new line at the end)
@@ -150,7 +150,7 @@ ArrayListSchema read_set_schema(char *line){
 }
 
 ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies){
-    char *line = NULL; // TODO: see if we need to pass this by pointer...
+    char *line = NULL;
     size_t len = 0;
     ssize_t read;
 
@@ -166,45 +166,46 @@ ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_wi
         
         // Adapt the read line to obtain the number of schemas and the schemas themselves
         line[read-2] = '\0';            // read-1 == '\n', -2 == ']' (the closing braquet of the list of dependencies of v)
-        line += 1 + num_digits(v) + 5;  // Focus on the beginning of the first schema
+        char *lineptr = line + 1 + num_digits(v) + 5;  // Focus on the beginning of the first schema
 
-        DependencyPair pair = { .v = v, .schemas = read_set_schema(line) };
+        DependencyPair pair = { .v = v, .schemas = read_set_schema(lineptr) };
         //NOTE: we can directly set without bound checking thanks to having read the number of vars with dependencies
         dependencies.array[i] = pair;
     }
 
-    free(line);
+    if(line){ free(line); }
     return dependencies;
 }
 
 int read_next_set_schema_with_dependencies(
     FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies)
 {
-    char *line = NULL; // TODO: see if we need to pass this by pointer...
+    char *line = NULL;
     size_t len = 0;
     ssize_t read;
 
     while((read = getline(&line, &len, stream)) != -1){
+        // Skip whitelines and comments
         if(len == 0 || line[0] == '%' || is_white_line(line, len)){ continue; }
-    }
-    if (read == -1) {
-        return -1;  // EOF
-    }
 
-    unsigned num_vars_with_dependencies;
-    if(sscanf(line, "%u, ", &num_vars_with_dependencies) != 1) {
+        unsigned num_vars_with_dependencies;
+        if(sscanf(line, "%u, ", &num_vars_with_dependencies) != 1) {
+            free(line);
+            return 1; // Common schema doesn't exist
+        }
+
+        // Skip "num_vars_with_dependencies, "
+        char *lineptr = line + num_digits(num_vars_with_dependencies) + 2;
+
+        *set_schema = read_set_schema(lineptr);
+        *dependencies = read_set_dependencies(stream, num_vars_with_dependencies);
+
         free(line);
-        return 1; // Common schema
+        return 0;   // Common schema exists.
     }
 
-    // Skip "num_vars_with_dependencies, "
-    line += num_digits(num_vars_with_dependencies) + 2;
-
-    *set_schema = read_set_schema(line);
-    *dependencies = read_set_dependencies(stream, num_vars_with_dependencies);
-
-    free(line);
-    return 0;
+    if(line){ free(line); }
+    return -1;  // EOF
 }
 
 bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2){
@@ -259,7 +260,7 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
     return true;
 }
 
-// Read lines until the test begin line or EOF is found.
+// Read lines until a test begin line or EOF is found.
 unsigned read_test_number(FILE *stream){
     char *line = NULL;
     size_t len = 0;
@@ -275,16 +276,13 @@ unsigned read_test_number(FILE *stream){
 }
 
 void test_schema_management(){
-    char *line = NULL; //TODO: see if we need to pass this to following functions and if the resource cleaning is done in every place it should be done...
-    size_t len = 0;
-    ssize_t read;
-
     //getline, free, sscanf, strchr, strstr, printf, fprintf(stderr, ...), strtok, strdup, strtoul, strtol, strcmp, atoi, etc.
 
-    char *filename = "data/schemas/AGT006+1_truncated.txt";
+    char *filename = "data/schemas/AGT006+1_truncated.txt"; //data/schemas/COM123+1_truncated.txt //TODO: make that the program receives an input from shell or -DAGT vs -DCOM with #if macros...
     FILE *stream = fopen(filename, "r");
 
     for(;;){
+        // TODO: a unique dependency set for set_schema1/2 and computed common is enough...
         ArrayListSchema set_schema1, set_schema2, common_set_schema, computed_common_set_schema;
         ArrayListDependencyPair dependencies1, dependencies2, common_dependencies, computed_common_dependencies;
 
@@ -293,7 +291,7 @@ void test_schema_management(){
             break; // EOF
         }
 
-        read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1);
+        ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1);
         assert(read != -1 && read != 1);
 
         read = read_next_set_schema_with_dependencies(stream, &set_schema2, &dependencies2);
@@ -305,22 +303,28 @@ void test_schema_management(){
         }
         bool common_schema_exists = read != 1; // read == 0
 
-        // TODO_YA: Compute common schema and its dependencies with operands 1 and 2
-        common_set_schema_baseline(&set_schema1, &dependencies1, &set_schema2, &dependencies2,
-                                   &computed_common_set_schema, &computed_common_dependencies);
+        bool computed_common_schema_exists = common_set_schema_baseline(&set_schema1, &dependencies1, 
+            &set_schema2, &dependencies2, &computed_common_set_schema, &computed_common_dependencies);
 
-        // Compare the computed common schema and its dependencies with the read ones
-        bool set_schemas_ok = equal_set_schemas(computed_common_set_schema, common_set_schema);
-        bool dependencies_ok = equal_set_dependencies(computed_common_dependencies, common_dependencies);
-        if(!(set_schemas_ok && dependencies_ok)){
-            printf("Test=%u - set_schemas_ok=%u - dependencies_ok=%u\n", 
-                    test_number, set_schemas_ok, dependencies_ok);
+        if(common_schema_exists != computed_common_schema_exists){
+            printf("Test=%u - common_schema_exists=%u - computed_common_schema_exists=%u\n", 
+                    test_number, common_schema_exists, computed_common_schema_exists);
         }
-
-        // TODO_YA: free the schemas and dependencies (be careful with dangling pointers!)
+        else if(common_schema_exists){
+            // Compare the computed common schema and its dependencies with the read ones
+            bool set_schemas_ok = equal_set_schemas(computed_common_set_schema, common_set_schema);
+            bool dependencies_ok = equal_set_dependencies(computed_common_dependencies, common_dependencies);
+            if(!(set_schemas_ok && dependencies_ok)){
+                printf("Test=%u - set_schemas_ok=%u - dependencies_ok=%u\n", 
+                        test_number, set_schemas_ok, dependencies_ok);
+            }
+        }
+        // else: the common schema doesn't exist, and it wasn't calculated, as expected
+        
+        // TODO_YA: use an ARENA!!! --> modify the code accordingly...
+        //  Use Valgrind to ensure we don't leak memory...
     }
 
-    free(line);
     fclose(stream);
 }
 

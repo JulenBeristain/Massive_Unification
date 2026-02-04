@@ -50,6 +50,11 @@ bool equal_schemas(Schema *s1, Schema *s2);
 void print_schema(Schema *s);
 
 // TODO: declare the public functions that are going to be used in the main.c module.
+bool common_set_schema_baseline(
+    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
+    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies);
+
 
 /**
  * FUTURE WORK:
