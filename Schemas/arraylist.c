@@ -3,6 +3,23 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+// TODO: make an extension for VSCode that expands macros automatically inplace, removing the macro
+//  use, substituting it by the text that appears in the "Expands to" section when you hover over it,
+//  and calling to the clang.formatter
+
+// NOTE: Arenas don't behave nicely with ArrayLists when the latters resize. All the previous memory used
+//  by the ArrayList to store the elements becomes garbage when the ArrayList takes a new greater chunk
+//  from the Arena. Therefore, if a lot of resizing happens, the risk of running out of memory in the Arena
+//  increases, as well as the amount of unused memory.
+//
+//  Therefore, avoid using dynamic structures that can resize with Arenas, or prevent the resizing from happening.
+//  In the case of ArrayLists: 1) give great initial capacity taken from the Arena. 2) just use malloc (preferably
+//  with just enough capacity to avoid resizing).
+//
+//  Additionally, to mix the use of malloc and Arenas for the same ArrayList we would need an extra flag to know if
+//  the previous allocation was done by malloc or not. If that was the case, before taking memory from the arena in 
+//  a resizing allocation, we would need to free the malloced memory.
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// CREATION ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -13,11 +30,14 @@
         ArrayList##Name list;                                       \
         list.size = 0;                                              \
         list.capacity = capacity;                                   \
-        list.array = malloc(capacity * sizeof(*list.array));        \
-        if (list.array == NULL){                                    \
-            perror("malloc failed to allocate memory");             \
-            exit(EXIT_FAILURE);                                     \
+        if(capacity){                                               \
+            list.array = malloc(capacity * sizeof(*list.array));    \
+            if (list.array == NULL){                                \
+                perror("malloc failed to allocate memory");         \
+                exit(EXIT_FAILURE);                                 \
+            }                                                       \
         }                                                           \
+        else { list.array = NULL; }                                 \
         return list;                                                \
     }                                                               \
                                                                     \
@@ -25,10 +45,34 @@
         enum { DEFAULT_ARRAY_LIST_SIZE = 10 };                      \
         return create_array_list_##name(DEFAULT_ARRAY_LIST_SIZE);   \
     }
+//TODO: defsize is misleading, in reallity, it's default capacity
+
+// NOTE: not default capacity for Arena because we are only allocating from it when there is no resizing
+#define DEFINE_ARRAYLIST_CREATION_ARENA(Name,name)                                      \
+    ArrayList##Name create_array_list_##name##_arena(uint32_t capacity, Arena *arena){  \
+        ArrayList##Name list;                                                           \
+        list.size = 0;                                                                  \
+        list.capacity = capacity;                                                       \
+        list.array = allocate(arena, capacity * sizeof(*list.array));                   \
+        return list;                                                                    \
+    }
+
+ArrayListSchema create_array_list_schema_arena(uint32_t capacity, Arena* arena) {
+    ArrayListSchema list;
+    list.size = 0;
+    list.capacity = capacity;
+    list.array = allocate(arena, capacity * sizeof(*list.array));
+    return list;
+}
+
+DEFINE_ARRAYLIST_CREATION_ARENA(DependencyPair, dependency_pair)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// DELETION ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// NOTE: the deletion of ArrayLists of non-pointer types are defined in the .h as
+//  static inlines.
 
 /**
  * NOTE: the size and capacity that were remaining are not important. 
@@ -37,7 +81,7 @@
  *       are freed starting from the root of the "tree", then all 
  *       these pointers in the dependency list will be dangling
  *       (on the other hand, we are going to do a change from 
- *       ArrayList to HashSet there...). We should have to versions
+ *       ArrayList to HashSet there...). We should have two versions
  *       for freeing an ArrayList of pointers: on where free is
  *       called upon each pointer (for the cases where malloc 
  *       was called with the pointer in the array itself) and 
@@ -76,7 +120,8 @@
 int add_to_array_list_##name(ArrayList##Name *list, type element){                  \
     int code = NOT_RESIZED;                                                         \
     if (list->size == list->capacity){                                              \
-        list->capacity *= 2;                                                        \
+        if(list->capacity){ list->capacity *= 2; }                                  \
+        else              { list->capacity  = 1; }                                  \
         list->array = realloc(list->array, list->capacity * sizeof(*list->array));  \
         if (list->array == NULL){                                                   \
             perror("realloc failed to allocate memory");                            \
@@ -89,6 +134,20 @@ int add_to_array_list_##name(ArrayList##Name *list, type element){              
     return code;                                                                    \
 }
 
+#define DEFINE_ARRAYLIST_ADDITION_ARENA(Name, name, type)                                   \
+int add_to_array_list_##name##_arena(ArrayList##Name *list, type element, Arena *arena){    \
+    int code = NOT_RESIZED;                                                                 \
+    if (list->size == list->capacity){                                                      \
+        if(list->capacity){ list->capacity *= 2; }                                          \
+        else              { list->capacity  = 1; }                                          \
+        list->array = allocate(arena, list->capacity * sizeof(*list->array));               \
+        code = RESIZED;                                                                     \
+    }                                                                                       \
+    list->array[list->size] = element;                                                      \
+    ++list->size;                                                                           \
+    return code;                                                                            \
+}
+
 int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element){
     foreach_in_arraylistptr(Schema, itptr, list){   // TODO: refactor this to a contains function --> Then, this function could be unnecessary
         if(equal_schemas(itptr, &element)){
@@ -98,13 +157,25 @@ int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element)
     return add_to_array_list_schema(list, element);
 }
 
+DEFINE_ARRAYLIST_ADDITION_ARENA(Schema, schema, Schema)
+int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena){
+    foreach_in_arraylistptr(Schema, itptr, list){   // TODO: refactor this to a contains function --> Then, this function could be unnecessary
+        if(equal_schemas(itptr, &element)){
+            return CONTAINED;
+        }
+    }
+    return add_to_array_list_schema_arena(list, element, arena);
+}
+
+DEFINE_ARRAYLIST_ADDITION_ARENA(DependencyPair, dependency_pair, DependencyPair)
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// EXTENSION ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // TODO: add this to the macro that is used to define each arraylist type's functions
 #define DEFINE_ARRAYLIST_EXTENSION(Name, name, type)                                                                        \
-int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list){                                        \
+int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list){                                       \
     int code = NOT_RESIZED;                                                                                                 \
                                                                                                                             \
     unsigned extended_size = list_to_extend->size + list->size;                                                             \
@@ -125,8 +196,29 @@ int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *l
     return code;                                                                                                            \
 }
 
-DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema);
-DEFINE_ARRAYLIST_EXTENSION(DependencyPair, dependency_pair, DependencyPair);
+// TODO: add this to the macro that is used to define each arraylist type's functions
+#define DEFINE_ARRAYLIST_EXTENSION_ARENA(Name, name, type)                                                                  \
+int extend_array_list_##name##_arena(ArrayList##Name *list_to_extend, ArrayList##Name *list, Arena *arena){                 \
+    int code = NOT_RESIZED;                                                                                                 \
+                                                                                                                            \
+    unsigned extended_size = list_to_extend->size + list->size;                                                             \
+    if(extended_size > list_to_extend->capacity){                                                                           \
+        list_to_extend->capacity = 2 * extended_size;                                                                       \
+        list_to_extend->array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));                 \
+        code = RESIZED;                                                                                                     \
+    }                                                                                                                       \
+                                                                                                                            \
+    foreach_in_arraylistptr(type, elemptr, list){                                                                           \
+        add_to_array_list_##name(list_to_extend, *elemptr);                                                                 \
+    }                                                                                                                       \
+                                                                                                                            \
+    return code;                                                                                                            \
+}
+
+DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema)
+DEFINE_ARRAYLIST_EXTENSION(DependencyPair, dependency_pair, DependencyPair)
+
+DEFINE_ARRAYLIST_EXTENSION_ARENA(DependencyPair, dependency_pair, DependencyPair)
 
 int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list){
     int code = NOT_RESIZED; 
@@ -144,6 +236,23 @@ int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, Array
 
     foreach_in_arraylistptr(Schema, elemptr, list){
         add_not_repeated_to_array_list_schema(list_to_extend, *elemptr);
+    }
+
+    return code; 
+}
+
+int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena){
+    int code = NOT_RESIZED; 
+  
+    unsigned maximum_extended_size = list_to_extend->size + list->size; 
+    if(maximum_extended_size > list_to_extend->capacity){
+        list_to_extend->capacity = 2 * maximum_extended_size; 
+        list_to_extend->array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));
+        code = RESIZED;
+    } 
+
+    foreach_in_arraylistptr(Schema, elemptr, list){
+        add_not_repeated_to_array_list_schema_arena(list_to_extend, *elemptr, arena);
     }
 
     return code; 

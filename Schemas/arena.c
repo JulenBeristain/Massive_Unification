@@ -34,6 +34,7 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
     return is_power_of_2 ? size_in_bytes : (1 << (most_significant_1 + 1));
 }
 
+// PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
     MemoryBlock *memory_block = malloc(sizeof(*memory_block));
     if (memory_block == NULL){
@@ -87,7 +88,12 @@ void clear_arena(Arena *arena){
 
 // NOTE: we expect that num_bytes will be much smaller than the size of a memory block. Nonetheless,
 //  we manage even that case gracefully.
+// If num_bytes is 0, NULL is returned.
 void *allocate(Arena *arena, size_t num_bytes){
+    if(num_bytes == 0){ return NULL; }
+    return allocate_(arena, num_bytes);
+}
+void *allocate_(Arena *arena, size_t num_bytes){
     MemoryBlock *block = arena->current_block;
     assert(block != NULL); // PRE: arena already initialized
 
@@ -96,7 +102,7 @@ void *allocate(Arena *arena, size_t num_bytes){
         bool already_next_allocated = block->next != NULL;
         if(already_next_allocated){
             arena->current_block = block->next;
-            return allocate(arena, num_bytes);
+            return allocate_(arena, num_bytes);
         }
 
         // Allocate a new memory block with enough space (if num_bytes less than the current block size, choose that)

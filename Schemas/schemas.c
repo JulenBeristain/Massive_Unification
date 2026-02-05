@@ -21,18 +21,45 @@ void init_general_schema(Schema *s, unsigned arity) {
     s->arity = arity;
     if (arity) {
         s->subschemas = malloc(arity * sizeof(*(s->subschemas)));
-        if(s->subschemas == NULL){
+        if (s->subschemas == NULL) {
             perror("malloc failed to allocate memory");
             exit(EXIT_FAILURE);
         }
     }
+    else { s->subschemas = NULL; }
+}
+
+void free_schema(Schema *s){
+    if (s->type == VARIABLE_SCHEMA || s->arity == 0) {
+        return;
+    }
+
+    unsigned arity = s->arity;
+    for (unsigned i = 0; i < arity; ++i) {
+        free_schema(s->subschemas + i);
+    }
+    free(s->subschemas);
+}
+
+/**
+ * NOTE: size is simply set to 1. If nested subschemas, their own sizes have to be added to this
+ *      value in creation.
+ */
+void init_general_schema_arena(Schema *s, unsigned arity, Arena *arena) {
+    s->type = GENERAL_SCHEMA;
+    s->size = 1;
+    s->arity = arity;
+    s->subschemas = allocate(arena, arity * sizeof(*(s->subschemas)));  
 }
 
 /**
  * Function that computes the schema size, without looking at the precached sizes.
  */
 unsigned schema_size(Schema *s){
-    if(s->type == VARIABLE_SCHEMA || s->arity == 0){ return 1; }
+    if (s->type == VARIABLE_SCHEMA || s->arity == 0) {
+        return 1;
+    }
+
     unsigned total_size = 1;
     Schema *subschema = s->subschemas;
     for(Schema *end = subschema + s->arity; subschema < end; ++subschema){
@@ -411,24 +438,28 @@ bool is_finite_schema(SetDependencies *dependencies){
 /// BASIC IMPLEMENTATION WITH SIMPLE STRUCTURES FOR A BASELINE
 ///////////////////////////////////////////////////////////////////
 
-void insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema *s){
+void insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema *s, Arena *arena){
     for(unsigned i = 0; i < dependencies->size; ++i){
         DependencyPair *pair = dependencies->array + i;
         if(pair->v == v){
-            add_not_repeated_to_array_list_schema(&pair->schemas, *s);
+            // TODO: resizing risk for Arena
+            add_not_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
             return;
         }
     }
 
     //First dependency for v
-    ArrayListSchema first_schemas_v = create_array_list_schema_defsize(); // Default capacity = 10 > 1
-    add_to_array_list_schema(&first_schemas_v, *s);
+    // TODO: resizing risk for Arena + when resizing, we have to copy whole Schemas, not just pointers to them (24B vs 8B)
+    ArrayListSchema first_schemas_v = create_array_list_schema_arena(10, arena);
+    //  We don't know the number of dependencies that will end up having the new variable with dependencies v
+    add_to_array_list_schema_arena(&first_schemas_v, *s, arena);
     DependencyPair first_dependency_pair_v = { .v = v, .schemas = first_schemas_v };
-    add_to_array_list_dependency_pair(dependencies, first_dependency_pair_v);
+    //  We don't know how many extra variables with dependies we will have neither...
+    add_to_array_list_dependency_pair_arena(dependencies, first_dependency_pair_v, arena);
 }
 
 // destination gets the dependencies found in source that it didn't contain initially.
-void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayListDependencyPair *source){
+void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayListDependencyPair *source, Arena *arena){
     for(unsigned i = 0; i < source->size; ++i){
         DependencyPair pair2 = source->array[i];
         Variable v = pair2.v;
@@ -441,16 +472,18 @@ void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayL
             }
         }
         if(j == destination->size){ //nobreak = not found
-            add_to_array_list_dependency_pair(destination, pair2); // NOTE: they share the schemas
+            // TODO: resizing risk for Arena
+            add_to_array_list_dependency_pair_arena(destination, pair2, arena); // NOTE: they share the schemas
         }
         else { //found
-            extend_not_repeated_array_list_schema(&destination->array[j].schemas, &schemas2);
+            // TODO: resizing risk for Arena
+            extend_not_repeated_array_list_schema_arena(&destination->array[j].schemas, &schemas2, arena);
         }
     }
 }
 
 // Returns the number of dependencies inserted, or -1 if a self-dependency was arised.
-int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDependencyPair *dependencies){
+int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDependencyPair *dependencies, Arena *arena){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v){
         // Do not insert v->v dependency
         init_variable_schema(common, s1->v);
@@ -461,7 +494,7 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
         Variable v = s1->v;
         if(is_self_dependency(v, s2)){ return -1; }
         init_variable_schema(common, v);
-        insert_to_dependencies_baseline(dependencies, v, s2);
+        insert_to_dependencies_baseline(dependencies, v, s2, arena);
         return 1;
     }
     
@@ -469,7 +502,7 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
         Variable v = s2->v;
         if(is_self_dependency(v, s1)){ return -1; }
         init_variable_schema(common, v);
-        insert_to_dependencies_baseline(dependencies, v, s1);
+        insert_to_dependencies_baseline(dependencies, v, s1, arena);
         return 1;
     }
 
@@ -485,12 +518,12 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
         longest_schema = s1;
     }
 
-    init_general_schema(common, max_arity); // .size = 1
+    init_general_schema_arena(common, max_arity, arena); // .size = 1
     int total_inserted_dependencies = 0;
     size_t i = 0;
     for(; i < min_arity; ++i){
         int num_inserted_dependencies = common_schema_baseline(s1->subschemas + i, s2->subschemas + i, 
-                                                                common->subschemas + i, dependencies);
+                                                                common->subschemas + i, dependencies, arena);
         if(num_inserted_dependencies < 0){ return -1; }
         total_inserted_dependencies += num_inserted_dependencies;
         common->size += common->subschemas[i].size;
@@ -503,7 +536,7 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
     return total_inserted_dependencies;
 }
 
-int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDependencyPair *dependencies){
+int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDependencyPair *dependencies, Arena *arena){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v){
         // Do not insert v->v dependency
         return 0;
@@ -511,12 +544,12 @@ int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDepende
 
     if (s1->type == VARIABLE_SCHEMA) {
         if(is_self_dependency(s1->v, s2)){ return -1; }
-        insert_to_dependencies_baseline(dependencies, s1->v, s2);
+        insert_to_dependencies_baseline(dependencies, s1->v, s2, arena);
         return 1;
     } 
     if (s2->type == VARIABLE_SCHEMA) {
         if(is_self_dependency(s2->v, s1)){ return -1; }
-        insert_to_dependencies_baseline(dependencies, s2->v, s1);
+        insert_to_dependencies_baseline(dependencies, s2->v, s1, arena);
         return 1;
     }
 
@@ -536,7 +569,7 @@ int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDepende
 
     size_t i = 0;
     for(; i < min_arity; ++i){
-        int num_new_deps = common_schema_dependencies_baseline(s1->subschemas + i, s2->subschemas + i, dependencies);
+        int num_new_deps = common_schema_dependencies_baseline(s1->subschemas + i, s2->subschemas + i, dependencies, arena);
         if(num_new_deps == -1){ return -1; }
         num_new_dependencies += num_new_deps;
     }
@@ -547,7 +580,7 @@ int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDepende
  * RETURNS: if < 0 (-1), a self-dependency was found (halt).
  *          else, the number of new dependencies added.
  */
-int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair){
+int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair, Arena *arena){
     int num_new_dependencies = 0;
     ArrayListSchema schemas = pair->schemas;
     // NOTE: since we are making a local copy of the schemas struct, schemas.size will remain the same even if 
@@ -556,7 +589,7 @@ int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
     //       dependencies of the variable at the start of this loop iteration.
     for(size_t i = 0; i < schemas.size; ++i){
         for(size_t j = i + 1; j < schemas.size; ++j){
-            int num_new_deps = common_schema_dependencies_baseline(schemas.array + i, schemas.array + j, dependencies);
+            int num_new_deps = common_schema_dependencies_baseline(schemas.array + i, schemas.array + j, dependencies, arena);
             if(num_new_deps == -1){ return -1; }
             num_new_dependencies += num_new_deps;
         }
@@ -564,11 +597,36 @@ int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
     return num_new_dependencies;
 }
 
+// NOTE: we are going to allocate new space for the new Schema that results from the substitution.
+//  We copy the structure of original, but changing occurrences of v with substitution.
+// NOTE: we are making shallow copies of substitution, not deep copies.
+Schema *substitute_arena(Schema *original, Variable v, Schema *substitution, Arena *arena){
+    Schema *result = allocate(arena, sizeof(*result));
+    substitute_arena_(original, v, substitution, result, arena);
+    return result;
+}
+void substitute_arena_(Schema *original, Variable v, Schema *substitution, Schema *result, Arena *arena){
+    if(original->type == VARIABLE_SCHEMA){
+        if(original->v == v){
+            *result = *substitution;
+        } else {
+            init_variable_schema(result, original->v);
+        }
+    } else {
+        init_general_schema_arena(result, original->arity, arena); // NOTE: ->subschemas allocated; ->size = 1
+        for(size_t i = 0; i < original->arity; ++i){
+            substitute_arena_(original->subschemas + i, v, substitution, result->subschemas + i, arena);
+            result->size += result->subschemas[i].size;
+        }
+    }
+}
+
+
 /**
  * RETURNS: if < 0 (-1), a self-dependency was found (halt).
  *          else, the number of new dependencies added.
  */
-int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair){
+int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair, Arena *arena){
     int num_new_dependencies = 0;
     Variable v = pair->v;
     ArrayListSchema *schemas = &pair->schemas;
@@ -593,13 +651,14 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
 
             foreach_in_arraylistptr(Schema, schema_, schemas_){
                 Schema *gamma_ = schema_;
-                Schema *gamma__ = substitute(gamma, w, gamma_); // TODO_YA: adapt the used helper functions to take an extra parameter for the Arena...
+                Schema *gamma__ = substitute_arena(gamma, w, gamma_, arena);
                 if(is_self_dependency(v, gamma__)){ return -1; }
-                int contained = add_not_repeated_to_array_list_schema(schemas, *gamma__);
+                // TODO: resizing risk for Arena
+                int contained = add_not_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
                 if(contained != CONTAINED){ ++num_new_dependencies; }
             }
         }
-        free_set_variables(ws); // TODO_YA: if we are using an Arena even for sets of variables, this free would be unnecessary...
+        free_set_variables(ws);
     }
     return num_new_dependencies;
 }
@@ -608,7 +667,7 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
  * RETURNS: < 0 (-1) if it has halted because a self-dependency was found
  *          else, the number of new dependencies discovered
  */
-int theta_operator_baseline(ArrayListDependencyPair *dependencies){
+int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena){
     int num_new_dependencies = 0;
     int num_new_deps1, num_new_deps2; // NOTE: we could have a single foreach accumulator, but this way we can have more information when debugging
     do {
@@ -622,12 +681,12 @@ int theta_operator_baseline(ArrayListDependencyPair *dependencies){
         for(size_t i = 0; i < dependencies->size; ++i){
             DependencyPair *pair = dependencies->array + i;
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
-            int num1 = theta_rule1_baseline(dependencies, pair);
+            int num1 = theta_rule1_baseline(dependencies, pair, arena);
             if(num1 == -1){ return -1; }
             num_new_deps1 += num1;
 
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
-            int num2 = theta_rule2_baseline(dependencies, pair);
+            int num2 = theta_rule2_baseline(dependencies, pair, arena);
             if(num2 == -1){ return -1; }
             num_new_deps2 += num2;
         }
@@ -657,35 +716,39 @@ bool contains_self_dependency_baseline(ArrayListDependencyPair dependencies){
 bool common_set_schema_baseline(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies)
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    Arena *arena)
 {
     if(set_schema1->size != set_schema2->size){ return false; }
     unsigned num_schemas = set_schema1->size; //num columns
     
-    *common_set_schema = create_array_list_schema(num_schemas);
-    ArrayListDependencyPair new_dependencies = create_array_list_dependency_pair_defsize(); //TODO: defsize is misleading, in reallity, it's default capacity
+    // NOTE: no resizing risk for Arena
+    *common_set_schema = create_array_list_schema_arena(num_schemas, arena);
+    // TODO: resizing risk for Arena, unknown number of variables with new dependencies (even variables that initially didn't have any)
+    ArrayListDependencyPair new_dependencies = create_array_list_dependency_pair_arena(10, arena);
     
     for(unsigned i = 0; i < num_schemas; ++i){
         Schema *s1 = set_schema1->array + i;
         Schema *s2 = set_schema2->array + i;
         
         Schema *common_schema = common_set_schema + i;
-        int num_new_dependencies = common_schema_baseline(s1, s2, common_schema, &new_dependencies);
+        int num_new_dependencies = common_schema_baseline(s1, s2, common_schema, &new_dependencies, arena);
         if(num_new_dependencies < 0){ return false; }
     }
     // common_set_schema calculated
 
     // Start calculating the final common_dependencies set as the union of the two inputs and new_dependencies
 
-    *common_dependencies = create_array_list_dependency_pair(dependencies1->size + dependencies2->size + new_dependencies.size);
     // NOTE: capacity can be greater than final size (we can have dependencies of the same variable in several sets)
-    
-    extend_array_list_dependency_pair(common_dependencies, dependencies1); // NOTE: Only copy the header of the array, the elements are shared
-    union_of_dependencies_baseline(common_dependencies, dependencies2);
-    union_of_dependencies_baseline(common_dependencies, &new_dependencies);
+    //  therefore, there is no risk of resizing
+    *common_dependencies = create_array_list_dependency_pair_arena(dependencies1->size + dependencies2->size + new_dependencies.size, arena);
+    extend_array_list_dependency_pair_arena(common_dependencies, dependencies1, arena); // NOTE: Only copy the header of the array, the elements are shared
+    // TODO: here, when adding new depencies to the array list of an already stored variable, we can have resizing
+    union_of_dependencies_baseline(common_dependencies, dependencies2, arena);
+    union_of_dependencies_baseline(common_dependencies, &new_dependencies, arena);
 
     // Now, we must calculate the hidden dependencies, in case there is a self dependency
-    int num_new_dependencies = theta_operator_baseline(common_dependencies);
+    int num_new_dependencies = theta_operator_baseline(common_dependencies, arena);
     if(num_new_dependencies == -1){ return false; }
     assert(!contains_self_dependency_baseline(*common_dependencies));
     return true;

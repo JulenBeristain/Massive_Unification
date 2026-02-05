@@ -96,15 +96,36 @@ DECLARE_ARRAYLIST(Int, int, int)
 DECLARE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr)
 
 DECLARE_ARRAYLIST(Schema, schema, Schema)
+
 //TODO: incorporate these to the macro
+#define DECLARE_ARRAYLIST_ADDITION_ARENA(Name, name, type)                                   \
+    int add_to_array_list_##name##_arena(ArrayList##Name *list, type element, Arena *arena);
+
+DECLARE_ARRAYLIST_ADDITION_ARENA(Schema, schema, Schema)
 int add_not_repeated_to_array_list_schema(ArrayListSchema *list, Schema element);
+int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
+DECLARE_ARRAYLIST_ADDITION_ARENA(DependencyPair, dependency_pair, DependencyPair)
+
 int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list);
+int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena);
+
 #define DECLARE_ARRAYLIST_EXTENSION(Name, name, type)                                   \
-int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list);
+    int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list);
+#define DECLARE_ARRAYLIST_EXTENSION_ARENA(Name, name, type)                                                                  \
+    int extend_array_list_##name##_arena(ArrayList##Name *list_to_extend, ArrayList##Name *list, Arena *arena);
+
 DECLARE_ARRAYLIST_EXTENSION(Schema, schema, Schema)
 DECLARE_ARRAYLIST_EXTENSION(DependencyPair, dependency_pair, DependencyPair)
+DECLARE_ARRAYLIST_EXTENSION_ARENA(DependencyPair, dependency_pair, DependencyPair)
 
 
 DECLARE_ARRAYLIST_NOT_REMOVAL(DependencyPair, dependency_pair, DependencyPair)
+
+
+#define DECLARE_ARRAYLIST_CREATION_ARENA(Name,name)                                      \
+    ArrayList##Name create_array_list_##name##_arena(uint32_t capacity, Arena *arena);
+
+DECLARE_ARRAYLIST_CREATION_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_CREATION_ARENA(DependencyPair, dependency_pair)
 
 #endif // ARRAYLIST_H

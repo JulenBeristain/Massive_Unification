@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "set_variables.h"
 #include "set_dependencies.h"
+#include "arena.h"
 
 /**
  * The structure that represents a Schema. It is inductively defined. It can be:
@@ -39,10 +40,22 @@ typedef union Schema {
     };
 } Schema, *SchemaPtr; // NOTE: pointer type useful for arraylists of pointers to Schemas
 
+// NOTE: the middle ground is adding an extra indirection in Schema...
+// NOTE: look at this interesting and flexible structure for N-ary trees with two pointers per node... Just like a bynary tree!
+// Define the N-ary Node
+/*
+typedef struct Node {
+    char data;
+    struct Node* first_child;
+    struct Node* next_sibling;
+} Node;
+*/
+
 // TODO: make a typedef for SetSchema-s as ArrayLists of Schemas (not SchemaPtrs...)
 
 void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema(Schema *schema, unsigned arity);
+void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
 unsigned schema_size(Schema *s);
 
 // NOTE: for arraylist of pointers to Schemas
@@ -53,7 +66,8 @@ void print_schema(Schema *s);
 bool common_set_schema_baseline(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies);
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    Arena *arena);
 
 
 /**
