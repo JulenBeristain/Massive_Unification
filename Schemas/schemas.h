@@ -4,8 +4,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "set_variables.h"
-#include "set_dependencies.h"
 #include "arena.h"
+#include "arraylist.h"
+
+// TODO: cyclic type dependency between schemas.h and set_dependencies.h. The simplest way to solve it was
+// to bring the contents of set_dependencies here. See how we can avoid these kind of problems in the future.
+//#include "set_dependencies.h"
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// TYPE DEFINITIONS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
  * The structure that represents a Schema. It is inductively defined. It can be:
@@ -23,7 +33,8 @@
 //  in M2).
 //typedef enum : uint8_t { VARIABLE, GENERAL } SchemaType; // TODO: for two types a Byte (even a bit) is enough. Because of padding, no effect
 typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
-typedef union Schema {
+typedef union Schema Schema, *SchemaPtr;
+union Schema {
     struct {
         SchemaType type;
         Variable v;
@@ -38,20 +49,53 @@ typedef union Schema {
         Schema *subschemas;
         size_t ___;        // Note, candidate for uint16/32_t if padding may arise
     };
-} Schema, *SchemaPtr; // NOTE: pointer type useful for arraylists of pointers to Schemas
+}; // NOTE: pointer type useful for arraylists of pointers to Schemas
 
-// NOTE: the middle ground is adding an extra indirection in Schema...
-// NOTE: look at this interesting and flexible structure for N-ary trees with two pointers per node... Just like a bynary tree!
-// Define the N-ary Node
-/*
-typedef struct Node {
-    char data;
-    struct Node* first_child;
-    struct Node* next_sibling;
-} Node;
-*/
+/// ARRAYLIST SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO: make a typedef for SetSchema-s as ArrayLists of Schemas (not SchemaPtrs...)
+typedef struct ArrayListSchema ArrayListSchema;
+struct ArrayListSchema {
+    uint32_t size;
+    uint32_t capacity;
+    Schema* array;
+};
+
+/// DEPENDENCY PAIR ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Sets of dependencies are mappings from variables to schemas associated to common Schemas.
+ * Because of that, we are going to implement them as hash-maps from ints to pointers to 
+ * Schemas.
+ */
+typedef struct ArrayListSchema ArrayListSchema;
+
+typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
+struct DependencyPair {
+    Variable v;                 // NOTE: in this case, we could use a uint64_t to take advantage of the inevitable padding
+    ArrayListSchema schemas;
+};
+
+/// ARRAYLIST DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct ArrayListDependencyPair ArrayListDependencyPair;
+struct ArrayListDependencyPair {
+    uint32_t size;
+    uint32_t capacity;
+    DependencyPair* array;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END TYPE DEFINITIONS ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema(Schema *schema, unsigned arity);
@@ -69,6 +113,41 @@ bool common_set_schema_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
+/// ARRAYLIST SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int add_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
+
+int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
+
+// TODO_YA: not arena version of the "repeated" version?
+//int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list);
+int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena);
+
+ArrayListSchema create_array_list_schema_arena(uint32_t capacity, Arena *arena);
+
+/// DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//void print_dependency_pair(DependencyPair pair);
+
+
+/// ARRAYLIST DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair *list, DependencyPair element, Arena *arena);
+//TODO_YA: version not_repeat declaration?
+
+
+int extend_array_list_dependency_pair_arena(ArrayListDependencyPair *list_to_extend, ArrayListDependencyPair *list, Arena *arena);
+//TODO_YA: version not_repeat declaration?
+
+
+ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena *arena);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// TODO: make a typedef for SetSchema-s as ArrayLists of Schemas (not SchemaPtrs...)
 
 /**
  * FUTURE WORK:

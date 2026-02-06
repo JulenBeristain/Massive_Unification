@@ -12,6 +12,8 @@
 				"-Wextra",
 				"Schemas/arraylist.c",
 				"Schemas/set_variables.c",
+				"Schemas/arena.c",
+				"Schemas/schemas.c",
 				"Schemas/tests.c",
 				"-o",
 				"build/tests"

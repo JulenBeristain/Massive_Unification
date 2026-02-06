@@ -9,7 +9,7 @@
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/build/tests",
-        "args": [],
+        "args": ["C_AGT_or_COM_only_first_char"],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
         "environment": [],

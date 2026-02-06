@@ -2,10 +2,11 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #define GET_BIT(Num, Bit) (((Num) >> (Bit)) & 1)
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
-#define SET_TO_ZERO(AllocatedPtr) memset((AllocatedPtr), 0, sizeof(AllocatedPtr))
+#define SET_TO_ZERO(AllocatedPtr) memset((AllocatedPtr), 0, sizeof(*AllocatedPtr))
 
 // PRE: size_in_bytes > 0
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit
@@ -31,7 +32,7 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
             break;
         }
     }
-    return is_power_of_2 ? size_in_bytes : (1 << (most_significant_1 + 1));
+    return is_power_of_2 ? size_in_bytes : (1u << (most_significant_1 + 1));
 }
 
 // PRE: block_size > 0
@@ -89,10 +90,7 @@ void clear_arena(Arena *arena){
 // NOTE: we expect that num_bytes will be much smaller than the size of a memory block. Nonetheless,
 //  we manage even that case gracefully.
 // If num_bytes is 0, NULL is returned.
-void *allocate(Arena *arena, size_t num_bytes){
-    if(num_bytes == 0){ return NULL; }
-    return allocate_(arena, num_bytes);
-}
+
 void *allocate_(Arena *arena, size_t num_bytes){
     MemoryBlock *block = arena->current_block;
     assert(block != NULL); // PRE: arena already initialized
@@ -129,4 +127,9 @@ void *allocate_(Arena *arena, size_t num_bytes){
         arena->next_free_position += num_bytes;
         return start_allocation;
     }
+}
+
+void *allocate(Arena *arena, size_t num_bytes){
+    if(num_bytes == 0){ return NULL; }
+    return allocate_(arena, num_bytes);
 }

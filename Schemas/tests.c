@@ -12,6 +12,8 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include <string.h>
 #include <assert.h>
 
+size_t global_line_number = 0;
+
 void test_set_variables(){
     SetVariables set = create_set_variables_defsize();
 
@@ -40,6 +42,11 @@ void test_typeof_or_auto_type(){
     printf("&x=%p\n&y=%p\n", xptr, yptr);
 }
 
+DECLARE_ARRAYLIST(Int, int, int)
+static inline bool equal_ints(int a, int b) { return a == b; }
+static inline void print_int(int i) { printf("%d", i); }
+
+DEFINE_ARRAYLIST(Int, int, int, equal_ints, print_int)
 void test_arraylist_ints(){
     ArrayListInt list = create_array_list_int_defsize();
 
@@ -98,8 +105,11 @@ Schema read_schema(char **schema_str, Arena *arena){
         for(size_t i = 0; i < arity; ++i){
             result.subschemas[i] = read_schema(schema_str, arena);
             result.size += result.subschemas[i].size;
+            if (i != arity - 1) { 
+                ++(*schema_str); // Skip comma between subschemas (no comma after the last one!)
+            }
         }
-        *schema_str += 1;
+        *schema_str += 1; // Skip closing bracket
         return result;
     }
 
@@ -110,25 +120,28 @@ Schema read_schema(char **schema_str, Arena *arena){
 unsigned scan_num_schemas_in_set(char *line){
     unsigned num_cols = 0;
     unsigned brackets = 0;
-    for(; *line; ++line){
+    while(*line != '\n' && *line != '\0'){
         unsigned v, arity;
-        if(sscanf(line, "$%u,", &v) == 1){
+        if(sscanf(line, "$%u", &v) == 1){
             if(brackets == 0) { ++num_cols; }
             line += 1 + num_digits(v);
         }
         else if (sscanf(line, "%u:[", &arity) == 1){
             if(brackets == 0) { ++num_cols; }
             ++brackets;
-            line += num_digits(arity) + 2;
+            line += num_digits(arity) + 1 + 1;
         }
-        else if (*line == '\n'){
-            continue;
+        else if(*line == ']') { 
+            --brackets;
+            ++line;
+        }
+        else if(*line == ','){
+            ++line;
         }
         else {
             fprintf(stderr, "scan_num_schemas_in_set: Unexpected set schema format!\n");
             exit(2);
         }
-        if(*line == ']') { --brackets; }
     }
     return num_cols;
 }
@@ -159,15 +172,16 @@ ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_wi
     // NOTE: no resizing risk for Arena, as we know the numbers of variables with dependencies beforehand
     ArrayListDependencyPair dependencies = create_array_list_dependency_pair_arena(num_vars_with_dependencies, arena);
     
-    for(unsigned i = num_vars_with_dependencies; i < num_vars_with_dependencies; ++i){
+    for(unsigned i = 0; i < num_vars_with_dependencies; ++i){
         read = getline(&line, &len, stream);
+        ++global_line_number;
         unsigned v;
-        if(sscanf("$%u <- [", &v) == 0){
+        if(sscanf(line, "$%u <- [", &v) == 0){
             fprintf(stderr, "read_set_dependencies: Unexpected list of dependencies format!\n");
             exit(3);
         }
         
-        // Adapt the read line to obtain the number of schemas and the schemas themselves
+        // Adapt the read line to obtain the number of schemas and the schemas themselves (to keep line for the posterior free call) (quite tricky, not robust interaction with read_set_schema)
         line[read-2] = '\0';            // read-1 == '\n', -2 == ']' (the closing braquet of the list of dependencies of v)
         char *lineptr = line + 1 + num_digits(v) + 5;  // Focus on the beginning of the first schema
 
@@ -188,6 +202,7 @@ int read_next_set_schema_with_dependencies(
     ssize_t read;
 
     while((read = getline(&line, &len, stream)) != -1){
+        ++global_line_number;
         // Skip whitelines and comments
         if(len == 0 || line[0] == '%' || is_white_line(line, len)){ continue; }
 
@@ -270,6 +285,7 @@ unsigned read_test_number(FILE *stream){
     ssize_t read;
 
     while((read = getline(&line, &len, stream)) != -1){
+        ++global_line_number;
         unsigned test_number;
         if(sscanf(line, "%%%%%% BEGIN common schema test %u %%%%%%", &test_number) == 1){
             return test_number;
@@ -294,9 +310,11 @@ void test_schema_management(int argc, char const *argv[]){
         filename = "data/schemas/AGT006+1_truncated.txt";
     }
     printf("Reading the schemas from: %s\n", filename);
+    printf("Test cases with unexpected results:\n");
     FILE *stream = fopen(filename, "r");
 
-
+    uint64_t num_correct_cases = 0;
+    
     for(;;){
         // TODO: a unique dependency set for set_schema1/2 and computed common is enough...
         ArrayListSchema set_schema1, set_schema2, common_set_schema, computed_common_set_schema;
@@ -334,14 +352,17 @@ void test_schema_management(int argc, char const *argv[]){
                 printf("Test=%u - set_schemas_ok=%u - dependencies_ok=%u\n", 
                         test_number, set_schemas_ok, dependencies_ok);
             }
+            else { ++num_correct_cases; }
         }
-        // else: the common schema doesn't exist, and it wasn't calculated, as expected
+        else { ++num_correct_cases; } // the common schema doesn't exist, and it wasn't calculated, as expected
         
         clear_arena(&arena);
     }
 
     fclose(stream);
     free_arena(&arena); // TODO: Use Valgrind to ensure we don't leak memory...
+
+    printf("num_correct_cases=%lu\n", num_correct_cases);
 }
 
 int main(int argc, char const *argv[])
