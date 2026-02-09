@@ -407,5 +407,6 @@ int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *resul
     DEFINE_ARRAYLIST_REMOVAL_VALUE(Name, name, type, equal_function)                    \
     DEFINE_PRINT_ARRAYLIST(Name, name, print_function)
 
+// TODO: define a helper resizing function!!! resizing = realloc + COPY_THE_ELEMENTS!!!
 
 #endif // ARRAYLIST_H

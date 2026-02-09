@@ -5,6 +5,9 @@
 
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 
+extern bool global_print_debugging;
+
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// ARRAYLIST SCHEMAS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -34,7 +37,15 @@ int add_to_array_list_schema_arena(ArrayListSchema* list, Schema element, Arena*
         } else {
             list->capacity = 1;
         }
-        list->array = allocate(arena, list->capacity * sizeof(*list->array));
+        // TODO: this is the logic of resizing!!!
+        Schema *new_array = allocate(arena, list->capacity * sizeof(*list->array));
+        Schema *source = list->array;
+        Schema *dest = new_array;
+        Schema *end = dest + list->size;
+        for(; dest < end; ++dest, ++source){
+            *dest = *source;
+        }
+        list->array = new_array;
         code = RESIZED;
     }
     list->array[list->size] = element;
@@ -53,17 +64,10 @@ int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema el
 }
 
 //TODO_YA: not arena version?
-//DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema)
+//DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema) // TODO_YA: the first resizing logic shouldn't work like the not repeated version
 
 int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena){
     int code = NOT_RESIZED; 
-  
-    unsigned maximum_extended_size = list_to_extend->size + list->size; 
-    if(maximum_extended_size > list_to_extend->capacity){
-        list_to_extend->capacity = 2 * maximum_extended_size; 
-        list_to_extend->array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));
-        code = RESIZED;
-    } 
 
     foreach_in_arraylistptr(Schema, elemptr, list){
         add_not_repeated_to_array_list_schema_arena(list_to_extend, *elemptr, arena);
@@ -160,25 +164,6 @@ bool equal_schemas(Schema *s1, Schema *s2){
     }
     return false;
 }
-
-// TODO: modify or add an extra version to mimic Javier's format when printing schemas
-// NOTE: useful for arraylist of pointers to Schemas
-void print_schema(Schema *s){
-    if(s->type == VARIABLE_SCHEMA){
-        printf("V%d", s->v);
-    } else {
-        printf("<");
-        if(s->arity) { print_schema(s->subschemas); }
-        Schema *sub = s->subschemas + 1;
-        Schema *end = s->subschemas + s->arity;
-        for(; sub < end; ++sub){
-            printf(", ");
-            print_schema(sub);
-        }
-        printf(">");
-    }
-}
-
 
 bool is_self_dependency(Variable v, Schema *schema){
     // TODO: if this is the first case; i.e., the Schema is the Variable v itself? If we need a special treatment for this
@@ -491,8 +476,9 @@ bool common_set_schema_baseline(
     if(set_schema1->size != set_schema2->size){ return false; }
     unsigned num_schemas = set_schema1->size; //num columns
     
-    // NOTE: no resizing risk for Arena
+    // NOTE: no resizing risk for Arena - Num schemas initialized here to the precalculated value because then we take pointers to each Schema, as if it already was a valid arraylist element
     *common_set_schema = create_array_list_schema_arena(num_schemas, arena);
+    common_set_schema->size = num_schemas;
     // TODO: resizing risk for Arena, unknown number of variables with new dependencies (even variables that initially didn't have any)
     ArrayListDependencyPair new_dependencies = create_array_list_dependency_pair_arena(10, arena);
     
@@ -502,9 +488,30 @@ bool common_set_schema_baseline(
         
         Schema *common_schema = common_set_schema->array + i;
         int num_new_dependencies = common_schema_baseline(s1, s2, common_schema, &new_dependencies, arena);
+
+        if(global_print_debugging){
+            printf("Computed Common schema %u:\n", i + 1);
+            if(num_new_dependencies < 0){
+                printf("Self dependency detected!\n");
+            }
+            else {
+                print_schema(common_schema, PRINT_VISUALLY); printf("\n");
+                print_schema(common_schema, PRINT_FILE_FORMAT); printf("\n");
+            }
+        }
+
         if(num_new_dependencies < 0){ return false; }
     }
     // common_set_schema calculated
+
+    if(global_print_debugging){
+        printf("Computed Common Set Schema:\n");
+        print_set_schema(common_set_schema, PRINT_VISUALLY);
+        print_set_schema(common_set_schema, PRINT_FILE_FORMAT);
+        printf("Just the new dependencies:\n");
+        print_set_dependencies(&new_dependencies, PRINT_VISUALLY);
+        print_set_dependencies(&new_dependencies, PRINT_FILE_FORMAT);
+    }
 
     // Start calculating the final common_dependencies set as the union of the two inputs and new_dependencies
 
@@ -516,9 +523,22 @@ bool common_set_schema_baseline(
     union_of_dependencies_baseline(common_dependencies, dependencies2, arena);
     union_of_dependencies_baseline(common_dependencies, &new_dependencies, arena);
 
+    if(global_print_debugging){
+        printf("Union of all dependencies:\n");
+        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+        print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
+    }
+
     // Now, we must calculate the hidden dependencies, in case there is a self dependency
     int num_new_dependencies = theta_operator_baseline(common_dependencies, arena);
-    if(num_new_dependencies == -1){ return false; }
+
+    if(global_print_debugging){
+        printf("Total dependencies after theta operator:\n");
+        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+        print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
+    }
+
+    if(num_new_dependencies < 0){ return false; }
     assert(!contains_self_dependency_baseline(*common_dependencies));
     return true;
 }
@@ -526,10 +546,6 @@ bool common_set_schema_baseline(
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////////
-/// SIMPLER VERSION OF SET OF DEPENDENCIES FOR A BASELINE
-/////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -559,7 +575,15 @@ int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair* list, Depen
         } else {
             list->capacity = 1;
         }
-        list->array = allocate(arena, list->capacity * sizeof(*list->array));
+        // TODO: this is the logic of resizing!!!
+        DependencyPair *new_array = allocate(arena, list->capacity * sizeof(*list->array));
+        DependencyPair *source = list->array;
+        DependencyPair *dest = new_array;
+        DependencyPair *end = dest + list->size;
+        for(; dest < end; ++dest, ++source){
+            *dest = *source;
+        }
+        list->array = new_array;
         code = RESIZED;
     }
     list->array[list->size] = element;
@@ -576,11 +600,21 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_ext
     unsigned extended_size = list_to_extend->size + list->size;
     if (extended_size > list_to_extend->capacity) {
         list_to_extend->capacity = 2 * extended_size;
-        list_to_extend->array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));
+        // TODO: this is the resizing logic in extending too!!!
+        DependencyPair *new_array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));
+        DependencyPair *source = list_to_extend->array;
+        DependencyPair *dest = new_array;
+        DependencyPair *end = dest + list_to_extend->size;
+        for(; dest < end; ++dest, ++source){
+            *dest = *source;
+        }
+        list_to_extend->array = new_array;
         code = RESIZED;
     }
     for (DependencyPair *elemptr = (list)->array, *_end = (list)->array + (list)->size; elemptr < _end; ++elemptr) {
-        add_to_array_list_dependency_pair_arena(list_to_extend, *elemptr, arena);
+        // TODO: as we already have extended when necessary, we can avoid the overhead of a function call
+        //add_to_array_list_dependency_pair_arena(list_to_extend, *elemptr, arena);
+        list_to_extend->array[list_to_extend->size++] = *elemptr;
     }
     return code;
 }
@@ -591,13 +625,91 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_ext
 /// END ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/* void print_dependency_pair(DependencyPair pair){
-    printf("($%u <- ", pair.v);
-    print_array_list_schema(pair.schemas);
-    printf(")");
-} */
-
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// PRINTING FUNCTIONS FOR DEBUGGING ////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Schemas /////////////////////////////////////////////////////////////
+void print_schema_(Schema *s, char opening_brace, char closing_brace, bool show_arity){
+    if(s->type == VARIABLE_SCHEMA){
+        printf("$%d", s->v);
+    } else {
+        if(show_arity) { printf("%d:", s->arity); }
+        printf("%c", opening_brace);
+        if(s->arity) { print_schema_(s->subschemas, opening_brace, closing_brace, show_arity); }
+        Schema *sub = s->subschemas + 1;
+        Schema *end = s->subschemas + s->arity;
+        for(; sub < end; ++sub){
+            printf(", ");
+            print_schema_(sub, opening_brace, closing_brace, show_arity);
+        }
+        printf("%c", closing_brace);
+    }
+}
+void print_schema(Schema *s, PrintingMode mode){
+    if(mode == PRINT_VISUALLY){
+        print_schema_(s, '<', '>', false);
+    }
+    else {
+        print_schema_(s, '[', ']', true);
+    }
+}
+
+// Set-Schemas /////////////////////////////////////////////////////////////
+void print_set_schema_(ArrayListSchema *set_schema, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode){
+    if(opening_brace){ printf("%c", opening_brace); }
+    if(set_schema->size) { print_schema(set_schema->array, schema_mode); }
+    Schema *schema = set_schema->array + 1;
+    Schema *end = set_schema->array + set_schema->size;
+    for(; schema < end; ++schema){
+        printf("%s", schema_separator);
+        print_schema(schema, schema_mode);
+    }
+    if(closing_brace){ printf("%c", closing_brace); }
+}
+void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode){
+    // NOTE: another interesting schema_separator = ",\n\t" (potentially for a certain number of \t if nesting...)
+    if(mode == PRINT_VISUALLY){
+        print_set_schema_(set_schema, '{', '}', ", ", PRINT_VISUALLY);
+    }
+    else {
+        print_set_schema_(set_schema, '\0', '\0', ", ", PRINT_FILE_FORMAT);
+    }
+    printf("\n");
+}
+
+// Set dependencies /////////////////////////////////////////////////////////////
+void print_dependency_pair(DependencyPair *pair, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode){
+    printf("$%u <- ", pair->v);
+    print_set_schema_(&pair->schemas, opening_brace, closing_brace, schema_separator, schema_mode);
+}
+void print_set_dependencies_(ArrayListDependencyPair *set_dependencies, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode){
+    if(set_dependencies->size == 0){
+        printf("\n");
+        return;
+    }
+
+    foreach_in_arraylistptr(DependencyPair, pair, set_dependencies){
+        print_dependency_pair(pair, opening_brace, closing_brace, schema_separator, schema_mode);
+        printf("\n");
+    }
+}
+void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode){
+    if(mode == PRINT_VISUALLY){
+        print_set_dependencies_(set_dependencies, '{', '}', ", ", PRINT_VISUALLY);
+    }
+    else {
+        print_set_dependencies_(set_dependencies, '[', ']', ", ", PRINT_FILE_FORMAT);
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END PRINTING FUNCTIONS FOR DEBUGGING ////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+

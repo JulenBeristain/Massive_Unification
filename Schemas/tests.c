@@ -13,6 +13,7 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include <assert.h>
 
 size_t global_line_number = 0;
+bool global_print_debugging = false;
 
 void test_set_variables(){
     SetVariables set = create_set_variables_defsize();
@@ -153,10 +154,10 @@ ArrayListSchema read_set_schema(char *line, Arena *arena){
     ArrayListSchema set_schema = create_array_list_schema_arena(num_cols, arena);
     
     // Parse each schema
-    unsigned i = 0;
     while(*line != '\0' && *line != '\n'){ // NOTE: we could also use num_cols as a counter...
         // NOTE: we can directly set without bound checking thanks to the precalculation of the number of columns
-        set_schema.array[i++] = read_schema(&line, arena);
+        set_schema.array[set_schema.size++] = read_schema(&line, arena);
+        //add_to_array_list_schema_arena(&set_schema, read_schema(&line, arena), arena); // MORE Robust option
         // Skip the comma separating the schemas in the set-schema (or the new line at the end)
         ++line;
     }
@@ -172,7 +173,7 @@ ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_wi
     // NOTE: no resizing risk for Arena, as we know the numbers of variables with dependencies beforehand
     ArrayListDependencyPair dependencies = create_array_list_dependency_pair_arena(num_vars_with_dependencies, arena);
     
-    for(unsigned i = 0; i < num_vars_with_dependencies; ++i){
+    while(num_vars_with_dependencies--){
         read = getline(&line, &len, stream);
         ++global_line_number;
         unsigned v;
@@ -187,7 +188,8 @@ ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_wi
 
         DependencyPair pair = { .v = v, .schemas = read_set_schema(lineptr, arena) };
         //NOTE: we can directly set without bound checking thanks to having read the number of vars with dependencies
-        dependencies.array[i] = pair;
+        dependencies.array[dependencies.size++] = pair;
+        //add_to_array_list_dependency_pair_arena(&dependencies, pair, arena); // NOTE: more robust option
     }
 
     if(line){ free(line); }
@@ -314,6 +316,7 @@ void test_schema_management(int argc, char const *argv[]){
     FILE *stream = fopen(filename, "r");
 
     uint64_t num_correct_cases = 0;
+    uint64_t num_total_cases = 0;
     
     for(;;){
         // TODO: a unique dependency set for set_schema1/2 and computed common is enough...
@@ -324,6 +327,7 @@ void test_schema_management(int argc, char const *argv[]){
         if(test_number == 0){
             break; // EOF
         }
+        printf("--- Test=%u ---\n", test_number);
 
         ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1, &arena);
         assert(read != -1 && read != 1);
@@ -336,6 +340,31 @@ void test_schema_management(int argc, char const *argv[]){
             break; // EOF
         }
         bool common_schema_exists = read != 1; // read == 0
+
+        if(global_print_debugging){
+            printf("Set Schema 1:\n");
+            print_set_schema(&set_schema1, PRINT_VISUALLY);
+            print_set_schema(&set_schema1, PRINT_FILE_FORMAT);
+            print_set_dependencies(&dependencies1, PRINT_VISUALLY);
+            print_set_dependencies(&dependencies1, PRINT_FILE_FORMAT);
+
+            printf("Set Schema 2:\n");
+            print_set_schema(&set_schema2, PRINT_VISUALLY);
+            print_set_schema(&set_schema2, PRINT_FILE_FORMAT);
+            print_set_dependencies(&dependencies2, PRINT_VISUALLY);
+            print_set_dependencies(&dependencies2, PRINT_FILE_FORMAT);
+
+            printf("Common Set Schema:\n");
+            if(common_schema_exists){
+                print_set_schema(&common_set_schema, PRINT_VISUALLY);
+                print_set_schema(&common_set_schema, PRINT_FILE_FORMAT);
+                print_set_dependencies(&common_dependencies, PRINT_VISUALLY);
+                print_set_dependencies(&common_dependencies, PRINT_FILE_FORMAT);
+            } 
+            else {
+                printf("Common Schema does not exist!\n");
+            }
+        }
 
         bool computed_common_schema_exists = common_set_schema_baseline(&set_schema1, &dependencies1, 
             &set_schema2, &dependencies2, &computed_common_set_schema, &computed_common_dependencies, &arena);
@@ -355,16 +384,30 @@ void test_schema_management(int argc, char const *argv[]){
             else { ++num_correct_cases; }
         }
         else { ++num_correct_cases; } // the common schema doesn't exist, and it wasn't calculated, as expected
-        
+        ++num_total_cases;
+
         clear_arena(&arena);
     }
 
     fclose(stream);
     free_arena(&arena); // TODO: Use Valgrind to ensure we don't leak memory...
 
-    printf("num_correct_cases=%lu\n", num_correct_cases);
+    printf("num_correct_cases=%lu/%lu\n", num_correct_cases, num_total_cases);
 }
-
+/*
+Test=17000 - common_schema_exists=1 - computed_common_schema_exists=0 --> Theta operator problem???
+%%% BEGIN common schema test 17000 %%%
+% Source schema 1
+1, 1:[2:[1:[$1],0:[]]],2:[2:[2:[1:[1:[1:[0:[]]]],0:[]],0:[]],0:[]],3:[$1,0:[],0:[]],3:[3:[1:[1:[1:[0:[]]]],0:[],0:[]],0:[],0:[]]
+$1 <- [1:[1:[0:[]]],1:[1:[1:[0:[]]]]]
+% Source schema 2
+1, 1:[2:[1:[1:[$1]],0:[]]],2:[2:[2:[1:[1:[1:[0:[]]]],0:[]],0:[]],0:[]],3:[1:[$1],0:[],0:[]],3:[3:[1:[1:[1:[0:[]]]],0:[],0:[]],0:[],0:[]]
+$1 <- [1:[0:[]],1:[1:[0:[]]]]
+% Common schema
+1, 1:[2:[1:[$1],0:[]]],2:[2:[2:[1:[1:[1:[0:[]]]],0:[]],0:[]],0:[]],3:[$1,0:[],0:[]],3:[3:[1:[1:[1:[0:[]]]],0:[],0:[]],0:[],0:[]]
+$1 <- [1:[1:[0:[]]],1:[1:[1:[0:[]]]],1:[0:[]]]
+%%% End common schema test 17000 %%%
+*/
 int main(int argc, char const *argv[])
 {
     //test_set_variables();

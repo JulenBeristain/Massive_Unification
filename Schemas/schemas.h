@@ -62,13 +62,6 @@ struct ArrayListSchema {
 
 /// DEPENDENCY PAIR ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/**
- * Sets of dependencies are mappings from variables to schemas associated to common Schemas.
- * Because of that, we are going to implement them as hash-maps from ints to pointers to 
- * Schemas.
- */
-typedef struct ArrayListSchema ArrayListSchema;
-
 typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
 struct DependencyPair {
     Variable v;                 // NOTE: in this case, we could use a uint64_t to take advantage of the inevitable padding
@@ -104,7 +97,6 @@ unsigned schema_size(Schema *s);
 
 // NOTE: for arraylist of pointers to Schemas
 bool equal_schemas(Schema *s1, Schema *s2);
-void print_schema(Schema *s);
 
 // TODO: declare the public functions that are going to be used in the main.c module.
 bool common_set_schema_baseline(
@@ -141,6 +133,13 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair *list_to_ext
 
 
 ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena *arena);
+
+
+/// DEBUGGING PRINT ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
+void print_schema(Schema *s, PrintingMode mode);
+void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode);
+void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
