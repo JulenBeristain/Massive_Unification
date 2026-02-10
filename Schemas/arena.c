@@ -8,6 +8,8 @@
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
 #define SET_TO_ZERO(AllocatedPtr) memset((AllocatedPtr), 0, sizeof(*AllocatedPtr))
 
+unsigned global_create_memory_block_calls = 0;
+
 // PRE: size_in_bytes > 0
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit
 // is 63, we return the size itself (to avoid returning 0).
@@ -37,6 +39,8 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
 
 // PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
+    ++global_create_memory_block_calls;
+    printf("Create Memory Block in Arena (call=%u)\n", global_create_memory_block_calls);
     MemoryBlock *memory_block = malloc(sizeof(*memory_block));
     if (memory_block == NULL){
         perror("create_memory_block: malloc failed to allocate memory");
@@ -119,7 +123,7 @@ void *allocate_(Arena *arena, size_t num_bytes){
         // Take the resulting address, insert the new block in the Arena and return the address
         arena->current_block->next = new_memory_block;
         arena->current_block = new_memory_block;
-        arena->next_free_position = 0;
+        arena->next_free_position = num_bytes;
         return new_memory_block->memory;
     }
     else { // There is enough space

@@ -31,6 +31,32 @@
         ]
     },
     {
+        "name": "Debug tests.c to file (gdb)",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/tests",
+        "args": ["C_AGT_or_COM_only_first_char", ">", "build/test_results.txt"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "preLaunchTask": "build tests (gcc)",
+        "setupCommands": [
+            {
+                "description": "Enable pretty-printing for gdb",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": true
+            },
+            {
+                "description": "Set Disassembly Flavor to Intel",
+                "text": "-gdb-set disassembly-flavor intel",
+                "ignoreFailures": true
+            }
+        ]
+    },
+    {
         "name": "Debug Alex core.c test0002 (gdb)",
         "type": "cppdbg",
         "request": "launch",

@@ -205,13 +205,23 @@ SetVariables variables_in_schema(Schema *schema){
 /// BASIC IMPLEMENTATION WITH SIMPLE STRUCTURES FOR A BASELINE
 ///////////////////////////////////////////////////////////////////
 
-void insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema *s, Arena *arena){
+// PRE: there must not be any repeated Schemas in the list of Dependences of each variable! (set semantics)
+unsigned number_of_dependencies(ArrayListDependencyPair *dependencies){
+    unsigned num_dependencies = 0;
+    foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+        num_dependencies += pair->schemas.size;
+    }
+    return num_dependencies;
+}
+
+bool insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema *s, Arena *arena){
     for(unsigned i = 0; i < dependencies->size; ++i){
         DependencyPair *pair = dependencies->array + i;
         if(pair->v == v){
             // TODO: resizing risk for Arena
-            add_not_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
-            return;
+            int contained = add_not_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
+            if (contained != CONTAINED) { return true; }
+            return false;
         }
     }
 
@@ -223,6 +233,7 @@ void insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Vari
     DependencyPair first_dependency_pair_v = { .v = v, .schemas = first_schemas_v };
     //  We don't know how many extra variables with dependies we will have neither...
     add_to_array_list_dependency_pair_arena(dependencies, first_dependency_pair_v, arena);
+    return true;
 }
 
 // destination gets the dependencies found in source that it didn't contain initially.
@@ -261,16 +272,14 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
         Variable v = s1->v;
         if(is_self_dependency(v, s2)){ return -1; }
         init_variable_schema(common, v);
-        insert_to_dependencies_baseline(dependencies, v, s2, arena);
-        return 1;
+        return insert_to_dependencies_baseline(dependencies, v, s2, arena);
     }
     
     if (s2->type == VARIABLE_SCHEMA) {
         Variable v = s2->v;
         if(is_self_dependency(v, s1)){ return -1; }
         init_variable_schema(common, v);
-        insert_to_dependencies_baseline(dependencies, v, s1, arena);
-        return 1;
+        return insert_to_dependencies_baseline(dependencies, v, s1, arena);
     }
 
     size_t min_arity, max_arity;
@@ -311,13 +320,11 @@ int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDepende
 
     if (s1->type == VARIABLE_SCHEMA) {
         if(is_self_dependency(s1->v, s2)){ return -1; }
-        insert_to_dependencies_baseline(dependencies, s1->v, s2, arena);
-        return 1;
-    } 
+        return insert_to_dependencies_baseline(dependencies, s1->v, s2, arena);
+    }
     if (s2->type == VARIABLE_SCHEMA) {
         if(is_self_dependency(s2->v, s1)){ return -1; }
-        insert_to_dependencies_baseline(dependencies, s2->v, s1, arena);
-        return 1;
+        return insert_to_dependencies_baseline(dependencies, s2->v, s1, arena);
     }
 
     int num_new_dependencies = 0;
@@ -369,9 +376,22 @@ void substitute_arena_(Schema *original, Variable v, Schema *substitution, Schem
         }
     }
 }
+// TODO: don't let the debugging variable in release!
+unsigned global_substitute_arena_calls = 0;
+// TODO: cleaner to follow the idea of initialializer and not return an allocated pointer to Schema...
 Schema *substitute_arena(Schema *original, Variable v, Schema *substitution, Arena *arena){
+    ++global_substitute_arena_calls;
     Schema *result = allocate(arena, sizeof(*result));
+    // if(global_print_debugging){
+    //     printf("Substitution function (call=%d):\n", global_substitute_arena_calls);
+    //     printf("Original:\n"); print_schema(original, PRINT_VISUALLY); printf("\n"); print_schema(original, PRINT_FILE_FORMAT); printf("\n");
+    //     printf("Variable: $%u\n", v);
+    //     printf("Substitution:\n"); print_schema(substitution, PRINT_VISUALLY); printf("\n"); print_schema(substitution, PRINT_FILE_FORMAT); printf("\n");
+    // }
     substitute_arena_(original, v, substitution, result, arena);
+    // if(global_print_debugging){
+    //     printf("Result:\n"); print_schema(result, PRINT_VISUALLY); printf("\n"); print_schema(result, PRINT_FILE_FORMAT); printf("\n");
+    // }
     return result;
 }
 
@@ -424,7 +444,11 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
 int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena){
     int num_new_dependencies = 0;
     int num_new_deps1, num_new_deps2; // NOTE: we could have a single foreach accumulator, but this way we can have more information when debugging
+    unsigned iteration = 0;
     do {
+        ++iteration;
+        //if(global_print_debugging) printf("Theta iteration #%u...\n", iteration);
+
         num_new_deps1 = num_new_deps2 = 0;
         //NOTE: rule1 is much simpler than rule2 as it only needs to access to the schemas a variable depends on, not other
         //  variables. For that reason, we first call to it to try to be more cache-locality-friendly.
@@ -435,12 +459,16 @@ int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena)
         for(size_t i = 0; i < dependencies->size; ++i){
             DependencyPair *pair = dependencies->array + i;
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
+            //if(global_print_debugging) printf("Start rule 1...\n");
             int num1 = theta_rule1_baseline(dependencies, pair, arena);
+            //if(global_print_debugging) printf("End rule 1...\n");
             if(num1 == -1){ return -1; }
             num_new_deps1 += num1;
 
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
+            //if(global_print_debugging) printf("Start rule 2...\n");
             int num2 = theta_rule2_baseline(dependencies, pair, arena);
+            //if(global_print_debugging) printf("End rule 2...\n");
             if(num2 == -1){ return -1; }
             num_new_deps2 += num2;
         }
@@ -473,6 +501,8 @@ bool common_set_schema_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena)
 {
+    global_substitute_arena_calls = 0;
+    
     if(set_schema1->size != set_schema2->size){ return false; }
     unsigned num_schemas = set_schema1->size; //num columns
     
@@ -529,8 +559,10 @@ bool common_set_schema_baseline(
         print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
     }
 
+    //if(global_print_debugging) printf("Start theta operator...\n");
     // Now, we must calculate the hidden dependencies, in case there is a self dependency
     int num_new_dependencies = theta_operator_baseline(common_dependencies, arena);
+    //if(global_print_debugging) printf("End theta operator...\n");
 
     if(global_print_debugging){
         printf("Total dependencies after theta operator:\n");
