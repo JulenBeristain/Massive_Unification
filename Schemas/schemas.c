@@ -708,10 +708,10 @@ void print_set_schema_(ArrayListSchema *set_schema, char opening_brace, char clo
 void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode){
     // NOTE: another interesting schema_separator = ",\n\t" (potentially for a certain number of \t if nesting...)
     if(mode == PRINT_VISUALLY){
-        print_set_schema_(set_schema, '{', '}', ", ", PRINT_VISUALLY);
+        print_set_schema_(set_schema, '{', '}', "; ", PRINT_VISUALLY);
     }
     else {
-        print_set_schema_(set_schema, '\0', '\0', ", ", PRINT_FILE_FORMAT);
+        print_set_schema_(set_schema, '\0', '\0', "; ", PRINT_FILE_FORMAT);
     }
     printf("\n");
 }
@@ -734,10 +734,10 @@ void print_set_dependencies_(ArrayListDependencyPair *set_dependencies, char ope
 }
 void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode){
     if(mode == PRINT_VISUALLY){
-        print_set_dependencies_(set_dependencies, '{', '}', ", ", PRINT_VISUALLY);
+        print_set_dependencies_(set_dependencies, '{', '}', "; ", PRINT_VISUALLY);
     }
     else {
-        print_set_dependencies_(set_dependencies, '[', ']', ", ", PRINT_FILE_FORMAT);
+        print_set_dependencies_(set_dependencies, '[', ']', "; ", PRINT_FILE_FORMAT);
     }
 }
 

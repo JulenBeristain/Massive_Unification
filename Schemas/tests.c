@@ -3,6 +3,7 @@ To compile:
 gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 */
 
+#include "schemas.h"
 #include "set_variables.h"
 #include "arraylist.h"
 #include "arena.h"

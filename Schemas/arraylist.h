@@ -3,19 +3,36 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include "schemas.h"
 #include "arena.h"
+
+// TODO: make an extension for VSCode that expands macros automatically inplace, removing the macro
+//  use, substituting (or commenting and appending) it by the text that appears in the "Expands to" 
+//  section when you hover over it, and calling to the clang.formatter.
+
+// NOTE: Arenas don't behave nicely with ArrayLists when the latters resize. All the previous memory used
+//  by the ArrayList to store the elements becomes garbage when the ArrayList takes a new greater chunk
+//  from the Arena. Therefore, if a lot of resizing happens, the risk of running out of memory in the Arena
+//  increases, as well as the amount of unused memory.
+//
+//  Therefore, avoid using dynamic structures that can resize with Arenas, or prevent the resizing from happening.
+//  In the case of ArrayLists: 1) give great initial capacity (or just enough if it can be precomputed) taken from 
+//  the Arena. 2) just use malloc (preferably with just enough capacity to avoid resizing).
+//
+//  Additionally, to mix the use of malloc and Arenas for the same ArrayList we would need an extra flag to know if
+//  the previous allocation was done by malloc or not. If that was the case, before taking memory from the arena in 
+//  a resizing allocation, we would need to free the malloced memory. DON'T DO THIS, very error prone...
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// DECLARATION OF ARRAYLIST TYPES MACRO ////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DECLARE_ARRAYLIST_TYPE(Name, type)          \
-    typedef struct ArrayList##Name ArrayList##Name; \
-    struct ArrayList##Name {                        \
+#define DECLARE_ARRAYLIST_TYPE(Type)                \
+    typedef struct ArrayList##Type ArrayList##Type; \
+    struct ArrayList##Type {                        \
         uint32_t size;                              \
         uint32_t capacity;                          \
-        type* array;                                \
+        Type* array;                                \
     };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -30,84 +47,91 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// FOR EACH LOOP MACROS ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#define foreach_in_arraylist(type, valptr, list)                                                    \
-    for(type *valptr = (list).array, *_end = (list).array + (list).size; valptr < _end; ++valptr)   \
+#define foreach_in_arraylist(Type, valptr, list)                                                    \
+    for(Type *valptr = (list).array, *_end = (list).array + (list).size; valptr < _end; ++valptr)   \
 
-#define foreach_in_arraylistptr(type, valptr, listptr)                                                          \
-    for(type *valptr = (listptr)->array, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// DECLARATION OF ARRAYLIST FUNCTIONS MACROS ///////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define DECLARE_ARRAYLIST_FUNCTIONS(Name, name, type)                                        \
-    ArrayList##Name create_array_list_##name(uint32_t capacity);                             \
-    ArrayList##Name create_array_list_##name##_defsize();                                    \
-    static inline void free_array_list_##name(ArrayList##Name list){ free(list.array); }     \
-    static inline void clear_array_list_##name(ArrayList##Name *list){ list->size = 0; }     \
-    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
-    int remove_index_from_array_list_##name(ArrayList##Name *list, uint32_t index);          \
-    int remove_element_from_array_list_##name(ArrayList##Name *list, type element);          \
-    int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
-    void print_array_list_##name(ArrayList##Name list);
-
-#define DECLARE_ARRAYLIST_OF_POINTERS_FUNCTIONS(Name, name, type)                            \
-    ArrayList##Name create_array_list_##name(uint32_t capacity);                             \
-    ArrayList##Name create_array_list_##name##_defsize();                                    \
-    void free_array_list_##name(ArrayList##Name list);                                       \
-    void clear_array_list_##name(ArrayList##Name *list);                                     \
-    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
-    int remove_index_from_array_list_##name(ArrayList##Name *list, uint32_t index);          \
-    int remove_element_from_array_list_##name(ArrayList##Name *list, type element);          \
-    int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
-    void print_array_list_##name(ArrayList##Name list);
-
-#define DECLARE_ARRAYLIST_FUNCTIONS_NOT_REMOVAL(Name, name, type)                            \
-    ArrayList##Name create_array_list_##name(uint32_t capacity);                             \
-    ArrayList##Name create_array_list_##name##_defsize();                                    \
-    static inline void free_array_list_##name(ArrayList##Name list){ free(list.array); }     \
-    static inline void clear_array_list_##name(ArrayList##Name *list){ list->size = 0; }     \
-    int add_to_array_list_##name(ArrayList##Name *list, type element);                       \
-    int get_from_array_list_##name(ArrayList##Name list, uint32_t index, type *result);      \
-    void print_array_list_##name(ArrayList##Name list);
+#define foreach_in_arraylistptr(Type, valptr, listptr)                                                          \
+    for(Type *valptr = (listptr)->array, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// DECLARATIONS OF ARRAYLIST MACROS ////////////////////////////////////////////////////////////////////////////////////////////////
+/// DECLARATION OF ARRAYLIST FUNCTIONS MACROS (and definition of static inline functions) ///////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DECLARE_ARRAYLIST(Name, name, type) \
-    DECLARE_ARRAYLIST_TYPE(Name, type)      \
-    DECLARE_ARRAYLIST_FUNCTIONS(Name, name, type)
+// TODO: group the used and unused ones...
 
-// NOTE: for pointer types, it is helpful to have typedefs
-#define DECLARE_ARRAYLIST_OF_POINTERS(Name, name, type) \
-    DECLARE_ARRAYLIST_TYPE(Name, type)                  \
-    DECLARE_ARRAYLIST_OF_POINTERS_FUNCTIONS(Name, name, type)
+#define DECLARE_ARRAYLIST_CREATE(Type, type)                        \
+    ArrayList##Type create_array_list_##type(uint32_t capacity);
 
-#define DECLARE_ARRAYLIST_NOT_REMOVAL(Name, name, type)         \
-    DECLARE_ARRAYLIST_TYPE(Name, type)                          \
-    DECLARE_ARRAYLIST_FUNCTIONS_NOT_REMOVAL(Name, name, type)
+#define DECLARE_ARRAYLIST_CREATE_DEFCAPACITY(Type, type)            \
+    ArrayList##Type create_array_list_##type##_defcapacity();
 
-//TODO: incorporate these to the macro
-#define DECLARE_ARRAYLIST_ADDITION_ARENA(Name, name, type)                                   \
-    int add_to_array_list_##name##_arena(ArrayList##Name *list, type element, Arena *arena);
+// NOTE: we don't have the version with default capacity for arraylists whose underlying array is allocated in an arena
+//  because it's a bad idea to use an array whose runtime size isn't precomputable and thus will probably be resized.
+#define DECLARE_ARRAYLIST_CREATE_ARENA(Type, type)                                      \
+    ArrayList##Type create_array_list_##type##_arena(uint32_t capacity, Arena *arena);
 
-#define DECLARE_ARRAYLIST_EXTENSION(Name, name, type)                                   \
-    int extend_array_list_##name(ArrayList##Name *list_to_extend, ArrayList##Name *list);
-#define DECLARE_ARRAYLIST_EXTENSION_ARENA(Name, name, type)                                                                  \
-    int extend_array_list_##name##_arena(ArrayList##Name *list_to_extend, ArrayList##Name *list, Arena *arena);
+// NOTE: only for arraylists whose internal array was allocated with malloc. Only the internal array is freed.
+// NOTE: defining the version that receives the pointer to the arraylist is pointless, as arraylists are only 16B.
+#define DEFINE_ARRAYLIST_FREE(Type, type)                                                   \
+    static inline void free_array_list_##type(ArrayList##Type list){ free(list.array); }
 
-#define DECLARE_ARRAYLIST_CREATION_ARENA(Name,name)                                      \
-    ArrayList##Name create_array_list_##name##_arena(uint32_t capacity, Arena *arena);
+// NOTE: this should only be called if the objects have been allocated with malloc only in the arraylist of pointers,
+//  and anywhere else (if not, dangling pointers).
+#define DECLARE_ARRAYLIST_FREE_POINTERS(Type, type)      \
+    void free_array_list_##type(ArrayList##Type list);
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// CONCRETE DECLARATIONS OF ARRAYLIST TYPES ////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// NOTE: we can not have concrete declarations and definitions in arraylist.h/c, because in compile time a cyclic 
-//  unknowing of types happens.
-// TODO: move here, to .h, the macros used to define functions, and delete .c altogether
 
-//DECLARE_ARRAYLIST_OF_POINTERS(SchemaPtr, schema_ptr, SchemaPtr)
+#define DEFINE_ARRAYLIST_CLEAR(Type, type)                                                  \
+    static inline void clear_array_list_##type(ArrayList##Type *list){ list->size = 0; }
+
+// NOTE: this should only be called if the objects have been allocated with malloc only in the arraylist of pointers,
+//  and anywhere else (if not, dangling pointers).
+#define DECLARE_ARRAYLIST_CLEAR_POINTERS(Type, type) \
+void clear_array_list_##type(ArrayList##Type *list);
+
+
+// NOTE: the element has the same type as the underlying array in the list. The appending is by definition done by
+//  copying. If the size of Type is big and copying was expensive, then simply use arraylists of pointers to Type
+//  to start with; i.e., ElemTypePtr as Type (starting from the arraylist type declaration).
+#define DECLARE_ARRAYLIST_ADD(Type, type)                                                   \
+    int add_to_array_list_##type(ArrayList##Type *list, Type element);
+
+#define DECLARE_ARRAYLIST_ADD_ARENA(Type, type)                                             \
+    int add_to_array_list_##type##_arena(ArrayList##Type *list, Type element, Arena *arena);
+
+
+// NOTE: the list that is used to extend the other is passed by value since it isn't modified and only occupies 16B
+#define DECLARE_ARRAYLIST_EXTEND(Type, type)                                                \
+    int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type list);
+
+#define DECLARE_ARRAYLIST_EXTENSION_ARENA(Type, type)                                                           \
+    int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList##Type list, Arena *arena);
+
+
+#define DECLARE_ARRAYLIST_REMOVE_INDEX(Type, type)                                          \
+    int remove_index_from_array_list_##type(ArrayList##Type *list, uint32_t index);
+
+// NOTE: mixing passing by value the element to remove and having an arraylist of pointers doesn't make sense, because
+//  if a type is small enough so that passing by value is more efficient, then it would also be more interesting to have
+//  an arraylist of values instead of pointers. Anyways, although ElemType == Type in most of cases, giving that possibility
+//  could be interesting, because pointers can be an instrument to implement some optimizations like caching repeated nodes...
+//  The equals function used in the definition has two possibilities too: it can receive the elements by value or by pointer...
+#define DECLARE_ARRAYLIST_REMOVE_ELEMENT(Type, type, ElemType)                              \
+    int remove_element_from_array_list_##type(ArrayList##Type *list, ElemType element);
+
+
+// TODO: we can have a version get_pointer that receives an element and searches if an equivalent is found in the arraylist,
+//  and in that case it returns a pointer to it. This operation has the same complications as the remove_element one...
+//  MOVE THIS TODO DOWN, to the section of unused/future operations!!!
+#define DECLARE_ARRAYLIST_GET(Type, type)                                                   \
+    int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *result);
+
+
+// NOTE: in the definition, the print function could use a print element function that receives a value or a pointer to it.
+// NOTE: as arraylists are only 16B and printing doesn't modify it, adding a version that receives a pointer doesn't make
+//  much sense.
+#define DECLARE_ARRAYLIST_PRINT(Type, type)             \
+    void print_array_list_##type(ArrayList##Type list);
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -119,7 +143,6 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define DEFINE_ARRAYLIST_CREATION(Name,name)                        \
-                                                                    \
     ArrayList##Name create_array_list_##name(uint32_t capacity){    \
         ArrayList##Name list;                                       \
         list.size = 0;                                              \
