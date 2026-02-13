@@ -9,6 +9,9 @@
 //  use, substituting (or commenting and appending) it by the text that appears in the "Expands to" 
 //  section when you hover over it, and calling to the clang.formatter.
 
+// TODO: we can have a version get_pointer that receives an element and searches if an equivalent is found in the arraylist,
+//  and in that case it returns a pointer to it. This operation has the same complications as the remove_element one...
+
 // NOTE: Arenas don't behave nicely with ArrayLists when the latters resize. All the previous memory used
 //  by the ArrayList to store the elements becomes garbage when the ArrayList takes a new greater chunk
 //  from the Arena. Therefore, if a lot of resizing happens, the risk of running out of memory in the Arena
@@ -54,10 +57,8 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     for(Type *valptr = (listptr)->array, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// DECLARATION OF ARRAYLIST FUNCTIONS MACROS (and definition of static inline functions) ///////////////////////////////////////////
+/// MACROS FOR DECLARATION OF ARRAYLIST FUNCTIONS (and definition of static inline functions) ///////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// TODO: group the used and unused ones...
 
 #define DECLARE_ARRAYLIST_CREATE(Type, type)                        \
     ArrayList##Type create_array_list_##type(uint32_t capacity);
@@ -78,7 +79,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 // NOTE: this should only be called if the objects have been allocated with malloc only in the arraylist of pointers,
 //  and anywhere else (if not, dangling pointers).
 #define DECLARE_ARRAYLIST_FREE_POINTERS(Type, type)      \
-    void free_array_list_##type(ArrayList##Type list);
+    void free_pointers_array_list_##type(ArrayList##Type list);
 
 
 #define DEFINE_ARRAYLIST_CLEAR(Type, type)                                                  \
@@ -87,7 +88,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 // NOTE: this should only be called if the objects have been allocated with malloc only in the arraylist of pointers,
 //  and anywhere else (if not, dangling pointers).
 #define DECLARE_ARRAYLIST_CLEAR_POINTERS(Type, type) \
-void clear_array_list_##type(ArrayList##Type *list);
+void clear_pointers_array_list_##type(ArrayList##Type *list);
 
 
 // NOTE: the element has the same type as the underlying array in the list. The appending is by definition done by
@@ -104,7 +105,7 @@ void clear_array_list_##type(ArrayList##Type *list);
 #define DECLARE_ARRAYLIST_EXTEND(Type, type)                                                \
     int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type list);
 
-#define DECLARE_ARRAYLIST_EXTENSION_ARENA(Type, type)                                                           \
+#define DECLARE_ARRAYLIST_EXTEND_ARENA(Type, type)                                                              \
     int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList##Type list, Arena *arena);
 
 
@@ -120,9 +121,6 @@ void clear_array_list_##type(ArrayList##Type *list);
     int remove_element_from_array_list_##type(ArrayList##Type *list, ElemType element);
 
 
-// TODO: we can have a version get_pointer that receives an element and searches if an equivalent is found in the arraylist,
-//  and in that case it returns a pointer to it. This operation has the same complications as the remove_element one...
-//  MOVE THIS TODO DOWN, to the section of unused/future operations!!!
 #define DECLARE_ARRAYLIST_GET(Type, type)                                                   \
     int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *result);
 
@@ -142,9 +140,9 @@ void clear_array_list_##type(ArrayList##Type *list);
 /// CREATION ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DEFINE_ARRAYLIST_CREATION(Name,name)                        \
-    ArrayList##Name create_array_list_##name(uint32_t capacity){    \
-        ArrayList##Name list;                                       \
+#define DEFINE_ARRAYLIST_CREATE(Type, type)                         \
+    ArrayList##Type create_array_list_##type(uint32_t capacity){    \
+        ArrayList##Type list;                                       \
         list.size = 0;                                              \
         list.capacity = capacity;                                   \
         if(capacity){                                               \
@@ -158,11 +156,10 @@ void clear_array_list_##type(ArrayList##Type *list);
         return list;                                                \
     }                                                               \
                                                                     \
-    ArrayList##Name create_array_list_##name##_defsize(){           \
+    ArrayList##Type create_array_list_##type##_defcapacity(){       \
         enum { DEFAULT_ARRAY_LIST_SIZE = 10 };                      \
-        return create_array_list_##name(DEFAULT_ARRAY_LIST_SIZE);   \
+        return create_array_list_##type(DEFAULT_ARRAY_LIST_SIZE);   \
     }
-//TODO: defsize is misleading, in reallity, it's default capacity
 
 // NOTE: not default capacity for Arena because we are only allocating from it when there is no resizing
 #define DEFINE_ARRAYLIST_CREATION_ARENA(Name,name)                                      \
