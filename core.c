@@ -410,6 +410,11 @@ int read_num_blocks(FILE *stream, unsigned *s) {
     if (endptr == e + 1) {free(line); return 1;}
 
     *s = (unsigned)num;
+
+    // Skip the row identifying the columns' free variables
+    if (getline(&line, &len, stream) == -1) return 0; // Failed to read the line
+    if (strstr(line, "Free") == NULL) {free(line); return 0;} // Not the correct line
+
     free(line);
     return 0;
 }
@@ -604,8 +609,16 @@ void read_operand_matrix(FILE *stream, operand_block *ob) {
     ssize_t read;
     unsigned row = 0;
 
-    // Skip unflatened schema
+    // Skip unflatened schema and the set of dependencies
     getline(&line, &len, stream);
+    unsigned num_variables_with_dependencies;
+    if(sscanf(line, "%u, ", &num_variables_with_dependencies) == 0){
+        fprintf(stderr, "read_operand_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
+        exit(1);
+    }
+    for(unsigned i = 0; i < num_variables_with_dependencies; ++i){
+        getline(&line, &len, stream);
+    }
 
     // Skip flatened schema
     getline(&line, &len, stream);
@@ -684,9 +697,22 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         rb->valid[aux] = 0;
     }
     
+    // TODO_YA: adapt the reading of the matrices to the final format
+    // - Resultant M3:
+    //  * No Mapping lines for each row1-row2 combination in non-linear resultant fragments
+    //      --> Unify the parsing of the rows of linear and nonlinear fragments and fix the 
+    //          reordering of the flattened, unflatenned and mapping
 
-    // Skip largest schema
-    getline(&line, &len, stream);
+    // Skip flattened schema // NOTE: ERRONEO en el segundo fragmento del M3 resultante en el test 119!!! En este punto apunta a la línea del mapping, no debería saltarlo...
+    if (!first_is_non_lineal) getline(&line, &len, stream);
+    unsigned num_variables_with_dependencies;
+    if(sscanf(line, "%u, ", &num_variables_with_dependencies) == 0){
+        fprintf(stderr, "read_operand_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
+        exit(1);
+    }
+    for(unsigned i = 0; i < num_variables_with_dependencies; ++i){
+        getline(&line, &len, stream);
+    }
 
     // Get mapping info
     bool first_is_non_lineal = false;
@@ -705,8 +731,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     // NOTE: rb->lineal_lineal_ was not set to false in the initialization, so unless it is the first subset
     // and it is lineal, it can have any value!!!
 
-    // Skip flattened schema // NOTE: ERRONEO en el segundo fragmento del M3 resultante en el test 119!!! En este punto apunta a la línea del mapping, no debería saltarlo...
-    if (!first_is_non_lineal) getline(&line, &len, stream);
+    // Skip largest schema
+    getline(&line, &len, stream);
 
     // Iterate the main term rows
     unsigned row = 0;
@@ -831,6 +857,10 @@ result_block read_result_block(FILE *stream) {
         first_rb=false; 
         getline(&line, &len, stream);
         if (strstr(line, "END: Matrix M1 & M2 + MGU") != NULL) {free(line); return rb;}
+
+        // Skip the row identifying the columns' free variables
+        if (getline(&line, &len, stream) == -1) exit(1); // Failed to read the line
+        if (strstr(line, "Free") == NULL) {free(line); exit(1);} // Not the correct line
     }
 
     // Read the operand block and fill the struct
