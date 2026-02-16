@@ -283,6 +283,12 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
 }
 
 
+void print_mapping(Variable *mapping, unsigned num_vars){
+    for(unsigned i = 1; i <= num_vars; ++i){
+        printf("[%u]=%u - ", i, mapping[i]);
+    }
+    printf("\n");
+}
 
 bool equivalent_schemas(Schema *s1, Schema *s2, Variable *mapping){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA) { 
@@ -310,13 +316,19 @@ bool equivalent_schemas(Schema *s1, Schema *s2, Variable *mapping){
 
     return false;
 }
-bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping){
+bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping, unsigned num_vars1){
     if(set_schema1.size != set_schema2.size) { return false; }
     unsigned size = set_schema1.size;
 
     for(unsigned i = 0; i < size; ++i){
         if(!equivalent_schemas(set_schema1.array + i, set_schema2.array + i, mapping)){
+            if(global_print_debugging){
+                print_mapping(mapping, num_vars1);
+            }
             return false;
+        }
+        if(global_print_debugging){
+            print_mapping(mapping, num_vars1);
         }
     }
 
@@ -463,10 +475,6 @@ void test_schema_management(int argc, char const *argv[]){
             break; // EOF
         }
         printf("--- Test=%u ---\n", test_number);
-        // if(test_number == 49000){
-        //     printf("Skipped...\n");
-        //     continue;
-        // }
 
         ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1, &arena);
         assert(read != -1 && read != 1);
@@ -530,16 +538,22 @@ void test_schema_management(int argc, char const *argv[]){
             // TODO: see if we can avoid this recomputation with the work already done in common_set_schema_baseline...
             //  (not so important, as this is only testing code; would be helpful to add a field of sets of variables to
             //  schemas/set_schemas, but that would be more state to manage too...)
-            // NOTE: variables are identified from 1 to n
-            SetVariables computed_vars = variables_in_set_schema(computed_common_set_schema);
-            unsigned num_computed_vars = computed_vars.num_variables;
-            free_set_variables(computed_vars);
-            size_t num_bytes_for_mapping = (1 + num_computed_vars) * sizeof(Variable);
+            // NOTE: variables are identified from 1 to n in the resulting common schema in the file
+            SetVariables read_vars = variables_in_set_schema(common_set_schema);
+            unsigned num_read_vars = read_vars.num_variables;
+            free_set_variables(read_vars);
+            size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
             Variable *mapping = allocate(&arena, num_bytes_for_mapping);
             memset(mapping, 0, num_bytes_for_mapping);
 
-            bool set_schemas_ok = equivalent_set_schemas(computed_common_set_schema, common_set_schema, mapping);
-            bool dependencies_ok = equivalent_set_dependencies(computed_common_dependencies, common_dependencies, mapping);
+            if(global_print_debugging){
+                printf("Computed: "); print_set_schema(&computed_common_set_schema, PRINT_VISUALLY);
+                printf("Read:     "); print_set_schema(&common_set_schema, PRINT_VISUALLY);
+            }
+            // NOTE: important the order of the common schemas, since the mapping is from the variables from the first to the second!
+            bool set_schemas_ok = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping, num_read_vars);
+
+            bool dependencies_ok = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
 
             if(!(set_schemas_ok && dependencies_ok)){
                 printf("Test=%u - set_schemas_ok=%u - dependencies_ok=%u\n", 

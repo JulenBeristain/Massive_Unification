@@ -145,6 +145,7 @@ typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
 void print_schema(Schema *s, PrintingMode mode);
 void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode);
 void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode);
+void print_dependency_pair(DependencyPair *pair, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////

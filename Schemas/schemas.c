@@ -430,13 +430,16 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
     //  add_to_array_list_schema later in this function.
 
     //NOTE: iteration based on indexes to prevent dangling pointers from resizing
-    for(size_t i = 0; i < schemas->size; ++i){
+    //NOTE: necessary to take the initial size of the schemas because it may be incremented, and in case of self-dependencies,
+    //  it would possibly loop infinitely!!! Additionally, that way we have the same behaviour in both rules!
+    size_t initial_size = schemas->size;
+    for(size_t i = 0; i < initial_size; ++i){
         Schema *gamma = schemas->array + i;
         SetVariables ws = variables_in_schema(gamma);
         foreach_in_setvariables(ws, node_var){
             Variable w = node_var->v;
 
-            ArrayListSchema *schemas_ = NULL;
+            ArrayListSchema *schemas_ = NULL; // TODO: abstract this to a find function in ArrayLists...
             for(DependencyPair *it = dependencies->array, *end = dependencies->array + dependencies->size; it < end; ++it){
                 if(it->v == w){
                     schemas_ = &it->schemas;
@@ -447,7 +450,17 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
 
             foreach_in_arraylistptr(Schema, schema_, schemas_){
                 Schema *gamma_ = schema_;
+                if(global_print_debugging){
+                    print_dependency_pair(pair, '{', '}', "; ", PRINT_VISUALLY); printf("\n");
+                    printf("i = %lu\n", i);
+                    printf("gamma: "); print_schema(gamma, PRINT_VISUALLY); printf("\n");
+                    printf("w = $%u\n", w);
+                    printf("gamma_: "); print_schema(gamma_, PRINT_VISUALLY); printf("\n");
+                }
                 Schema *gamma__ = substitute_arena(gamma, w, gamma_, arena);
+                if(global_print_debugging){
+                    printf("gamma__: "); print_schema(gamma__, PRINT_VISUALLY); printf("\n\n");
+                }
                 if(is_self_dependency(v, gamma__)){ return -1; }
                 // TODO: resizing risk for Arena
                 int contained = add_not_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
@@ -487,12 +500,20 @@ int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena)
             if(num1 == -1){ return -1; }
             num_new_deps1 += num1;
 
+            if(global_print_debugging){
+                printf("---\n"); print_set_dependencies(dependencies, PRINT_VISUALLY);
+            }
+
             //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
             //if(global_print_debugging) printf("Start rule 2...\n");
             int num2 = theta_rule2_baseline(dependencies, pair, arena);
             //if(global_print_debugging) printf("End rule 2...\n");
             if(num2 == -1){ return -1; }
             num_new_deps2 += num2;
+
+            if(global_print_debugging){
+                printf("---\n"); print_set_dependencies(dependencies, PRINT_VISUALLY);
+            }
         }
         num_new_dependencies += num_new_deps1 + num_new_deps2;
     } while(num_new_deps1 + num_new_deps2);
@@ -547,7 +568,12 @@ bool common_set_schema_baseline(
                 printf("Self dependency detected!\n");
             }
             else {
-                print_schema(common_schema, PRINT_VISUALLY); printf("\n");
+                print_schema(s1, PRINT_VISUALLY);
+                printf(" (x) ");
+                print_schema(s2, PRINT_VISUALLY);
+                printf(" = ");
+                print_schema(common_schema, PRINT_VISUALLY);
+                printf("\n");
                 //print_schema(common_schema, PRINT_FILE_FORMAT); printf("\n");
             }
         }
@@ -692,13 +718,6 @@ bool common_set_schema_baseline(
             free_set_variables(removed_vs_without_dependencies_in_schema);
             free_set_variables(schema_vs);
         }
-        //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
-        int theta_result = theta_operator_baseline(common_dependencies, arena);
-        if(global_print_debugging){
-            printf("Unexpected extra dependencies added with theta operator:\n");
-            print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-        }
-        assert(theta_result == 0);
     }
 
     if(global_print_debugging){
@@ -706,6 +725,14 @@ bool common_set_schema_baseline(
         print_set_dependencies(common_dependencies, PRINT_VISUALLY);
         //print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
     }
+
+    //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
+    int theta_result = theta_operator_baseline(common_dependencies, arena);
+    if(global_print_debugging && theta_result != 0){
+        printf("Unexpected extra dependencies added with theta operator:\n");
+        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+    }
+    assert(theta_result == 0);
 
     free_set_variables(removed_vs_with_dependencies);
     free_set_variables(final_vs);
