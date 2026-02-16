@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <string.h>
 
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 
@@ -74,6 +75,19 @@ int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend,
     }
 
     return code; 
+}
+
+//DEFINE_ARRAYLIST_REMOVAL_INDEX(Schema, schema, Schema)
+int remove_index_from_array_list_schema(ArrayListSchema* list, uint32_t index)
+{
+    if (index >= list->size) {
+        return OUT_OF_BOUNDS;
+    }
+    --list->size;
+    Schema* removed_ptr = list->array + index;
+    uint32_t num_shifted_elements = list->size - index;
+    memmove(removed_ptr, removed_ptr + 1, num_shifted_elements * sizeof(*list->array));
+    return SUCCESSFUL_REMOVAL;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -198,6 +212,14 @@ void variables_in_schema_(Schema *schema, SetVariables *vars){
 SetVariables variables_in_schema(Schema *schema){
     SetVariables vars = create_set_variables_defsize();
     variables_in_schema_(schema, &vars);
+    return vars;
+}
+
+SetVariables variables_in_set_schema(ArrayListSchema set_schema){
+    SetVariables vars = create_set_variables_defsize();
+    foreach_in_arraylist(Schema, s, set_schema){
+        variables_in_schema_(s, &vars);
+    }
     return vars;
 }
 
@@ -526,7 +548,7 @@ bool common_set_schema_baseline(
             }
             else {
                 print_schema(common_schema, PRINT_VISUALLY); printf("\n");
-                print_schema(common_schema, PRINT_FILE_FORMAT); printf("\n");
+                //print_schema(common_schema, PRINT_FILE_FORMAT); printf("\n");
             }
         }
 
@@ -537,10 +559,10 @@ bool common_set_schema_baseline(
     if(global_print_debugging){
         printf("Computed Common Set Schema:\n");
         print_set_schema(common_set_schema, PRINT_VISUALLY);
-        print_set_schema(common_set_schema, PRINT_FILE_FORMAT);
+        //print_set_schema(common_set_schema, PRINT_FILE_FORMAT);
         printf("Just the new dependencies:\n");
         print_set_dependencies(&new_dependencies, PRINT_VISUALLY);
-        print_set_dependencies(&new_dependencies, PRINT_FILE_FORMAT);
+        //print_set_dependencies(&new_dependencies, PRINT_FILE_FORMAT);
     }
 
     // Start calculating the final common_dependencies set as the union of the two inputs and new_dependencies
@@ -556,7 +578,7 @@ bool common_set_schema_baseline(
     if(global_print_debugging){
         printf("Union of all dependencies:\n");
         print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-        print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
+        //print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
     }
 
     //if(global_print_debugging) printf("Start theta operator...\n");
@@ -567,10 +589,127 @@ bool common_set_schema_baseline(
     if(global_print_debugging){
         printf("Total dependencies after theta operator:\n");
         print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-        print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
+        //print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
     }
 
     if(num_new_dependencies < 0){ return false; }
+    assert(!contains_self_dependency_baseline(*common_dependencies));
+    
+    // TODO: see if we can avoid this call with previous computations...
+    SetVariables final_vs = variables_in_set_schema(*common_set_schema);
+    
+    if(global_print_debugging){
+        printf("Final variables:\n");
+        print_set_variables(final_vs); printf("\n");
+    }
+    
+    SetVariables removed_vs_with_dependencies = create_set_variables_defsize();
+
+    // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
+    for(int i = common_dependencies->size - 1; i >= 0; --i){
+        DependencyPair pair = common_dependencies->array[i];
+        if(!lookup_set_variables(final_vs, pair.v)){
+            remove_index_from_array_list_dependency_pair(common_dependencies, i);
+            insert_to_set_variables(&removed_vs_with_dependencies, pair.v);
+        }
+    }
+
+    if(global_print_debugging){
+        printf("Removed variables with dependencies:\n");
+        print_set_variables(removed_vs_with_dependencies); printf("\n");
+        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+    }
+    
+    // NOTE: thanks to the use of rule 2, the schema resulting from substituting the longest dependency of the removed
+    // variables is already in the set of dependencies, so we can simply remove the schemas that contain those variables.
+    // We only need to consider the removed variables that didn't have any dependences, to substitute them for <>.
+    foreach_in_arraylistptr(DependencyPair, pair, common_dependencies){
+        if(global_print_debugging){
+            printf("Variable $%u\n", pair->v);
+        }
+        // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
+        ArrayListSchema *dependency_schemas = &pair->schemas;
+        for(int i = dependency_schemas->size - 1; i >= 0; --i){
+            // NOTE: we take by value because if not, when removing, it will point to the next schema before applying the substitution by <>
+            Schema schema = dependency_schemas->array[i];
+            // * Contains only some removed v with dependencies --> Remove
+            // * Contains only some removed v without dependencies --> Remove and substitute it for the version that contains <> instead of v, insert this to the set of dependencies
+            // NOTE: the new schema that instead of v contains <> won't generate new schemas if the theta operator was reaplied, because 
+            //  the subcommon schemas calculated with rule 1 won't generate new dependencies (none is obtained when calculating the common
+            //  schema with <>) and neither rule 2, since the substitutions that contain v are already included and their appearences of v
+            //  will be substituted by <>.
+            // * Contains both kinds of vs --> Remove, substitute the v_no_deps with <>, reaply theta rules with this new dependency and do NOT insert it to the resulting set of dependencies
+            // NOTE: the same previous note applies here, NO new dependencies will be added at all --> This only needs to the the same operation as case 1
+            // * Doesn't contain any removed v --> Do nothing
+
+            // Calculate variables in Schema
+            SetVariables schema_vs = variables_in_schema(&schema);
+
+            if(global_print_debugging){
+                printf("Schema: "); print_schema(&schema, PRINT_VISUALLY); printf("\n");
+                printf("Vars: "); print_set_variables(schema_vs); printf("\n");
+            }
+
+            SetVariables removed_vs_without_dependencies_in_schema = create_set_variables_defsize();
+            bool contains_removed_v_with_dependencies = false;
+            foreach_in_setvariables(schema_vs, v_node){
+                Variable v = v_node->v;
+                if(lookup_set_variables(removed_vs_with_dependencies, v)){
+                    contains_removed_v_with_dependencies = true;
+                    break;
+                }
+                if(!lookup_set_variables(final_vs, v)){
+                    insert_to_set_variables(&removed_vs_without_dependencies_in_schema, v);
+                }
+            }
+            
+            if(global_print_debugging){
+                printf("Removed vars without dependencies: "); print_set_variables(removed_vs_without_dependencies_in_schema); printf("\n");
+            }
+
+            // If contains some removed variable with dependencies (in removed_vs_with_dependencies): remove
+            if(contains_removed_v_with_dependencies){
+                remove_index_from_array_list_schema(dependency_schemas, i);
+            }
+            // If only contains some removed variable without dependencies (not removed_vs_with_dependencies nor final_vs): remove and add substitution (all those variables) with <>
+            else if (removed_vs_without_dependencies_in_schema.num_variables){
+                remove_index_from_array_list_schema(dependency_schemas, i);
+                if(global_print_debugging) {
+                    printf("Just after removing: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
+                }
+                Schema empty; init_general_schema_arena(&empty, 0, arena);
+                foreach_in_setvariables(removed_vs_without_dependencies_in_schema, v_node){
+                    Variable v = v_node->v;
+                    schema = *substitute_arena(&schema, v, &empty, arena);
+                }
+                add_to_array_list_schema_arena(dependency_schemas, schema, arena);
+            }
+
+            if(global_print_debugging) {
+                printf("Resultant-iter set schema: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
+            }
+
+            free_set_variables(removed_vs_without_dependencies_in_schema);
+            free_set_variables(schema_vs);
+        }
+        //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
+        int theta_result = theta_operator_baseline(common_dependencies, arena);
+        if(global_print_debugging){
+            printf("Unexpected extra dependencies added with theta operator:\n");
+            print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+        }
+        assert(theta_result == 0);
+    }
+
+    if(global_print_debugging){
+        printf("Final dependencies after removal of variables that are no longer contained in the common set schema:\n");
+        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
+        //print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
+    }
+
+    free_set_variables(removed_vs_with_dependencies);
+    free_set_variables(final_vs);
+
     assert(!contains_self_dependency_baseline(*common_dependencies));
     return true;
 }
@@ -653,6 +792,19 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_ext
 
 // TODO_YA: not repeated version?
 
+//DEFINE_ARRAYLIST_REMOVAL_INDEX(DependencyPair, dependency_pair, DependencyPair)
+int remove_index_from_array_list_dependency_pair(ArrayListDependencyPair* list, uint32_t index)
+{
+    if (index >= list->size) {
+        return OUT_OF_BOUNDS;
+    }
+    --list->size;
+    DependencyPair* removed_ptr = list->array + index;
+    uint32_t num_shifted_elements = list->size - index;
+    memmove(removed_ptr, removed_ptr + 1, num_shifted_elements * sizeof(*list->array));
+    return SUCCESSFUL_REMOVAL;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -708,10 +860,10 @@ void print_set_schema_(ArrayListSchema *set_schema, char opening_brace, char clo
 void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode){
     // NOTE: another interesting schema_separator = ",\n\t" (potentially for a certain number of \t if nesting...)
     if(mode == PRINT_VISUALLY){
-        print_set_schema_(set_schema, '{', '}', ", ", PRINT_VISUALLY);
+        print_set_schema_(set_schema, '{', '}', "; ", PRINT_VISUALLY);
     }
     else {
-        print_set_schema_(set_schema, '\0', '\0', ", ", PRINT_FILE_FORMAT);
+        print_set_schema_(set_schema, '\0', '\0', "; ", PRINT_FILE_FORMAT);
     }
     printf("\n");
 }
@@ -734,10 +886,10 @@ void print_set_dependencies_(ArrayListDependencyPair *set_dependencies, char ope
 }
 void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode){
     if(mode == PRINT_VISUALLY){
-        print_set_dependencies_(set_dependencies, '{', '}', ", ", PRINT_VISUALLY);
+        print_set_dependencies_(set_dependencies, '{', '}', "; ", PRINT_VISUALLY);
     }
     else {
-        print_set_dependencies_(set_dependencies, '[', ']', ", ", PRINT_FILE_FORMAT);
+        print_set_dependencies_(set_dependencies, '[', ']', "; ", PRINT_FILE_FORMAT);
     }
 }
 

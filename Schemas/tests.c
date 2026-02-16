@@ -12,6 +12,8 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include <string.h>
 #include <assert.h>
 
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+
 size_t global_line_number = 0;
 bool global_print_debugging = false;
 
@@ -280,6 +282,91 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
     return true;
 }
 
+
+
+bool equivalent_schemas(Schema *s1, Schema *s2, Variable *mapping){
+    if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA) { 
+        Variable prev_match = mapping[s1->v];
+        if(prev_match == 0){
+            // NOTE: first comparison between variables - register mapping and return true
+            mapping[s1->v] = s2->v;
+            return true;
+        }
+        else {
+            return prev_match == s2->v;
+        }
+    }
+
+    if(s1->type == GENERAL_SCHEMA && s2->type == GENERAL_SCHEMA && s1->arity == s2->arity) {
+        Schema *sub1 = s1->subschemas;
+        Schema *sub2 = s2->subschemas;
+        for(unsigned arity = s1->arity; arity; --arity, ++sub1, ++sub2){
+            if(!equivalent_schemas(sub1, sub2, mapping)) { 
+                return false; 
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping){
+    if(set_schema1.size != set_schema2.size) { return false; }
+    unsigned size = set_schema1.size;
+
+    for(unsigned i = 0; i < size; ++i){
+        if(!equivalent_schemas(set_schema1.array + i, set_schema2.array + i, mapping)){
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping){
+    if(dependencies1.size != dependencies2.size) { return false; }
+    unsigned num_vars_with_dependencies = dependencies1.size;
+
+    for(unsigned index1 = 0; index1 < num_vars_with_dependencies; ++index1){
+        DependencyPair pair1 = dependencies1.array[index1];
+        Variable v = pair1.v;
+        ArrayListSchema schemas1 = pair1.schemas;  // Taking by value is not problematic because we're not modifying
+
+        // Find v's match in dependencies2
+        Variable v_match = mapping[v];
+        unsigned index2 = 0;
+        for(; index2 < num_vars_with_dependencies; ++index2){
+            if(dependencies2.array[index2].v == v_match) { break; }
+        }
+        if(index2 == num_vars_with_dependencies){ //no break
+            return false;  // v_match wasn't found in dependencies2
+        }
+        ArrayListSchema schemas2 = dependencies2.array[index2].schemas;  // Taking by value is not problematic because we're not modifying
+
+        if(schemas1.size != schemas2.size) { return false; }
+        unsigned num_dependencies_of_v = schemas1.size;
+
+        // Unordered equivalence between schemas1 and schemas2
+        for(unsigned i = 0; i < num_dependencies_of_v; ++i){
+            Schema *s1 = schemas1.array + i;
+            // Find s1 in schemas2
+            unsigned j = 0;
+            for(; j < num_dependencies_of_v; ++j){
+                Schema *s2 = schemas2.array + j;
+                // NOTE: since the mapping is already calculated, it doesn't contain 0s, so we are not modifying mapping
+                if(equivalent_schemas(s1, s2, mapping)){
+                    break;
+                }
+            }
+            if(j == num_dependencies_of_v){ //no break
+                return false;  // There is a dependency for v in dependencies1 that is not found in dependencies2
+            }
+        }
+    }
+    return true;
+}
+
+
 // Read lines until a test begin line or EOF is found.
 unsigned read_test_number(FILE *stream){
     char *line = NULL;
@@ -294,6 +381,54 @@ unsigned read_test_number(FILE *stream){
         }
     }
     return 0; //EOF
+}
+
+Variable max_v_in_schema(Schema schema){
+    if(schema.type == VARIABLE_SCHEMA){
+        return schema.v;
+    }
+    // NOTE: variables start from 1 => If 0 returned, there was no variable in the Schema
+    Variable max_v = 0;
+    Schema *subschema = schema.subschemas;
+    Schema *end = schema.subschemas + schema.arity;
+    for(; subschema < end; ++subschema){
+        max_v = MAX(max_v, max_v_in_schema(*subschema));
+    }
+    return max_v;
+}
+Variable max_v_in_set_schema(ArrayListSchema set_schema){
+    Variable max_v = 0;
+    foreach_in_arraylist(Schema, s, set_schema){
+        max_v = MAX(max_v, max_v_in_schema(*s));
+    }
+    return max_v;
+}
+
+void increment_variables_in_schema(Schema *schema, Variable increment){
+    if(schema->type == VARIABLE_SCHEMA){
+        schema->v += increment;
+    }
+    else {
+        Schema *subschema = schema->subschemas;
+        Schema *end = schema->subschemas + schema->arity;
+        for(; subschema < end; ++subschema){
+            increment_variables_in_schema(subschema, increment);
+        }
+    }
+}
+void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment){
+    foreach_in_arraylist(Schema, s, set_schema){
+        increment_variables_in_schema(s, increment);
+    }
+}
+
+void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment){
+    foreach_in_arraylist(DependencyPair, pair, dependencies){
+        pair->v += increment;
+        foreach_in_arraylist(Schema, schema, pair->schemas){
+            increment_variables_in_schema(schema, increment);
+        }
+    }
 }
 
 void test_schema_management(int argc, char const *argv[]){
@@ -348,26 +483,38 @@ void test_schema_management(int argc, char const *argv[]){
         if(global_print_debugging){
             printf("Set Schema 1:\n");
             print_set_schema(&set_schema1, PRINT_VISUALLY);
-            print_set_schema(&set_schema1, PRINT_FILE_FORMAT);
+            //print_set_schema(&set_schema1, PRINT_FILE_FORMAT);
             print_set_dependencies(&dependencies1, PRINT_VISUALLY);
-            print_set_dependencies(&dependencies1, PRINT_FILE_FORMAT);
+            //print_set_dependencies(&dependencies1, PRINT_FILE_FORMAT);
 
             printf("Set Schema 2:\n");
             print_set_schema(&set_schema2, PRINT_VISUALLY);
-            print_set_schema(&set_schema2, PRINT_FILE_FORMAT);
+            //print_set_schema(&set_schema2, PRINT_FILE_FORMAT);
             print_set_dependencies(&dependencies2, PRINT_VISUALLY);
-            print_set_dependencies(&dependencies2, PRINT_FILE_FORMAT);
+            //print_set_dependencies(&dependencies2, PRINT_FILE_FORMAT);
 
             printf("Common Set Schema:\n");
             if(common_schema_exists){
                 print_set_schema(&common_set_schema, PRINT_VISUALLY);
-                print_set_schema(&common_set_schema, PRINT_FILE_FORMAT);
+                //print_set_schema(&common_set_schema, PRINT_FILE_FORMAT);
                 print_set_dependencies(&common_dependencies, PRINT_VISUALLY);
-                print_set_dependencies(&common_dependencies, PRINT_FILE_FORMAT);
+                //print_set_dependencies(&common_dependencies, PRINT_FILE_FORMAT);
             } 
             else {
                 printf("Common Schema does not exist!\n");
             }
+        }
+
+        Variable max_v1 = max_v_in_set_schema(set_schema1);
+        increment_variables_in_set_schema(set_schema2, max_v1);
+        increment_variables_in_set_dependencies(dependencies2, max_v1);
+
+        if(global_print_debugging){
+            printf("Modification of Set Schema 2:\n");
+            printf("Max variable in Set Schema 1 = %u\n", max_v1);
+            printf("Modified Set Schema 2:\n");
+            print_set_schema(&set_schema2, PRINT_VISUALLY);
+            print_set_dependencies(&dependencies2, PRINT_VISUALLY);
         }
 
         bool computed_common_schema_exists = common_set_schema_baseline(&set_schema1, &dependencies1, 
@@ -379,8 +526,21 @@ void test_schema_management(int argc, char const *argv[]){
         }
         else if(common_schema_exists){
             // Compare the computed common schema and its dependencies with the read ones
-            bool set_schemas_ok = equal_set_schemas(computed_common_set_schema, common_set_schema);
-            bool dependencies_ok = equal_set_dependencies(computed_common_dependencies, common_dependencies);
+            
+            // TODO: see if we can avoid this recomputation with the work already done in common_set_schema_baseline...
+            //  (not so important, as this is only testing code; would be helpful to add a field of sets of variables to
+            //  schemas/set_schemas, but that would be more state to manage too...)
+            // NOTE: variables are identified from 1 to n
+            SetVariables computed_vars = variables_in_set_schema(computed_common_set_schema);
+            unsigned num_computed_vars = computed_vars.num_variables;
+            free_set_variables(computed_vars);
+            size_t num_bytes_for_mapping = (1 + num_computed_vars) * sizeof(Variable);
+            Variable *mapping = allocate(&arena, num_bytes_for_mapping);
+            memset(mapping, 0, num_bytes_for_mapping);
+
+            bool set_schemas_ok = equivalent_set_schemas(computed_common_set_schema, common_set_schema, mapping);
+            bool dependencies_ok = equivalent_set_dependencies(computed_common_dependencies, common_dependencies, mapping);
+
             if(!(set_schemas_ok && dependencies_ok)){
                 printf("Test=%u - set_schemas_ok=%u - dependencies_ok=%u\n", 
                         test_number, set_schemas_ok, dependencies_ok);

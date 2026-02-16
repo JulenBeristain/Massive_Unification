@@ -95,6 +95,10 @@ void init_general_schema(Schema *schema, unsigned arity);
 void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
 unsigned schema_size(Schema *s);
 
+void variables_in_schema_(Schema *schema, SetVariables *vars);
+SetVariables variables_in_schema(Schema *schema);
+SetVariables variables_in_set_schema(ArrayListSchema set_schema);
+
 // NOTE: for arraylist of pointers to Schemas
 bool equal_schemas(Schema *s1, Schema *s2);
 
@@ -134,6 +138,7 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair *list_to_ext
 
 ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena *arena);
 
+int remove_index_from_array_list_dependency_pair(ArrayListDependencyPair* list, uint32_t index);
 
 /// DEBUGGING PRINT ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
