@@ -17,7 +17,7 @@ find "$folder" -type f -name '*M1.csv' | while read -r m1; do
     # Check if corresponding M2 and M3 exist
     if [[ -f "$m2" && -f "$m3" ]]; then
         echo -n "$base, "
-        ./c "$m1" "$m2" "$m3"
+        ./c "$m1" "$m2" "$m3" ${2:+"verbose"}
     else
         echo "Skipping $base: M2 or M3 missing"
     fi

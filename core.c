@@ -684,10 +684,6 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         exit(EXIT_FAILURE);
     }
 
-    bool not_first_subset;
-    if (rb->t1 == rb->t2 && rb->t1 == 1) not_first_subset = false;
-    else                                 not_first_subset = true;
-
     // Info for all possible main terms from the unification of M1 block (r1) and M2 block (r2)
     rb->r = rb->r1*rb->r2;
     rb->terms = (main_term*)malloc(rb->r * sizeof(main_term));
@@ -696,18 +692,14 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     {
         rb->valid[aux] = 0;
     }
-    
-    // TODO_YA: adapt the reading of the matrices to the final format
-    // - Resultant M3:
-    //  * No Mapping lines for each row1-row2 combination in non-linear resultant fragments
-    //      --> Unify the parsing of the rows of linear and nonlinear fragments and fix the 
-    //          reordering of the flattened, unflatenned and mapping
 
-    // Skip flattened schema // NOTE: ERRONEO en el segundo fragmento del M3 resultante en el test 119!!! En este punto apunta a la línea del mapping, no debería saltarlo...
-    if (!first_is_non_lineal) getline(&line, &len, stream);
+    // Skip unflattened schema and the set of dependencies (and set if the fragment is linear or not)
+    getline(&line, &len, stream);
+    // NOTE: either linear or nonlinear, in the current format we store one mapping per fragment, so in rb->ms. rb->lineal_lineal won't be used
+    rb->lineal_lineal = sscanf(line, "$") == EOF;
     unsigned num_variables_with_dependencies;
     if(sscanf(line, "%u, ", &num_variables_with_dependencies) == 0){
-        fprintf(stderr, "read_operand_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
+        fprintf(stderr, "read_result_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
         exit(1);
     }
     for(unsigned i = 0; i < num_variables_with_dependencies; ++i){
@@ -715,23 +707,12 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     }
 
     // Get mapping info
-    bool first_is_non_lineal = false;
     unsigned *mapping = (unsigned*)malloc(rb->c*2*sizeof(unsigned));
-    if (!not_first_subset) {
-        getline(&line, &len, stream);
-        if (strchr(line, '-') == NULL) {
-            not_first_subset   = true;
-            first_is_non_lineal = true;
-        } else {
-            get_mapping(line, rb->c, mapping);
-            rb->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
-            rb->lineal_lineal = true;
-        }
-    }
-    // NOTE: rb->lineal_lineal_ was not set to false in the initialization, so unless it is the first subset
-    // and it is lineal, it can have any value!!!
+    getline(&line, &len, stream);
+    get_mapping(line, rb->c, mapping);
+    rb->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
 
-    // Skip largest schema
+    // Skip largest (flattened) schema
     getline(&line, &len, stream);
 
     // Iterate the main term rows
@@ -741,31 +722,24 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         // If end of matrix reached, exit
         if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
             break;
-        
-        // Get the mapping for each line, but initialize mgu_schema later
-        if (not_first_subset)
-        {
-            // Make a modifiable copy of the line to trim off the 'Mapping X-Y:' // NOTE: en las versiones de mis tests no tenemos los mappings precedidos por Mapping X-Y!!! (en los nuevos tests pasados por Javier hay algunos ficheros finales que sí que lo contienen...)
-            char *line_ptr = line;  
-            line_ptr = strchr(line_ptr, ':') + 2; // NOTE: debido a la falta del Mapping X-Y:, strchr devuelve NULL, y por lo tanto el get_mapping recibe la dirección 0x2 (2), resultando en segmentation fault en strtok...
-            get_mapping(line_ptr, rb->c, mapping);
-            getline(&line, &len, stream); // For reading line info
-        }
 
         // Inspect if line is unifiable, subsumed or not unifiable
         if (strstr(line, "subsumed by exception") != NULL)
         {
             rb->valid[row] = 1;
+            ++row;
             continue;
         }
         else if (strstr(line, "not unifiable") != NULL)
         {
             //NOTE: es necesario modificar el term? Si no unifican las filas correspondientes, para qué te creas una fila (main_term) vacía, y además el mgu_schema?
             //  si estoy en lo cierto, en compare_results solo comparamos términos si los valid[i] de ambos result_blocks son 0 (han unificado)...
+            //  creo que estas dos lineas se podrían ignorar...
             rb->terms[row] = create_null_main_term();
             rb->terms[row].ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
+            
             rb->valid[row] = 2;
-            row++;
+            ++row;
             continue;
         }
 
@@ -796,16 +770,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         // Read one by one the exception blocks
         if (e) read_exception_blocks(stream, mt, true);
 
-        // Add mapping to main_term only if the result_block is not formed between two lineal matrix subset operands, so mgu_schema cannot be reused
-        if (rb->lineal_lineal) {
-            mt->ms = NULL;
-        } else {
-            mt->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
-        }
-
         // Increment the row by 1
-        row++;
-
+        ++row;
     }
 
     free(line);
@@ -1181,8 +1147,8 @@ unsigned unifier_matrices(operand_block *ob1, operand_block *ob2, result_block *
         for (j=0; j<ob2->r; j++)
         {
             memset(unifier,0,unifier_size*sizeof(unsigned));  
-            unsigned index_mt = i*rb->r2+j;
-            mgu_schema *schema_holder = rb->lineal_lineal ? rb->ms : rb->terms[index_mt].ms;
+            //unsigned index_mt = i*rb->r2+j; //NOTE: in this version the mgu_schema is always holded in the result_block, either linear or non-linear...
+            mgu_schema *schema_holder = rb->ms;
             code = unifier_rows(&ob1->terms[i], &ob2->terms[j], schema_holder, unifier);
             if (code != 0) continue; // Rows cannot be unified // NOTE: cómo identificamos este caso más adelante en base al unificador? Porque no se modifica rb->valid[index_mt] = 2?
                                                                // Además, el unificador correspondiente en el array unifiers queda sin inicializar!!!
@@ -1459,7 +1425,7 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
         main_term *mt = &my_rb.terms[index_mt];
         *mt = create_empty_main_term(my_rb.c, ob1->terms[ind_A].e + ob2->terms[ind_B].e);
         apply_unifier_left(&ob1->terms[ind_A], &ob2->terms[ind_B], mt, &unifiers[i*unifier_size]);
-        mgu_schema *schema_holder = rb->lineal_lineal ? rb->ms : rb->terms[index_mt].ms;
+        mgu_schema *schema_holder = rb->ms;
         reorder_unified(mt, schema_holder);
         my_rb.valid[index_mt] = 0;
     }
