@@ -140,7 +140,7 @@ void free_main_term(main_term* mt) {
 
 void print_main_term(main_term* mt, unsigned matrix_idx, int verbosity) {
     // Print line
-    printf("%u,",mt->e);
+    printf("%u, ",mt->e);
     for (unsigned i = 0; i < mt->c - 1; i++)
         printf("%d,", mt->row[i]);
     printf("%d\n", mt->row[mt->c - 1]);

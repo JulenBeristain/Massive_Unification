@@ -365,7 +365,7 @@ int compare_results(result_block *rb1, result_block *rb2, operand_block *ob1, op
         if (rb1->valid[i] != rb2->valid[i]) {
             if (verbose) {printf("compare_results valid test failed at term %u (%u-%u)\n",i, i/rb1->r2+1, i%rb1->r2+1);}
             if (verbose) {printf("my valid: %u, csv valid: %u\n",rb1->valid[i], rb2->valid[i]);}
-            if (verbose) {print_mgu_schema(rb2->terms[i].ms);print_mgu_compact(rb2->terms[i].ms);}
+            if (verbose) {print_mgu_schema(rb2->ms);print_mgu_compact(rb2->ms);} // NOTE: rb2->terms[i].ms == NULL in current format
             return 0;}
         if (rb1->valid[i] == 0) // Only in this case, otherwise rows and exceptions will be empty
         {
@@ -376,7 +376,7 @@ int compare_results(result_block *rb1, result_block *rb2, operand_block *ob1, op
                 if (verbose) {printf("mt2:\t"); print_main_term(&ob2->terms[i%rb1->r2],2,1);}
                 if (verbose) {printf("mt3  (me):\t"); print_main_term(&rb1->terms[i],3,0);}
                 if (verbose) {printf("mt3 (csv):\t"); print_main_term(&rb2->terms[i],3,0);}
-                if (verbose) {print_mgu_schema(rb2->terms[i].ms);print_mgu_compact(rb2->terms[i].ms);}
+                if (verbose) {print_mgu_schema(rb2->ms);print_mgu_compact(rb2->ms);}
                 return 0;
             }
 
