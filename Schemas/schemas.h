@@ -115,7 +115,6 @@ int add_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena 
 
 int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
 
-// TODO_YA: not arena version of the "repeated" version?
 //int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list);
 int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena);
 
@@ -129,11 +128,9 @@ ArrayListSchema create_array_list_schema_arena(uint32_t capacity, Arena *arena);
 /// ARRAYLIST DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair *list, DependencyPair element, Arena *arena);
-//TODO_YA: version not_repeat declaration?
 
 
 int extend_array_list_dependency_pair_arena(ArrayListDependencyPair *list_to_extend, ArrayListDependencyPair *list, Arena *arena);
-//TODO_YA: version not_repeat declaration?
 
 
 ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena *arena);

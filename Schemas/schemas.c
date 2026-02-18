@@ -64,8 +64,8 @@ int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema el
     return add_to_array_list_schema_arena(list, element, arena);
 }
 
-//TODO_YA: not arena version?
-//DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema) // TODO_YA: the first resizing logic shouldn't work like the not repeated version
+
+//DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema) // TODO: the first resizing logic shouldn't work like the not repeated version
 
 int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena){
     int code = NOT_RESIZED; 
@@ -741,6 +741,24 @@ bool common_set_schema_baseline(
     return true;
 }
 
+// TODO_YA: versión estricta de common_set_schema_baseline
+// - Primer check:
+//      - Comprobar mismo número de variables distintas (con ArrayListVarNum.size)
+//      - Comprobar misma cantidad de apariciones en cada set schema de variables distintas correspondientes (1a-1a, 2a-2a, ..., na-na)
+//      + Para el baseline, lo más sencillo es usar un arraylist de pares v-num.
+//      + Estos dos pasos se pueden hacer de manera eficiente si tuvieramos dos ordered-maps (que mantengan el orden de inserción)
+//      y con iteradores sobre esos ordered-maps...
+//      + Otra forma es tener un unordered-hash-map para v->num y aparte un arraylist con las variables en orden por cada set-schema operando.
+//      Luego iterariamos sobre las mismas posiciones del arraylist, accediendo con el hash al número de apariciones.
+// - Llamada a la versión débil (actual common_set_schema_baseline)
+// - Segundo check:
+//      - Primer check
+//      - Que solo exista una dependencia entre cada par de variables: iterar sobre cada lista de esquemas dependencia de todas las variables,
+//      comprobando que no haya variables repetidas (ni siquiera dentro de un mismo esquema) (con SetVariables es suficiente, en el momento en
+//      el que nos encontramos una variable repetida common-schema no existe).
+
+
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -789,8 +807,6 @@ int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair* list, Depen
     return code;
 }
 
-// TODO_YA: not repeated version?
-
 //DEFINE_ARRAYLIST_EXTENSION_ARENA(DependencyPair, dependency_pair, DependencyPair) 
 int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_extend, ArrayListDependencyPair* list, Arena* arena)
 {
@@ -816,8 +832,6 @@ int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_ext
     }
     return code;
 }
-
-// TODO_YA: not repeated version?
 
 //DEFINE_ARRAYLIST_REMOVAL_INDEX(DependencyPair, dependency_pair, DependencyPair)
 int remove_index_from_array_list_dependency_pair(ArrayListDependencyPair* list, uint32_t index)
