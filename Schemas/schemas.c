@@ -741,6 +741,71 @@ bool common_set_schema_baseline(
     return true;
 }
 
+// ARRAYLIST OF PAIRS VARIABLE-NUMAPPEARENCES (TODO: clean where to put this...)
+typedef struct VarNum VarNum, *VarNumPtr;
+struct VarNum {
+    Variable v;
+    unsigned num_appearences;
+};
+
+//DECLARE_ARRAYLIST_TYPE(VarNum, VarNum) 
+typedef struct ArrayListVarNum ArrayListVarNum;
+struct ArrayListVarNum {
+    uint32_t size;
+    uint32_t capacity;
+    VarNum* array;
+};
+
+//DEFINE_ARRAYLIST_CREATION_ARENA(VarNum, varnum)
+ArrayListVarNum create_array_list_varnum_arena(uint32_t capacity, Arena* arena)
+{
+    ArrayListVarNum list;
+    list.size = 0;
+    list.capacity = capacity;
+    list.array = allocate(arena, capacity * sizeof(*list.array));
+    return list;
+}
+
+//DEFINE_ARRAYLIST_ADDITION_ARENA(VarNum, varnum, VarNum)
+int add_to_array_list_varnum_arena(ArrayListVarNum* list, VarNum element, Arena* arena)
+{
+    int code = NOT_RESIZED;
+    if (list->size == list->capacity) {
+        if (list->capacity) {
+            list->capacity *= 2;
+        } else {
+            list->capacity = 1;
+        }
+        list->array = allocate(arena, list->capacity * sizeof(*list->array));
+        code = RESIZED;
+    }
+    list->array[list->size] = element;
+    ++list->size;
+    return code;
+}
+
+// TODO: we should rename this to generalize mappings of vars to num appearences...
+int increment_num_array_list_varnum(ArrayListVarNum list, Variable v){
+    foreach_in_arraylist(VarNum, varnum, list){
+        if(varnum->v == v){
+            varnum->num_appearences++;
+            return CONTAINED;
+        }
+    }
+    return 0; // TODO: define NOT_CONTAINED
+}
+
+unsigned find_v_in_array_list_varnum(ArrayListVarNum list, Variable v){
+    unsigned i = 0;
+    foreach_in_arraylist(VarNum, varnum, list){
+        if(varnum->v == v){
+            return i;
+        }
+        ++i;
+    }
+    return list.size;
+}
+
 // TODO_YA: versión estricta de common_set_schema_baseline
 // - Primer check:
 //      - Comprobar mismo número de variables distintas (con ArrayListVarNum.size)
@@ -756,9 +821,55 @@ bool common_set_schema_baseline(
 //      - Que solo exista una dependencia entre cada par de variables: iterar sobre cada lista de esquemas dependencia de todas las variables,
 //      comprobando que no haya variables repetidas (ni siquiera dentro de un mismo esquema) (con SetVariables es suficiente, en el momento en
 //      el que nos encontramos una variable repetida common-schema no existe).
+// - Call to this version in tests!!!
 
+void calculate_num_appearences_of_variables_in_schema(Schema schema, ArrayListVarNum *varnum, Arena *arena){
+    if(schema.type == VARIABLE_SCHEMA){
+        unsigned varnum_pos = find_v_in_array_list_varnum(*varnum, schema.v);
+        if(varnum_pos == varnum->size){
+            VarNum initial_mapping = { .v = schema.v, .num_appearences = 1 };
+            add_to_array_list_varnum_arena(varnum, initial_mapping, arena);
+        } else {
+            VarNum *mapping = varnum->array + varnum_pos;
+            mapping->num_appearences++;
+        }
+    } else {
+        Schema *subschema = schema.subschemas;
+        Schema *end = schema.subschemas + schema.arity;
+        for(; subschema < end; ++subschema){
+            calculate_num_appearences_of_variables_in_schema(*subschema, varnum, arena);
+        }
+    }
+}
 
+void calculate_num_appearences_of_variables_in_set_schema(ArrayListSchema set_schema, ArrayListVarNum *varnum, Arena *arena){
+    foreach_in_arraylist(Schema, schema, set_schema){
+        calculate_num_appearences_of_variables_in_schema(*schema, varnum, arena);
+    }
+}
 
+bool first_check(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Arena *arena){
+    ArrayListVarNum var_to_num1 = create_array_list_varnum_arena(10, arena);
+    ArrayListVarNum var_to_num2 = create_array_list_varnum_arena(10, arena);
+
+    calculate_num_appearences_of_variables_in_set_schema(set_schema1, &var_to_num1, arena);
+    calculate_num_appearences_of_variables_in_set_schema(set_schema2, &var_to_num2, arena);
+    
+    if(var_to_num1.size != var_to_num2.size){
+        return false;
+    }
+
+    // TODO_YA... second condition
+}
+
+bool common_set_schema_strict_baseline(
+    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
+    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    Arena *arena)
+{
+    // TODO_YA check, call, check
+}
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

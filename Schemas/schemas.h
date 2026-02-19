@@ -109,6 +109,12 @@ bool common_set_schema_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
+bool common_set_schema_strict_baseline(
+    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
+    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    Arena *arena);
+
 /// ARRAYLIST SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int add_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
