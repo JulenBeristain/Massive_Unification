@@ -806,23 +806,6 @@ unsigned find_v_in_array_list_varnum(ArrayListVarNum list, Variable v){
     return list.size;
 }
 
-// TODO_YA: versión estricta de common_set_schema_baseline
-// - Primer check:
-//      - Comprobar mismo número de variables distintas (con ArrayListVarNum.size)
-//      - Comprobar misma cantidad de apariciones en cada set schema de variables distintas correspondientes (1a-1a, 2a-2a, ..., na-na)
-//      + Para el baseline, lo más sencillo es usar un arraylist de pares v-num.
-//      + Estos dos pasos se pueden hacer de manera eficiente si tuvieramos dos ordered-maps (que mantengan el orden de inserción)
-//      y con iteradores sobre esos ordered-maps...
-//      + Otra forma es tener un unordered-hash-map para v->num y aparte un arraylist con las variables en orden por cada set-schema operando.
-//      Luego iterariamos sobre las mismas posiciones del arraylist, accediendo con el hash al número de apariciones.
-// - Llamada a la versión débil (actual common_set_schema_baseline)
-// - Segundo check:
-//      - Primer check
-//      - Que solo exista una dependencia entre cada par de variables: iterar sobre cada lista de esquemas dependencia de todas las variables,
-//      comprobando que no haya variables repetidas (ni siquiera dentro de un mismo esquema) (con SetVariables es suficiente, en el momento en
-//      el que nos encontramos una variable repetida common-schema no existe).
-// - Call to this version in tests!!!
-
 void calculate_num_appearences_of_variables_in_schema(Schema schema, ArrayListVarNum *varnum, Arena *arena){
     if(schema.type == VARIABLE_SCHEMA){
         unsigned varnum_pos = find_v_in_array_list_varnum(*varnum, schema.v);
@@ -848,6 +831,12 @@ void calculate_num_appearences_of_variables_in_set_schema(ArrayListSchema set_sc
     }
 }
 
+// TODO: versión estricta de common_set_schema_baseline
+// - Primer check:
+//      + Se puede hacer de manera eficiente si tuvieramos dos ordered-maps (que mantengan el orden de inserción)
+//      y con iteradores sobre esos ordered-maps...
+//      + Otra forma es tener un unordered-hash-map para v->num y aparte un arraylist con las variables en orden por cada set-schema operando.
+//      Luego iterariamos sobre las mismas posiciones del arraylist, accediendo con el hash al número de apariciones.
 bool first_check(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Arena *arena){
     ArrayListVarNum var_to_num1 = create_array_list_varnum_arena(10, arena);
     ArrayListVarNum var_to_num2 = create_array_list_varnum_arena(10, arena);
@@ -855,11 +844,59 @@ bool first_check(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Arena
     calculate_num_appearences_of_variables_in_set_schema(set_schema1, &var_to_num1, arena);
     calculate_num_appearences_of_variables_in_set_schema(set_schema2, &var_to_num2, arena);
     
+    // Same quantity of distinct variables in both set_schemas
     if(var_to_num1.size != var_to_num2.size){
         return false;
     }
 
-    // TODO_YA... second condition
+    // Same quantity of corresponding distinct variables according to order of appearence in each set_schema
+    unsigned size = var_to_num1.size;
+    for(unsigned i = 0; i < size; ++i){
+        if(var_to_num1.array[i].num_appearences != var_to_num1.array[i].num_appearences){
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// TODO: the same recursion happens in a great amount of places with little modifications of what's done in the
+//  base (variable schema) or general (general schema) case. Is there a way to parameterize this and do a unique
+//  function that performs the inorder DFS in set_schemas?
+bool unique_dependency_between_vars__(Schema schema, SetVariables *variables){
+    if(schema.type == VARIABLE_SCHEMA){
+        return insert_to_set_variables(variables, schema.v) != SET_INSERT_ALREADY_CONTAINED;
+    }
+    Schema *subschema = schema.subschemas;
+    Schema *end = schema.subschemas + schema.arity;
+    for(; subschema < end; ++subschema){
+        if(!unique_dependency_between_vars__(*subschema, variables)){
+            return false;
+        }
+    }
+    return true;
+}
+
+bool unique_dependency_between_vars_(ArrayListSchema schemas, SetVariables *variables){
+    foreach_in_arraylist(Schema, s, schemas){
+        if(!unique_dependency_between_vars__(*s, variables)){
+            return false;
+        }
+    }
+    return true;
+}
+
+bool unique_dependency_between_vars(ArrayListDependencyPair dependencies){
+    SetVariables variables = create_set_variables_defsize();
+    foreach_in_arraylist(DependencyPair, pair, dependencies){
+        if(!unique_dependency_between_vars_(pair->schemas, &variables)){
+            free_set_variables(variables);
+            return false;
+        }
+        clear_set_variables(variables);
+    }
+    free_set_variables(variables);
+    return true;
 }
 
 bool common_set_schema_strict_baseline(
@@ -868,8 +905,14 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena)
 {
-    // TODO_YA check, call, check
+    return first_check(*set_schema1, *set_schema2, arena) &&
+           common_set_schema_baseline(set_schema1, dependencies1, set_schema2, dependencies2, 
+                                      common_set_schema, common_dependencies, arena) &&
+           first_check(*set_schema1, *common_set_schema, arena) &&
+           unique_dependency_between_vars(*common_dependencies);
 }
+
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

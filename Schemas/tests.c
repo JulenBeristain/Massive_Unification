@@ -525,7 +525,7 @@ void test_schema_management(int argc, char const *argv[]){
             print_set_dependencies(&dependencies2, PRINT_VISUALLY);
         }
 
-        bool computed_common_schema_exists = common_set_schema_baseline(&set_schema1, &dependencies1, 
+        bool computed_common_schema_exists = common_set_schema_strict_baseline(&set_schema1, &dependencies1, 
             &set_schema2, &dependencies2, &computed_common_set_schema, &computed_common_dependencies, &arena);
 
         if(common_schema_exists != computed_common_schema_exists){
