@@ -538,11 +538,133 @@ bool contains_self_dependency_baseline(ArrayListDependencyPair dependencies){
     return false;
 }
 
-bool common_set_schema_baseline(
+void remove_variables_not_in_set_schema_from_dependencies(
+    ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena)
+{
+    // TODO: see if we can avoid this call with previous computations...
+    SetVariables final_vs = variables_in_set_schema(*set_schema);
+    
+    if(global_print_debugging){
+        printf("Final variables:\n");
+        print_set_variables(final_vs); printf("\n");
+    }
+    
+    SetVariables removed_vs_with_dependencies = create_set_variables_defsize();
+
+    // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
+    for(int i = dependencies->size - 1; i >= 0; --i){
+        DependencyPair pair = dependencies->array[i];
+        if(!lookup_set_variables(final_vs, pair.v)){
+            remove_index_from_array_list_dependency_pair(dependencies, i);
+            insert_to_set_variables(&removed_vs_with_dependencies, pair.v);
+        }
+    }
+
+    if(global_print_debugging){
+        printf("Removed variables with dependencies:\n");
+        print_set_variables(removed_vs_with_dependencies); printf("\n");
+        print_set_dependencies(dependencies, PRINT_VISUALLY);
+    }
+    
+    // NOTE: thanks to the use of rule 2, the schema resulting from substituting the longest dependency of the removed
+    // variables is already in the set of dependencies, so we can simply remove the schemas that contain those variables.
+    // We only need to consider the removed variables that didn't have any dependences, to substitute them for <>.
+    foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+        if(global_print_debugging){
+            printf("Variable $%u\n", pair->v);
+        }
+        // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
+        ArrayListSchema *dependency_schemas = &pair->schemas;
+        for(int i = dependency_schemas->size - 1; i >= 0; --i){
+            // NOTE: we take by value because if not, when removing, it will point to the next schema before applying the substitution by <>
+            Schema schema = dependency_schemas->array[i];
+            // * Contains only some removed v with dependencies --> Remove
+            // * Contains only some removed v without dependencies --> Remove and substitute it for the version that contains <> instead of v, insert this to the set of dependencies
+            // NOTE: the new schema that instead of v contains <> won't generate new schemas if the theta operator was reaplied, because 
+            //  the subcommon schemas calculated with rule 1 won't generate new dependencies (none is obtained when calculating the common
+            //  schema with <>) and neither rule 2, since the substitutions that contain v are already included and their appearences of v
+            //  will be substituted by <>.
+            // * Contains both kinds of vs --> Remove, substitute the v_no_deps with <>, reaply theta rules with this new dependency and do NOT insert it to the resulting set of dependencies
+            // NOTE: the same previous note applies here, NO new dependencies will be added at all --> This only needs to the the same operation as case 1
+            // * Doesn't contain any removed v --> Do nothing
+
+            // Calculate variables in Schema
+            SetVariables schema_vs = variables_in_schema(&schema);
+
+            if(global_print_debugging){
+                printf("Schema: "); print_schema(&schema, PRINT_VISUALLY); printf("\n");
+                printf("Vars: "); print_set_variables(schema_vs); printf("\n");
+            }
+
+            SetVariables removed_vs_without_dependencies_in_schema = create_set_variables_defsize();
+            bool contains_removed_v_with_dependencies = false;
+            foreach_in_setvariables(schema_vs, v_node){
+                Variable v = v_node->v;
+                if(lookup_set_variables(removed_vs_with_dependencies, v)){
+                    contains_removed_v_with_dependencies = true;
+                    break;
+                }
+                if(!lookup_set_variables(final_vs, v)){
+                    insert_to_set_variables(&removed_vs_without_dependencies_in_schema, v);
+                }
+            }
+            
+            if(global_print_debugging){
+                printf("Removed vars without dependencies: "); print_set_variables(removed_vs_without_dependencies_in_schema); printf("\n");
+            }
+
+            // If contains some removed variable with dependencies (in removed_vs_with_dependencies): remove
+            if(contains_removed_v_with_dependencies){
+                remove_index_from_array_list_schema(dependency_schemas, i);
+            }
+            // If only contains some removed variable without dependencies (not removed_vs_with_dependencies nor final_vs): remove and add substitution (all those variables) with <>
+            else if (removed_vs_without_dependencies_in_schema.num_variables){
+                remove_index_from_array_list_schema(dependency_schemas, i);
+                if(global_print_debugging) {
+                    printf("Just after removing: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
+                }
+                Schema empty; init_general_schema_arena(&empty, 0, arena);
+                foreach_in_setvariables(removed_vs_without_dependencies_in_schema, v_node){
+                    Variable v = v_node->v;
+                    schema = *substitute_arena(&schema, v, &empty, arena);
+                }
+                add_to_array_list_schema_arena(dependency_schemas, schema, arena);
+            }
+
+            if(global_print_debugging) {
+                printf("Resultant-iter set schema: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
+            }
+
+            free_set_variables(removed_vs_without_dependencies_in_schema);
+            free_set_variables(schema_vs);
+        }
+    }
+
+    if(global_print_debugging){
+        printf("Final dependencies after removal of variables that are no longer contained in the common set schema:\n");
+        print_set_dependencies(dependencies, PRINT_VISUALLY);
+        //print_set_dependencies(dependencies, PRINT_FILE_FORMAT);
+    }
+
+    //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
+    int theta_result = theta_operator_baseline(dependencies, arena);
+    if(global_print_debugging && theta_result != 0){
+        printf("Unexpected extra dependencies added with theta operator:\n");
+        print_set_dependencies(dependencies, PRINT_VISUALLY);
+    }
+    assert(theta_result == 0);
+
+    free_set_variables(removed_vs_with_dependencies);
+    free_set_variables(final_vs);
+
+    assert(!contains_self_dependency_baseline(*dependencies));
+}
+
+bool common_set_schema_baseline_(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
-    Arena *arena)
+    Arena *arena, bool remove_variables_not_in_resulting_common_schema)
 {
     global_substitute_arena_calls = 0;
     
@@ -621,124 +743,24 @@ bool common_set_schema_baseline(
     if(num_new_dependencies < 0){ return false; }
     assert(!contains_self_dependency_baseline(*common_dependencies));
     
-    // TODO: see if we can avoid this call with previous computations...
-    SetVariables final_vs = variables_in_set_schema(*common_set_schema);
-    
-    if(global_print_debugging){
-        printf("Final variables:\n");
-        print_set_variables(final_vs); printf("\n");
-    }
-    
-    SetVariables removed_vs_with_dependencies = create_set_variables_defsize();
-
-    // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
-    for(int i = common_dependencies->size - 1; i >= 0; --i){
-        DependencyPair pair = common_dependencies->array[i];
-        if(!lookup_set_variables(final_vs, pair.v)){
-            remove_index_from_array_list_dependency_pair(common_dependencies, i);
-            insert_to_set_variables(&removed_vs_with_dependencies, pair.v);
-        }
+    if(remove_variables_not_in_resulting_common_schema){
+        remove_variables_not_in_set_schema_from_dependencies(common_set_schema, common_dependencies, arena);
     }
 
-    if(global_print_debugging){
-        printf("Removed variables with dependencies:\n");
-        print_set_variables(removed_vs_with_dependencies); printf("\n");
-        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-    }
-    
-    // NOTE: thanks to the use of rule 2, the schema resulting from substituting the longest dependency of the removed
-    // variables is already in the set of dependencies, so we can simply remove the schemas that contain those variables.
-    // We only need to consider the removed variables that didn't have any dependences, to substitute them for <>.
-    foreach_in_arraylistptr(DependencyPair, pair, common_dependencies){
-        if(global_print_debugging){
-            printf("Variable $%u\n", pair->v);
-        }
-        // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
-        ArrayListSchema *dependency_schemas = &pair->schemas;
-        for(int i = dependency_schemas->size - 1; i >= 0; --i){
-            // NOTE: we take by value because if not, when removing, it will point to the next schema before applying the substitution by <>
-            Schema schema = dependency_schemas->array[i];
-            // * Contains only some removed v with dependencies --> Remove
-            // * Contains only some removed v without dependencies --> Remove and substitute it for the version that contains <> instead of v, insert this to the set of dependencies
-            // NOTE: the new schema that instead of v contains <> won't generate new schemas if the theta operator was reaplied, because 
-            //  the subcommon schemas calculated with rule 1 won't generate new dependencies (none is obtained when calculating the common
-            //  schema with <>) and neither rule 2, since the substitutions that contain v are already included and their appearences of v
-            //  will be substituted by <>.
-            // * Contains both kinds of vs --> Remove, substitute the v_no_deps with <>, reaply theta rules with this new dependency and do NOT insert it to the resulting set of dependencies
-            // NOTE: the same previous note applies here, NO new dependencies will be added at all --> This only needs to the the same operation as case 1
-            // * Doesn't contain any removed v --> Do nothing
-
-            // Calculate variables in Schema
-            SetVariables schema_vs = variables_in_schema(&schema);
-
-            if(global_print_debugging){
-                printf("Schema: "); print_schema(&schema, PRINT_VISUALLY); printf("\n");
-                printf("Vars: "); print_set_variables(schema_vs); printf("\n");
-            }
-
-            SetVariables removed_vs_without_dependencies_in_schema = create_set_variables_defsize();
-            bool contains_removed_v_with_dependencies = false;
-            foreach_in_setvariables(schema_vs, v_node){
-                Variable v = v_node->v;
-                if(lookup_set_variables(removed_vs_with_dependencies, v)){
-                    contains_removed_v_with_dependencies = true;
-                    break;
-                }
-                if(!lookup_set_variables(final_vs, v)){
-                    insert_to_set_variables(&removed_vs_without_dependencies_in_schema, v);
-                }
-            }
-            
-            if(global_print_debugging){
-                printf("Removed vars without dependencies: "); print_set_variables(removed_vs_without_dependencies_in_schema); printf("\n");
-            }
-
-            // If contains some removed variable with dependencies (in removed_vs_with_dependencies): remove
-            if(contains_removed_v_with_dependencies){
-                remove_index_from_array_list_schema(dependency_schemas, i);
-            }
-            // If only contains some removed variable without dependencies (not removed_vs_with_dependencies nor final_vs): remove and add substitution (all those variables) with <>
-            else if (removed_vs_without_dependencies_in_schema.num_variables){
-                remove_index_from_array_list_schema(dependency_schemas, i);
-                if(global_print_debugging) {
-                    printf("Just after removing: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
-                }
-                Schema empty; init_general_schema_arena(&empty, 0, arena);
-                foreach_in_setvariables(removed_vs_without_dependencies_in_schema, v_node){
-                    Variable v = v_node->v;
-                    schema = *substitute_arena(&schema, v, &empty, arena);
-                }
-                add_to_array_list_schema_arena(dependency_schemas, schema, arena);
-            }
-
-            if(global_print_debugging) {
-                printf("Resultant-iter set schema: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
-            }
-
-            free_set_variables(removed_vs_without_dependencies_in_schema);
-            free_set_variables(schema_vs);
-        }
-    }
-
-    if(global_print_debugging){
-        printf("Final dependencies after removal of variables that are no longer contained in the common set schema:\n");
-        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-        //print_set_dependencies(common_dependencies, PRINT_FILE_FORMAT);
-    }
-
-    //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
-    int theta_result = theta_operator_baseline(common_dependencies, arena);
-    if(global_print_debugging && theta_result != 0){
-        printf("Unexpected extra dependencies added with theta operator:\n");
-        print_set_dependencies(common_dependencies, PRINT_VISUALLY);
-    }
-    assert(theta_result == 0);
-
-    free_set_variables(removed_vs_with_dependencies);
-    free_set_variables(final_vs);
-
-    assert(!contains_self_dependency_baseline(*common_dependencies));
     return true;
+}
+
+bool common_set_schema_baseline(
+    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
+    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    Arena *arena)
+{
+    return common_set_schema_baseline_(
+        set_schema1, dependencies1,
+        set_schema2, dependencies2,
+        common_set_schema, common_dependencies,
+        arena, true);
 }
 
 // ARRAYLIST OF PAIRS VARIABLE-NUMAPPEARENCES (TODO: clean where to put this...)
@@ -852,7 +874,7 @@ bool first_check(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Arena
     // Same quantity of corresponding distinct variables according to order of appearence in each set_schema
     unsigned size = var_to_num1.size;
     for(unsigned i = 0; i < size; ++i){
-        if(var_to_num1.array[i].num_appearences != var_to_num1.array[i].num_appearences){
+        if(var_to_num1.array[i].num_appearences != var_to_num2.array[i].num_appearences){
             return false;
         }
     }
@@ -905,11 +927,18 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena)
 {
-    return first_check(*set_schema1, *set_schema2, arena) &&
-           common_set_schema_baseline(set_schema1, dependencies1, set_schema2, dependencies2, 
-                                      common_set_schema, common_dependencies, arena) &&
+    bool result = first_check(*set_schema1, *set_schema2, arena) &&
+           common_set_schema_baseline_(set_schema1, dependencies1, set_schema2, dependencies2, 
+                                      common_set_schema, common_dependencies, arena, false) &&
            first_check(*set_schema1, *common_set_schema, arena) &&
            unique_dependency_between_vars(*common_dependencies);
+    
+    if(!result){
+        return false;
+    }
+
+    remove_variables_not_in_set_schema_from_dependencies(common_set_schema, common_dependencies, arena);
+    return true;
 }
 
 
