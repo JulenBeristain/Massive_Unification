@@ -385,14 +385,15 @@ unsigned read_test_number(FILE *stream){
     size_t len = 0;
     ssize_t read;
 
+    unsigned test_number = 0;
     while((read = getline(&line, &len, stream)) != -1){
         ++global_line_number;
-        unsigned test_number;
         if(sscanf(line, "%%%%%% BEGIN common schema test %u %%%%%%", &test_number) == 1){
-            return test_number;
+            break;
         }
     }
-    return 0; //EOF
+    if(line) { free(line); }
+    return test_number; // if EOF -> 0
 }
 
 Variable max_v_in_schema(Schema schema){
@@ -443,23 +444,10 @@ void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencie
     }
 }
 
-void test_schema_management(int argc, char const *argv[]){
-    Arena arena;
-    init_arena(&arena, sizeof(Schema) * 100000);
-
-    char* filename = "data/schemas/AGT006+1_truncated.txt";
-    if (argc > 1) {
-        char file_initial = argv[1][0];
-        if(file_initial == 'C' || file_initial == 'c'){
-            filename = "data/schemas/COM123+1_truncated.txt";
-        } else {
-            filename = "data/schemas/AGT006+1_truncated.txt";
-        }
-    } else {
-        filename = "data/schemas/AGT006+1_truncated.txt";
-    }
+void test_schema_management_(const char *filename, Arena *arena){
+    printf("#####################################################################################\n");
+    printf("#####################################################################################\n");
     printf("Reading the schemas from: %s\n", filename);
-    printf("Test cases with unexpected results:\n");
     FILE *stream = fopen(filename, "r");
 
     uint64_t num_correct_cases = 0;
@@ -476,13 +464,13 @@ void test_schema_management(int argc, char const *argv[]){
         }
         printf("--- Test=%u ---\n", test_number);
 
-        ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1, &arena);
+        ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1, arena);
         assert(read != -1 && read != 1);
 
-        read = read_next_set_schema_with_dependencies(stream, &set_schema2, &dependencies2, &arena);
+        read = read_next_set_schema_with_dependencies(stream, &set_schema2, &dependencies2, arena);
         assert(read != -1 && read != 1);
 
-        read = read_next_set_schema_with_dependencies(stream, &common_set_schema, &common_dependencies, &arena);
+        read = read_next_set_schema_with_dependencies(stream, &common_set_schema, &common_dependencies, arena);
         if(read == -1){
             break; // EOF
         }
@@ -526,7 +514,7 @@ void test_schema_management(int argc, char const *argv[]){
         }
 
         bool computed_common_schema_exists = common_set_schema_strict_baseline(&set_schema1, &dependencies1, 
-            &set_schema2, &dependencies2, &computed_common_set_schema, &computed_common_dependencies, &arena);
+            &set_schema2, &dependencies2, &computed_common_set_schema, &computed_common_dependencies, arena);
 
         if(common_schema_exists != computed_common_schema_exists){
             printf("Test=%u - common_schema_exists=%u - computed_common_schema_exists=%u\n", 
@@ -543,7 +531,7 @@ void test_schema_management(int argc, char const *argv[]){
             unsigned num_read_vars = read_vars.num_variables;
             free_set_variables(read_vars);
             size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
-            Variable *mapping = allocate(&arena, num_bytes_for_mapping);
+            Variable *mapping = allocate(arena, num_bytes_for_mapping);
             memset(mapping, 0, num_bytes_for_mapping);
 
             if(global_print_debugging){
@@ -564,100 +552,24 @@ void test_schema_management(int argc, char const *argv[]){
         else { ++num_correct_cases; } // the common schema doesn't exist, and it wasn't calculated, as expected
         ++num_total_cases;
 
-        clear_arena(&arena);
+        clear_arena(arena);
     }
 
     fclose(stream);
-    free_arena(&arena); // TODO: Use Valgrind to ensure we don't leak memory...
-
     printf("num_correct_cases=%lu/%lu\n", num_correct_cases, num_total_cases);
 }
-/*
---- Test=54000 ---
-Set Schema 1:
-{<>, <$1, <>>, <>, <<<$1>>, <>>, <>, <>}
-0:[], 2:[$1, 0:[]], 0:[], 2:[1:[1:[$1]], 0:[]], 0:[], 0:[]
-$1 <- {<<>>}
-$1 <- [1:[0:[]]]
-Set Schema 2:
-{<<<$1>>>, <<>, $2>, <$1>, <<$3, $4, $5>, $6>, <<<<$1>>>, <<>, $2>>, <<$1>, <<$3, $4, $5>, $6>>}
-1:[1:[1:[$1]]], 2:[0:[], $2], 1:[$1], 2:[3:[$3, $4, $5], $6], 2:[1:[1:[1:[$1]]], 2:[0:[], $2]], 2:[1:[$1], 2:[3:[$3, $4, $5], $6]]
-$1 <- {<<>>}
-$2 <- {<>}
-$6 <- {<>}
-$3 <- {<>}
-$4 <- {<>}
-$5 <- {<>}
-$1 <- [1:[0:[]]]
-$2 <- [0:[]]
-$6 <- [0:[]]
-$3 <- [0:[]]
-$4 <- [0:[]]
-$5 <- [0:[]]
-Common Set Schema:
-Common Schema does not exist!
 
----
+void test_schema_management(int argc, char const *argv[]){
+    Arena arena;
+    init_arena(&arena, sizeof(Schema) * 100000);
 
-Computed Common schema 1:
-<<<$1>>>
-1:[1:[1:[$1]]]
-Computed Common schema 2:
-<$1, $2>
-2:[$1, $2]
-Computed Common schema 3:
-<$1>
-1:[$1]
-Computed Common schema 4:
-<<$3, $4, $5>, $6>
-2:[3:[$3, $4, $5], $6]
-Computed Common schema 5:
-<<<<$1>>>, <<>, $2>>
-2:[1:[1:[1:[$1]]], 2:[0:[], $2]]
-Computed Common schema 6:
-<<$1>, <<$3, $4, $5>, $6>>
-2:[1:[$1], 2:[3:[$3, $4, $5], $6]]
-Computed Common Set Schema:
-{<<<$1>>>, <$1, $2>, <$1>, <<$3, $4, $5>, $6>, <<<<$1>>>, <<>, $2>>, <<$1>, <<$3, $4, $5>, $6>>}
-1:[1:[1:[$1]]], 2:[$1, $2], 1:[$1], 2:[3:[$3, $4, $5], $6], 2:[1:[1:[1:[$1]]], 2:[0:[], $2]], 2:[1:[$1], 2:[3:[$3, $4, $5], $6]]
-Just the new dependencies:
-$1 <- {<>}
-$2 <- {<>}
-$3 <- {<$1>}
-$6 <- {<>}
-$1 <- [0:[]]
-$2 <- [0:[]]
-$3 <- [1:[$1]]
-$6 <- [0:[]]
-Union of all dependencies:
-$1 <- {<<>>, <>}
-$2 <- {<>}
-$6 <- {<>}
-$3 <- {<>, <$1>}
-$4 <- {<>}
-$5 <- {<>}
-$1 <- [1:[0:[]], 0:[]]
-$2 <- [0:[]]
-$6 <- [0:[]]
-$3 <- [0:[], 1:[$1]]
-$4 <- [0:[]]
-$5 <- [0:[]]
+    for(int i = 1; i < argc; ++i){
+        test_schema_management_(argv[i], &arena);
+    }
+    
+    free_arena(&arena); // TODO: Use Valgrind to ensure we don't leak memory...
+}
 
-Total dependencies after theta operator:
-$1 <- {<<>>, <>}
-$2 <- {<>}
-$6 <- {<>}
-$3 <- {<>, <$1>, <<<>>>, <<>>}
-$4 <- {<>}
-$5 <- {<>}
-$1 <- [1:[0:[]], 0:[]]
-$2 <- [0:[]]
-$6 <- [0:[]]
-$3 <- [0:[], 1:[$1], 1:[1:[0:[]]], 1:[0:[]]]
-$4 <- [0:[]]
-$5 <- [0:[]]
-
-*/
 int main(int argc, char const *argv[])
 {
     //test_set_variables();

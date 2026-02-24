@@ -435,7 +435,7 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
     size_t initial_size = schemas->size;
     for(size_t i = 0; i < initial_size; ++i){
         Schema *gamma = schemas->array + i;
-        SetVariables ws = variables_in_schema(gamma);
+        SetVariables ws = variables_in_schema(gamma); // TODO: implement init_variables_in_schema, and allocate a single ws outside of the loop to use clear instead of free
         foreach_in_setvariables(ws, node_var){
             Variable w = node_var->v;
 
@@ -461,7 +461,10 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
                 if(global_print_debugging){
                     printf("gamma__: "); print_schema(gamma__, PRINT_VISUALLY); printf("\n\n");
                 }
-                if(is_self_dependency(v, gamma__)){ return -1; }
+                if(is_self_dependency(v, gamma__)){ 
+                    free_set_variables(ws); // TODO: clear instead of free... (see above)
+                    return -1; 
+                }
                 // TODO: resizing risk for Arena
                 int contained = add_not_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
                 if(contained != CONTAINED){ ++num_new_dependencies; }
@@ -885,14 +888,18 @@ bool first_check(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Arena
 // TODO: the same recursion happens in a great amount of places with little modifications of what's done in the
 //  base (variable schema) or general (general schema) case. Is there a way to parameterize this and do a unique
 //  function that performs the inorder DFS in set_schemas?
-bool unique_dependency_between_vars__(Schema schema, SetVariables *variables){
+bool unique_dependency_between_vars__(Schema schema, SetVariables *variables, unsigned *num_vars_in_schema){
     if(schema.type == VARIABLE_SCHEMA){
+        ++(*num_vars_in_schema);
+        if(*num_vars_in_schema > 1){
+            return false;
+        }
         return insert_to_set_variables(variables, schema.v) != SET_INSERT_ALREADY_CONTAINED;
     }
     Schema *subschema = schema.subschemas;
     Schema *end = schema.subschemas + schema.arity;
     for(; subschema < end; ++subschema){
-        if(!unique_dependency_between_vars__(*subschema, variables)){
+        if(!unique_dependency_between_vars__(*subschema, variables, num_vars_in_schema)){
             return false;
         }
     }
@@ -901,7 +908,8 @@ bool unique_dependency_between_vars__(Schema schema, SetVariables *variables){
 
 bool unique_dependency_between_vars_(ArrayListSchema schemas, SetVariables *variables){
     foreach_in_arraylist(Schema, s, schemas){
-        if(!unique_dependency_between_vars__(*s, variables)){
+        unsigned num_vars_in_schema = 0;
+        if(!unique_dependency_between_vars__(*s, variables, &num_vars_in_schema)){
             return false;
         }
     }
@@ -909,15 +917,15 @@ bool unique_dependency_between_vars_(ArrayListSchema schemas, SetVariables *vari
 }
 
 bool unique_dependency_between_vars(ArrayListDependencyPair dependencies){
-    SetVariables variables = create_set_variables_defsize();
+    SetVariables variables_in_list_of_dependencies = create_set_variables_defsize();
     foreach_in_arraylist(DependencyPair, pair, dependencies){
-        if(!unique_dependency_between_vars_(pair->schemas, &variables)){
-            free_set_variables(variables);
+        if(!unique_dependency_between_vars_(pair->schemas, &variables_in_list_of_dependencies)){
+            free_set_variables(variables_in_list_of_dependencies);
             return false;
         }
-        clear_set_variables(variables);
+        clear_set_variables(variables_in_list_of_dependencies);
     }
-    free_set_variables(variables);
+    free_set_variables(variables_in_list_of_dependencies);
     return true;
 }
 
