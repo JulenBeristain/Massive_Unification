@@ -35,8 +35,8 @@
                 "--verbose",
                 "--log-file=${workspaceFolder}/build/valgrind-out.txt",
                 "${workspaceFolder}/build/tests",
-                "${workspaceFolder}/data/schemas/AGT006+1_truncated.txt",
-                "${workspaceFolder}/data/schemas/COM123+1_truncated.txt"
+                "${workspaceFolder}/data/schemas/AGT006+1.txt",
+                "${workspaceFolder}/data/schemas/COM123+1.txt"
             ],
             "group": "test",
             "presentation": {
