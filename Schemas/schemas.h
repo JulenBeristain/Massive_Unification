@@ -7,12 +7,8 @@
 #include "arena.h"
 #include "arraylist.h"
 
-// TODO: cyclic type dependency between schemas.h and set_dependencies.h. The simplest way to solve it was
-// to bring the contents of set_dependencies here. See how we can avoid these kind of problems in the future.
-//#include "set_dependencies.h"
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// TYPE DEFINITIONS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// TYPE DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -47,20 +43,16 @@ union Schema {
         unsigned arity;
         // TODO: see if an extra indirection (**subschemas) is necessary/helpful.
         Schema *subschemas;
-        size_t ___;        // Note, candidate for uint16/32_t if padding may arise
+        size_t ___;        // NOTE: candidate for uint16/32_t if padding may arise
     };
-}; // NOTE: pointer type useful for arraylists of pointers to Schemas
-
-/// ARRAYLIST SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct ArrayListSchema ArrayListSchema;
-struct ArrayListSchema {
-    uint32_t size;
-    uint32_t capacity;
-    Schema* array;
 };
 
-/// DEPENDENCY PAIR ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//TODO: implement a macro to traverse general schemas...
+//TODO: implement a macro for basic recursive structure?
+
+DECLARE_ARRAYLIST_TYPE(Schema)
+
+/// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
 struct DependencyPair {
@@ -68,26 +60,17 @@ struct DependencyPair {
     ArrayListSchema schemas;
 };
 
-/// ARRAYLIST DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct ArrayListDependencyPair ArrayListDependencyPair;
-struct ArrayListDependencyPair {
-    uint32_t size;
-    uint32_t capacity;
-    DependencyPair* array;
-};
-
+DECLARE_ARRAYLIST_TYPE(DependencyPair)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END TYPE DEFINITIONS ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// TODO: declare ONLY the public functions that are going to be used in the main.c module (reorganize the order of the functions in .h).
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void init_variable_schema(Schema *schema, Variable v);
@@ -100,9 +83,9 @@ SetVariables variables_in_schema(Schema *schema);
 SetVariables variables_in_set_schema(ArrayListSchema set_schema);
 
 // NOTE: for arraylist of pointers to Schemas
-bool equal_schemas(Schema *s1, Schema *s2);
+bool equal_schemas(Schema s1, Schema s2);
+bool equal_schemasptr(Schema *s1, Schema *s2);
 
-// TODO: declare the public functions that are going to be used in the main.c module.
 bool common_set_schema_baseline(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
@@ -114,36 +97,21 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
+  
+DECLARE_ARRAYLIST_ADD_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_CREATE_ARENA(Schema, schema)
 
-/// ARRAYLIST SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-int add_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
-
-int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena);
-
-//int extend_not_repeated_array_list_schema(ArrayListSchema *list_to_extend, ArrayListSchema *list);
-int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena);
-
-ArrayListSchema create_array_list_schema_arena(uint32_t capacity, Arena *arena);
-
-/// DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-//void print_dependency_pair(DependencyPair pair);
-
-
-/// ARRAYLIST DEPENDENCY PAIRS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair *list, DependencyPair element, Arena *arena);
-
-
-int extend_array_list_dependency_pair_arena(ArrayListDependencyPair *list_to_extend, ArrayListDependencyPair *list, Arena *arena);
-
-
-ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena *arena);
-
-int remove_index_from_array_list_dependency_pair(ArrayListDependencyPair* list, uint32_t index);
+DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
 
 /// DEBUGGING PRINT ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
 void print_schema(Schema *s, PrintingMode mode);
 void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode);
@@ -154,12 +122,12 @@ void print_dependency_pair(DependencyPair *pair, char opening_brace, char closin
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-// TODO: make a typedef for SetSchema-s as ArrayLists of Schemas (not SchemaPtrs...)
+// TODO: make a typedef for SetSchema-s as ArrayLists of Schemas, and similar with the set of dependencies...
 
 /**
  * FUTURE WORK:
- * Finish the managing of schemas and obtention of column index mapping
+ * Obtention of column index mapping
+ * Optimize management of schemas (if bad time measurements...)
  * Optimize AND SIMPLIFY further the core of the unification with matrices (and parallelize it)
  * Postprocess results to normalize the mappings...
  * Management of exception blocks...

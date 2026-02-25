@@ -10,7 +10,6 @@
 				"-O0",
 				"-Wall",
 				"-Wextra",
-				"Schemas/arraylist.c",
 				"Schemas/set_variables.c",
 				"Schemas/arena.c",
 				"Schemas/schemas.c",

@@ -3,6 +3,7 @@ To compile:
 gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 */
 
+#include "schemas.h"
 #include "set_variables.h"
 #include "arraylist.h"
 #include "arena.h"
@@ -45,21 +46,31 @@ void test_typeof_or_auto_type(){
     printf("&x=%p\n&y=%p\n", xptr, yptr);
 }
 
-DECLARE_ARRAYLIST(Int, int, int)
 static inline bool equal_ints(int a, int b) { return a == b; }
 static inline void print_int(int i) { printf("%d", i); }
+typedef int Int;
+DECLARE_ARRAYLIST_TYPE(Int)
+DEFINE_ARRAYLIST_CREATE(Int, int)
+DEFINE_ARRAYLIST_FREE(Int, int)
+DEFINE_ARRAYLIST_ADD(Int, int)
+DEFINE_ARRAYLIST_REMOVE_INDEX(Int, int)
+DEFINE_ARRAYLIST_FIND(Int, int, equal_ints)
+DEFINE_ARRAYLIST_REMOVE_ELEMENT(Int, int)
+DEFINE_ARRAYLIST_GET(Int, int)
+DEFINE_ARRAYLIST_PRINT_SEPARATORS(Int, int, print_int)
+DEFINE_ARRAYLIST_PRINT(Int, int)
+DEFINE_ARRAYLIST_PRINTLN(Int, int)
 
-DEFINE_ARRAYLIST(Int, int, int, equal_ints, print_int)
 void test_arraylist_ints(){
-    ArrayListInt list = create_array_list_int_defsize();
+    ArrayListInt list = create_array_list_int_defcapacity();
 
-    print_array_list_int(list); printf("\n");
+    println_array_list_int(list);
 
     for(int i = 0; i < 20; ++i){
         add_to_array_list_int(&list, i);
     }
 
-    print_array_list_int(list); printf("\n");
+    println_array_list_int(list);
 
     int first, median, last;
     get_from_array_list_int(list, 0, &first);
@@ -71,11 +82,13 @@ void test_arraylist_ints(){
     remove_index_from_array_list_int(&list, list.size / 2);
     remove_index_from_array_list_int(&list, list.size - 1);
 
-    print_array_list_int(list); printf("\n");
+    println_array_list_int(list);
 
     remove_element_from_array_list_int(&list, 7);
 
-    print_array_list_int(list); printf("\n");
+    println_array_list_int(list);
+
+    free_array_list_int(list);
 }
 
 static inline bool is_white_line(char *line, size_t len){
@@ -235,7 +248,7 @@ bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2)
     unsigned size = set_schema1.size;
 
     for(unsigned i = 0; i < size; ++i){
-        if(!equal_schemas(set_schema1.array + i, set_schema2.array + i)){ return false; }
+        if(!equal_schemas(set_schema1.array[i], set_schema2.array[i])){ return false; }
     }
 
     return true;
@@ -270,7 +283,7 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
             unsigned j = 0;
             for(; j < num_dependencies_of_v; ++j){
                 Schema *s2 = schemas2.array + j;
-                if(equal_schemas(s1, s2)){
+                if(equal_schemas(*s1, *s2)){
                     break;
                 }
             }
