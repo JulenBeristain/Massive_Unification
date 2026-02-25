@@ -631,7 +631,7 @@ void remove_variables_not_in_set_schema_from_dependencies(
                     Variable v = v_node->v;
                     schema = *substitute_arena(&schema, v, &empty, arena);
                 }
-                add_to_array_list_schema_arena(dependency_schemas, schema, arena);
+                add_not_repeated_to_array_list_schema_arena(dependency_schemas, schema, arena);
             }
 
             if(global_print_debugging) {

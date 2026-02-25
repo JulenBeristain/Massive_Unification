@@ -462,7 +462,7 @@ void test_schema_management_(const char *filename, Arena *arena){
         if(test_number == 0){
             break; // EOF
         }
-        printf("--- Test=%u ---\n", test_number);
+        //printf("--- Test=%u ---\n", test_number);
 
         ssize_t read = read_next_set_schema_with_dependencies(stream, &set_schema1, &dependencies1, arena);
         assert(read != -1 && read != 1);
