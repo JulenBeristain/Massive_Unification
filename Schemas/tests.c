@@ -246,7 +246,7 @@ bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2)
     unsigned size = set_schema1.size;
 
     for(unsigned i = 0; i < size; ++i){
-        if(!equal_schemas(set_schema1.array + i, set_schema2.array + i)){ return false; }
+        if(!equal_schemas(set_schema1.array[i], set_schema2.array[i])){ return false; }
     }
 
     return true;
@@ -281,7 +281,7 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
             unsigned j = 0;
             for(; j < num_dependencies_of_v; ++j){
                 Schema *s2 = schemas2.array + j;
-                if(equal_schemas(s1, s2)){
+                if(equal_schemas(*s1, *s2)){
                     break;
                 }
             }
@@ -313,16 +313,16 @@ void test_schema_management(int argc, char const *argv[]){
     Arena arena;
     init_arena(&arena, sizeof(Schema) * 100000);
 
-    char* filename = "data/schemas/AGT006+1_truncated.txt";
+    char* filename = "data/schemas/AGT006+1.txt";
     if (argc > 1) {
         char file_initial = argv[1][0];
         if(file_initial == 'C' || file_initial == 'c'){
-            filename = "data/schemas/COM123+1_truncated.txt";
+            filename = "data/schemas/COM123+1.txt";
         } else {
-            filename = "data/schemas/AGT006+1_truncated.txt";
+            filename = "data/schemas/AGT006+1.txt";
         }
     } else {
-        filename = "data/schemas/AGT006+1_truncated.txt";
+        filename = "data/schemas/AGT006+1.txt";
     }
     printf("Reading the schemas from: %s\n", filename);
     printf("Test cases with unexpected results:\n");

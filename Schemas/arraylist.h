@@ -197,7 +197,7 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     }
 
 // NOTE: not default capacity for Arena because we are only allocating from it when there is no resizing
-#define DEFINE_ARRAYLIST_CREATION_ARENA(Type, type)                                      \
+#define DEFINE_ARRAYLIST_CREATE_ARENA(Type, type)                                       \
     ArrayList##Type create_array_list_##type##_arena(uint32_t capacity, Arena *arena){  \
         ArrayList##Type list;                                                           \
         list.size = 0;                                                                  \
@@ -257,15 +257,15 @@ int add_to_array_list_##type(ArrayList##Type *list, Type element){              
 
 // NOTE: no need for a not_arena version, because realloc already copies the elements.
 // NOTE: this is a helper function. We don't need a declaration macro for a .h file.
-#define DEFINE_ARRAYLIST_RESIZE_ARENA(Type, type)                                   \
-void resize_array_list_##type##_arena(ArrayList##Type *list, unsigned new_capacity){\
-    assert(list->capacity < new_capacity);                                          \
-    unsigned content_num_bytes = list->capacity * sizeof(*list->array)              \
-    list->capacity = new_capacity;                                                  \
-    unsigned alloc_num_bytes = new_capacity * sizeof(*list->array);                 \
-    void *new_array = allocate(arena, alloc_num_bytes);                             \
-    memcpy(new_array, list->array, content_num_bytes);                              \
-    list->array = new_array;                                                        \
+#define DEFINE_ARRAYLIST_RESIZE_ARENA(Type, type)                                                   \
+void resize_array_list_##type##_arena(ArrayList##Type *list, unsigned new_capacity, Arena *arena){  \
+    assert(list->capacity < new_capacity);                                                          \
+    unsigned content_num_bytes = list->capacity * sizeof(*list->array);                             \
+    list->capacity = new_capacity;                                                                  \
+    unsigned alloc_num_bytes = new_capacity * sizeof(*list->array);                                 \
+    void *new_array = allocate(arena, alloc_num_bytes);                                             \
+    memcpy(new_array, list->array, content_num_bytes);                                              \
+    list->array = new_array;                                                                        \
 }
 
 #define DEFINE_ARRAYLIST_ADD_ARENA(Type, type)                                              \
@@ -273,7 +273,7 @@ int add_to_array_list_##type##_arena(ArrayList##Type *list, Type element, Arena 
     int code = NOT_RESIZED;                                                                 \
     if (list->size == list->capacity){                                                      \
         unsigned new_capacity = list->capacity ? list->capacity * 2 : 1;                    \
-        resize_array_list_##type##_arena(list, new_capacity);                               \
+        resize_array_list_##type##_arena(list, new_capacity, arena);                        \
         code = RESIZED;                                                                     \
     }                                                                                       \
     list->array[list->size] = element;                                                      \
@@ -285,8 +285,8 @@ int add_to_array_list_##type##_arena(ArrayList##Type *list, Type element, Arena 
 /// EXTENSION ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DEFINE_ARRAYLIST_EXTEND(Type, type)                                                                        \
-int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type list){                                       \
+#define DEFINE_ARRAYLIST_EXTEND(Type, type)                                                                                 \
+int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type list){                                        \
     int code = NOT_RESIZED;                                                                                                 \
                                                                                                                             \
     unsigned extended_size = list_to_extend->size + list->size;                                                             \
@@ -300,7 +300,7 @@ int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type li
         code = RESIZED;                                                                                                     \
     }                                                                                                                       \
                                                                                                                             \
-    foreach_in_arraylist(Type, elemptr, list){                                                                           \
+    foreach_in_arraylist(Type, elemptr, list){                                                                              \
         add_to_array_list_##type(list_to_extend, *elemptr);                                                                 \
     }                                                                                                                       \
                                                                                                                             \
@@ -311,9 +311,9 @@ int extend_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type li
 int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList##Type list, Arena *arena){  \
     int code = NOT_RESIZED;                                                                                 \
                                                                                                             \
-    unsigned extended_size = list_to_extend->size + list->size;                                             \
+    unsigned extended_size = list_to_extend->size + list.size;                                              \
     if(extended_size > list_to_extend->capacity){                                                           \
-        resize_array_list_##type##_arena(list, 2 * extended_size);                                          \
+        resize_array_list_##type##_arena(list_to_extend, 2 * extended_size, arena);                         \
         code = RESIZED;                                                                                     \
     }                                                                                                       \
                                                                                                             \
@@ -356,7 +356,7 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
     int add_no_repeated_to_array_list_##type##_arena(ArrayList##Type *list, Type elem, Arena *arena) {  \
         if(contains_array_list_##type(*list, elem)){                                                    \
                 return CONTAINED;                                                                       \
-            }                                                                                           \
+        }                                                                                               \
         return add_to_array_list_##type##_arena(list, elem, arena);                                     \
     }
 
@@ -364,19 +364,11 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
     int extend_no_repeated_array_list_##type(ArrayList##Type *list_to_extend, ArrayList##Type list){                            \
         int code = NOT_RESIZED;                                                                                                 \
                                                                                                                                 \
-        unsigned extended_size = list_to_extend->size + list->size;                                                             \
-        if(extended_size > list_to_extend->capacity){                                                                           \
-            list_to_extend->capacity = 2 * extended_size;                                                                       \
-            list_to_extend->array = realloc(list_to_extend->array, list_to_extend->capacity * sizeof(*list_to_extend->array));  \
-            if (list_to_extend->array == NULL){                                                                                 \
-                perror("extend_array_list: realloc failed to allocate memory");                                                 \
-                exit(EXIT_FAILURE);                                                                                             \
-            }                                                                                                                   \
-            code = RESIZED;                                                                                                     \
-        }                                                                                                                       \
-                                                                                                                                \
         foreach_in_arraylist(Type, elemptr, list){                                                                              \
-            add_no_repeated_to_array_list_##type(list_to_extend, *elemptr);                                                     \
+            int add_code = add_no_repeated_to_array_list_##type(list_to_extend, *elemptr);                                      \
+            if(add_code == RESIZED) {                                                                                           \
+                code = RESIZED;                                                                                                 \
+            }                                                                                                                   \
         }                                                                                                                       \
                                                                                                                                 \
         return code;                                                                                                            \
@@ -386,14 +378,11 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
     int extend_no_repeated_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList##Type list, Arena *arena){      \
         int code = NOT_RESIZED;                                                                                                 \
                                                                                                                                 \
-        unsigned extended_size = list_to_extend->size + list->size;                                                             \
-        if(extended_size > list_to_extend->capacity){                                                                           \
-            resize_array_list_##type##_arena(list, 2 * extended_size);                                                          \
-            code = RESIZED;                                                                                                     \
-        }                                                                                                                       \
-                                                                                                                                \
         foreach_in_arraylist(Type, elemptr, list){                                                                              \
-            add_no_repeated_to_array_list_##type##_arena(list_to_extend, *elemptr, arena);                                      \
+            int add_code = add_no_repeated_to_array_list_##type##_arena(list_to_extend, *elemptr, arena);                       \
+            if(add_code == RESIZED){                                                                                            \
+                code = RESIZED;                                                                                                 \
+            }                                                                                                                   \
         }                                                                                                                       \
                                                                                                                                 \
         return code;                                                                                                            \
@@ -431,16 +420,16 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
     
                                                                                             
 // NOTE: remove index checks if we haven't found the element (so index == list->size)
-#define DEFINE_ARRAYLIST_REMOVE_ELEMENT(Type, type)                    \
+#define DEFINE_ARRAYLIST_REMOVE_ELEMENT(Type, type)                                         \
     int remove_element_from_array_list_##type(ArrayList##Type *list, Type element){         \
         uint32_t index = find_in_array_list_##type(*list, element);                         \
         return remove_index_from_array_list_##type(list, index);                            \
     }
 
-#define DEFINE_ARRAYLIST_REMOVE_POINTER_ELEMENT(Type, type)                    \
-    int remove_pointer_element_from_array_list_##type(ArrayList##Type *list, Type element){         \
+#define DEFINE_ARRAYLIST_REMOVE_POINTER_ELEMENT(Type, type)                                 \
+    int remove_pointer_element_from_array_list_##type(ArrayList##Type *list, Type element){ \
         uint32_t index = find_in_array_list_##type(*list, element)                          \
-        return remove_pointer_index_from_array_list_##type(list, index);                            \
+        return remove_pointer_index_from_array_list_##type(list, index);                    \
     }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -448,7 +437,7 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NOTE: for an unsafe get, simply use list[.|->]array[index].
-#define DEFINE_ARRAYLIST_GET(Type, type)                                      \
+#define DEFINE_ARRAYLIST_GET(Type, type)                                                \
 int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *result){     \
     if(index >= list.size){                                                             \
         return INVALID_INDEX;                                                           \
@@ -462,33 +451,34 @@ int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *resul
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NOTE: if the print_function itself can be personalized, implement a wrapper with the desired configuration.
-// TODO: a more sophisticated approach would be to implement a variadic macro for the print_function arguments...
-#define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function)   \
-    void print_separators_array_list_##type(                            \
-        ArrayList##Type list, char opening_brace, char closing_brace,   \
-        char *elem_separator, bool one_line_per_elem, unsigned tab_num) \
-    {                                                                   \
-        printf("%c", opening_brace);                                    \
-        if(one_line_per_elem){ printf("\n"); }                          \
-        char *tabs;                                                     \
-        if(one_line_per_elem){                                          \
-            tabs = malloc(tab_num * sizeof('\t') + 1);                  \
-            for(unsigned i = 0; i < tab_num; ++i) { tabs[i] = '\t'; }   \
-            tabs[tab_num] = '\0';                                       \
-        } else {                                                        \
-            tabs = malloc(sizeof('\0'));                                \
-            tabs[0] = '\0';                                             \
-        }                                                               \
-        if(list.size){ print_function(list.array[0]); }                 \
-        for(unsigned i = 1; i < list.size; ++i){                        \
-            printf("%s", elem_separator);                               \
-            if(one_line_per_elem) { printf("\n"); }                     \
-            printf("%s", tabs);                                         \
-            print_function(list.array[i]);                              \
-        }                                                               \
-        free(tabs);                                                     \
-        if(one_line_per_elem){ printf("\n"); }                          \
-        printf("%c", closing_brace);                                    \
+// TODO_YA: a more sophisticated approach would be to implement a variadic macro for the print_function arguments...
+
+#define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function, ...)  \
+    void print_separators_array_list_##type(                                \
+        ArrayList##Type list, char opening_brace, char closing_brace,       \
+        char *elem_separator, bool one_line_per_elem, unsigned tab_num)     \
+    {                                                                       \
+        printf("%c", opening_brace);                                        \
+        if(one_line_per_elem){ printf("\n"); }                              \
+        char *tabs;                                                         \
+        if(one_line_per_elem){                                              \
+            tabs = malloc(tab_num * sizeof('\t') + 1);                      \
+            for(unsigned i = 0; i < tab_num; ++i) { tabs[i] = '\t'; }       \
+            tabs[tab_num] = '\0';                                           \
+        } else {                                                            \
+            tabs = malloc(sizeof('\0'));                                    \
+            tabs[0] = '\0';                                                 \
+        }                                                                   \
+        if(list.size){ print_function(list.array[0], ##__VA_ARGS__); }      \
+        for(unsigned i = 1; i < list.size; ++i){                            \
+            printf("%s", elem_separator);                                   \
+            if(one_line_per_elem) { printf("\n"); }                         \
+            printf("%s", tabs);                                             \
+            print_function(list.array[i], ##__VA_ARGS__);                   \
+        }                                                                   \
+        free(tabs);                                                         \
+        if(one_line_per_elem){ printf("\n"); }                              \
+        printf("%c", closing_brace);                                        \
     }
 
 #define DEFINE_ARRAYLIST_PRINT(Type, type)  \

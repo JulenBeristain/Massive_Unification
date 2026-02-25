@@ -12,72 +12,46 @@ extern bool global_print_debugging;
 /// ARRAYLIST SCHEMAS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//TODO: ensure new print version is called here
-//DEFINE_ARRAYLIST_CREATION(Schema, schema)
-//DEFINE_ARRAYLIST_ADDITION(Schema, schema, Schema)
-//DEFINE_ARRAYLIST_GETTING(Schema, schema, Schema)
-//DEFINE_PRINT_ARRAYLIST_WITH_POINTER(Schema, schema, print_schema)
+DEFINE_ARRAYLIST_CREATE_ARENA(Schema, schema)
 
-//DEFINE_ARRAYLIST_CREATION_ARENA(Schema, schema)
-ArrayListSchema create_array_list_schema_arena(uint32_t capacity, Arena* arena) {
-    ArrayListSchema list;
-    list.size = 0;
-    list.capacity = capacity;
-    list.array = allocate(arena, capacity * sizeof(*list.array));
-    return list;
-}
+DEFINE_ARRAYLIST_RESIZE_ARENA(Schema, schema)
+DEFINE_ARRAYLIST_ADD_ARENA(Schema, schema)
 
-//DEFINE_ARRAYLIST_ADDITION_ARENA(Schema, schema, Schema)
-int add_to_array_list_schema_arena(ArrayListSchema* list, Schema element, Arena* arena)
-{
-    int code = NOT_RESIZED;
-    if (list->size == list->capacity) {
-        if (list->capacity) {
-            list->capacity *= 2;
-        } else {
-            list->capacity = 1;
-        }
-        // TODO: this is the logic of resizing!!!
-        Schema *new_array = allocate(arena, list->capacity * sizeof(*list->array));
-        Schema *source = list->array;
-        Schema *dest = new_array;
-        Schema *end = dest + list->size;
-        for(; dest < end; ++dest, ++source){
-            *dest = *source;
-        }
-        list->array = new_array;
-        code = RESIZED;
-    }
-    list->array[list->size] = element;
-    ++list->size;
-    return code;
-}
+DEFINE_ARRAYLIST_FIND(Schema, schema, equal_schemas)
+DEFINE_ARRAYLIST_CONTAINS(Schema, schema)
+DEFINE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
 
-int add_not_repeated_to_array_list_schema_arena(ArrayListSchema *list, Schema element, Arena *arena){
-    // TODO: refactor this to a contains function --> Then, this function could be unnecessary
-    foreach_in_arraylistptr(Schema, itptr, list){
-        if(equal_schemas(itptr, &element)){
-            return CONTAINED;
-        }
-    }
-    return add_to_array_list_schema_arena(list, element, arena);
-}
+DEFINE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
 
-//TODO_YA: not arena version?
-//DEFINE_ARRAYLIST_EXTENSION(Schema, schema, Schema) // TODO_YA: the first resizing logic shouldn't work like the not repeated version
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-int extend_not_repeated_array_list_schema_arena(ArrayListSchema *list_to_extend, ArrayListSchema *list, Arena *arena){
-    int code = NOT_RESIZED; 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    foreach_in_arraylistptr(Schema, elemptr, list){
-        add_not_repeated_to_array_list_schema_arena(list_to_extend, *elemptr, arena);
-    }
+DEFINE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
 
-    return code; 
-}
+DEFINE_ARRAYLIST_RESIZE_ARENA(DependencyPair, dependency_pair)
+DEFINE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
+
+DEFINE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END ARRAYLIST SCHEMAS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
@@ -152,13 +126,26 @@ unsigned schema_size(Schema *s){
 //  that if we end up caching all the schemas so no Schema appears more than once in memory, this function  
 //  can be simplified to a pointer comparison.
 // NOTE: useful for arraylist of pointers to Schemas
-bool equal_schemas(Schema *s1, Schema *s2){
+bool equal_schemas(Schema s1, Schema s2){
+    if(s1.type == VARIABLE_SCHEMA && s2.type == VARIABLE_SCHEMA && s1.v == s2.v) { return true; }
+    if(s1.type == GENERAL_SCHEMA && s2.type == GENERAL_SCHEMA && s1.arity == s2.arity) {
+        Schema *sub1 = s1.subschemas;
+        Schema *sub2 = s2.subschemas;
+        for(unsigned arity = s1.arity; arity; --arity, ++sub1, ++sub2){
+            if(!equal_schemas(*sub1, *sub2)) { return false; }
+        }
+        return true;
+    }
+    return false;
+}
+
+bool equal_schemasptr(Schema *s1, Schema *s2){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v) { return true; }
     if(s1->type == GENERAL_SCHEMA && s2->type == GENERAL_SCHEMA && s1->arity == s2->arity) {
         Schema *sub1 = s1->subschemas;
         Schema *sub2 = s2->subschemas;
         for(unsigned arity = s1->arity; arity; --arity, ++sub1, ++sub2){
-            if(!equal_schemas(sub1, sub2)) { return false; }
+            if(!equal_schemasptr(sub1, sub2)) { return false; }
         }
         return true;
     }
@@ -219,7 +206,7 @@ bool insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Vari
         DependencyPair *pair = dependencies->array + i;
         if(pair->v == v){
             // TODO: resizing risk for Arena
-            int contained = add_not_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
+            int contained = add_no_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
             if (contained != CONTAINED) { return true; }
             return false;
         }
@@ -255,7 +242,7 @@ void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayL
         }
         else { //found
             // TODO: resizing risk for Arena
-            extend_not_repeated_array_list_schema_arena(&destination->array[j].schemas, &schemas2, arena);
+            extend_no_repeated_array_list_schema_arena(&destination->array[j].schemas, schemas2, arena);
         }
     }
 }
@@ -428,7 +415,7 @@ int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
                 Schema *gamma__ = substitute_arena(gamma, w, gamma_, arena);
                 if(is_self_dependency(v, gamma__)){ return -1; }
                 // TODO: resizing risk for Arena
-                int contained = add_not_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
+                int contained = add_no_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
                 if(contained != CONTAINED){ ++num_new_dependencies; }
             }
         }
@@ -548,7 +535,7 @@ bool common_set_schema_baseline(
     // NOTE: capacity can be greater than final size (we can have dependencies of the same variable in several sets)
     //  therefore, there is no risk of resizing
     *common_dependencies = create_array_list_dependency_pair_arena(dependencies1->size + dependencies2->size + new_dependencies.size, arena);
-    extend_array_list_dependency_pair_arena(common_dependencies, dependencies1, arena); // NOTE: Only copy the header of the array, the elements are shared
+    extend_array_list_dependency_pair_arena(common_dependencies, *dependencies1, arena); // NOTE: Only copy the header of the array, the elements are shared
     // TODO: here, when adding new depencies to the array list of an already stored variable, we can have resizing
     union_of_dependencies_baseline(common_dependencies, dependencies2, arena);
     union_of_dependencies_baseline(common_dependencies, &new_dependencies, arena);
@@ -574,94 +561,6 @@ bool common_set_schema_baseline(
     assert(!contains_self_dependency_baseline(*common_dependencies));
     return true;
 }
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/* DEFINE_ARRAYLIST_CREATION(DependencyPair, dependency_pair)
-DEFINE_ARRAYLIST_ADDITION(DependencyPair, dependency_pair, DependencyPair)
-DEFINE_ARRAYLIST_GETTING(DependencyPair, dependency_pair, DependencyPair)
-DEFINE_PRINT_ARRAYLIST(DependencyPair, dependency_pair, print_dependency_pair) */
-
-//DEFINE_ARRAYLIST_CREATION_ARENA(DependencyPair, dependency_pair)
-ArrayListDependencyPair create_array_list_dependency_pair_arena(uint32_t capacity, Arena* arena)
-{
-    ArrayListDependencyPair list;
-    list.size = 0;
-    list.capacity = capacity;
-    list.array = allocate(arena, capacity * sizeof(*list.array));
-    return list;
-}
-
-//DEFINE_ARRAYLIST_ADDITION_ARENA(DependencyPair, dependency_pair, DependencyPair) 
-int add_to_array_list_dependency_pair_arena(ArrayListDependencyPair* list, DependencyPair element, Arena* arena){
-    int code = NOT_RESIZED;
-    if (list->size == list->capacity) {
-        if (list->capacity) {
-            list->capacity *= 2;
-        } else {
-            list->capacity = 1;
-        }
-        // TODO: this is the logic of resizing!!!
-        DependencyPair *new_array = allocate(arena, list->capacity * sizeof(*list->array));
-        DependencyPair *source = list->array;
-        DependencyPair *dest = new_array;
-        DependencyPair *end = dest + list->size;
-        for(; dest < end; ++dest, ++source){
-            *dest = *source;
-        }
-        list->array = new_array;
-        code = RESIZED;
-    }
-    list->array[list->size] = element;
-    ++list->size;
-    return code;
-}
-
-// TODO_YA: not repeated version?
-
-//DEFINE_ARRAYLIST_EXTENSION_ARENA(DependencyPair, dependency_pair, DependencyPair) 
-int extend_array_list_dependency_pair_arena(ArrayListDependencyPair* list_to_extend, ArrayListDependencyPair* list, Arena* arena)
-{
-    int code = NOT_RESIZED;
-    unsigned extended_size = list_to_extend->size + list->size;
-    if (extended_size > list_to_extend->capacity) {
-        list_to_extend->capacity = 2 * extended_size;
-        // TODO: this is the resizing logic in extending too!!!
-        DependencyPair *new_array = allocate(arena, list_to_extend->capacity * sizeof(*list_to_extend->array));
-        DependencyPair *source = list_to_extend->array;
-        DependencyPair *dest = new_array;
-        DependencyPair *end = dest + list_to_extend->size;
-        for(; dest < end; ++dest, ++source){
-            *dest = *source;
-        }
-        list_to_extend->array = new_array;
-        code = RESIZED;
-    }
-    for (DependencyPair *elemptr = (list)->array, *_end = (list)->array + (list)->size; elemptr < _end; ++elemptr) {
-        // TODO: as we already have extended when necessary, we can avoid the overhead of a function call
-        //add_to_array_list_dependency_pair_arena(list_to_extend, *elemptr, arena);
-        list_to_extend->array[list_to_extend->size++] = *elemptr;
-    }
-    return code;
-}
-
-// TODO_YA: not repeated version?
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// END ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// END SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// PRINTING FUNCTIONS FOR DEBUGGING ////////////////////////////////////////////////////////////////////////////////////////////////
