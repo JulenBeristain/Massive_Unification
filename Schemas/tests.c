@@ -27,11 +27,11 @@ void test_set_variables(){
     print_set_variables(set); printf("\n");
 
     for(Variable v = 1; v <= 20; ++v){
-        char *inSet = lookup_set_variables(set, v) ? "True" : "False";
+        char *inSet = is_in_set_variables(set, v) ? "True" : "False";
         printf("%d in set = %s\n", v, inSet);
     }
 
-    clear_set_variables(set);
+    clear_set_variables(&set);
     print_set_variables(set); printf("\n");
 
     free_set_variables(set);

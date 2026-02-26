@@ -546,7 +546,7 @@ void remove_variables_not_in_set_schema_from_dependencies(
     // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
     for(int i = dependencies->size - 1; i >= 0; --i){
         DependencyPair pair = dependencies->array[i];
-        if(!lookup_set_variables(final_vs, pair.v)){
+        if(!is_in_set_variables(final_vs, pair.v)){
             remove_index_from_array_list_dependency_pair(dependencies, i);
             insert_to_set_variables(&removed_vs_with_dependencies, pair.v);
         }
@@ -592,11 +592,11 @@ void remove_variables_not_in_set_schema_from_dependencies(
             bool contains_removed_v_with_dependencies = false;
             foreach_in_setvariables(schema_vs, v_node){
                 Variable v = v_node->v;
-                if(lookup_set_variables(removed_vs_with_dependencies, v)){
+                if(is_in_set_variables(removed_vs_with_dependencies, v)){
                     contains_removed_v_with_dependencies = true;
                     break;
                 }
-                if(!lookup_set_variables(final_vs, v)){
+                if(!is_in_set_variables(final_vs, v)){
                     insert_to_set_variables(&removed_vs_without_dependencies_in_schema, v);
                 }
             }
@@ -912,7 +912,7 @@ bool unique_dependency_between_vars(ArrayListDependencyPair dependencies){
             free_set_variables(variables_in_list_of_dependencies);
             return false;
         }
-        clear_set_variables(variables_in_list_of_dependencies);
+        clear_set_variables(&variables_in_list_of_dependencies);
     }
     free_set_variables(variables_in_list_of_dependencies);
     return true;
