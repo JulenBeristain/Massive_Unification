@@ -450,9 +450,6 @@ int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *resul
 /// PRINTING FOR DEBUGGING //////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// NOTE: if the print_function itself can be personalized, implement a wrapper with the desired configuration.
-// TODO_YA: a more sophisticated approach would be to implement a variadic macro for the print_function arguments...
-
 #define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function, ...)  \
     void print_separators_array_list_##type(                                \
         ArrayList##Type list, char opening_brace, char closing_brace,       \

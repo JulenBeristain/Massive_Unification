@@ -24,6 +24,12 @@ DEFINE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
 
 DEFINE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
 
+DEFINE_ARRAYLIST_REMOVE_INDEX(Schema, schema)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END ARRAYLIST SCHEMAS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -49,29 +55,12 @@ DEFINE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
 /// END SET OF DEPENDENCIES /////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//DEFINE_ARRAYLIST_REMOVAL_INDEX(Schema, schema, Schema)
-int remove_index_from_array_list_schema(ArrayListSchema* list, uint32_t index)
-{
-    if (index >= list->size) {
-        return OUT_OF_BOUNDS;
-    }
-    --list->size;
-    Schema* removed_ptr = list->array + index;
-    uint32_t num_shifted_elements = list->size - index;
-    memmove(removed_ptr, removed_ptr + 1, num_shifted_elements * sizeof(*list->array));
-    return SUCCESSFUL_REMOVAL;
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// END ARRAYLIST SCHEMAS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
- * TODO: if Schemas are modified at some point, so they are not immutable, then the use of the
+ * NOTE: if Schemas are modified at some point, so they are not immutable, then the use of the
  *       size attribute must be reconsidered.
  */
 void init_variable_schema(Schema *s, Variable v){
@@ -130,55 +119,61 @@ unsigned schema_size(Schema *s){
     }
 
     unsigned total_size = 1;
-    Schema *subschema = s->subschemas;
-    for(Schema *end = subschema + s->arity; subschema < end; ++subschema){
-        total_size += schema_size(subschema);
+    foreach_in_schemaptr(s, sub){
+        total_size += schema_size(sub);
     }
+
     return total_size;
 }
 
-// TODO: implement a "disjoint" version that first checks if the pointers are equal (useful at all? In what
-//  case would we call to this function with the same pointer as both arguments?). Note
-//  that if we end up caching all the schemas so no Schema appears more than once in memory, this function  
-//  can be simplified to a pointer comparison.
-// NOTE: useful for arraylist of pointers to Schemas
 bool equal_schemas(Schema s1, Schema s2){
     if(s1.type == VARIABLE_SCHEMA && s2.type == VARIABLE_SCHEMA && s1.v == s2.v) { return true; }
     if(s1.type == GENERAL_SCHEMA && s2.type == GENERAL_SCHEMA && s1.arity == s2.arity) {
-        Schema *sub1 = s1.subschemas;
-        Schema *sub2 = s2.subschemas;
-        for(unsigned arity = s1.arity; arity; --arity, ++sub1, ++sub2){
-            if(!equal_schemas(*sub1, *sub2)) { return false; }
+        foreach_in_schemas(s1, s2, sub1, sub2){
+            if(!equal_schemas(*sub1, *sub2)) { 
+                return false; 
+            }
         }
         return true;
     }
     return false;
 }
 
+// TODO_YA: as we are passing by value, shouldn't we delete this function altogether?
+// NOTE: implement a "disjoint" version that first checks if the pointers are equal (useful at all? In what
+//  case would we call to this function with the same pointer as both arguments?). Note
+//  that if we end up caching all the schemas so no Schema appears more than once in memory, this function  
+//  can be simplified to a pointer comparison.
 bool equal_schemasptr(Schema *s1, Schema *s2){
     if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v) { return true; }
     if(s1->type == GENERAL_SCHEMA && s2->type == GENERAL_SCHEMA && s1->arity == s2->arity) {
-        Schema *sub1 = s1->subschemas;
-        Schema *sub2 = s2->subschemas;
-        for(unsigned arity = s1->arity; arity; --arity, ++sub1, ++sub2){
-            if(!equal_schemasptr(sub1, sub2)) { return false; }
+        foreach_in_schemaptrs(s1, s2, sub1, sub2){
+            if(!equal_schemas(*sub1, *sub2)) { 
+                return false; 
+            }
         }
         return true;
     }
     return false;
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO_YA: shouldn't we be passing by value? High level view it makes more sense. As this is a baseline, we are going for it! We will
+//  see in later optimizations what we can do...
+// NOTE: we are ignoring v->v dependencies, so we don't need a special treatment for that case.
 bool is_self_dependency(Variable v, Schema *schema){
-    // TODO: if this is the first case; i.e., the Schema is the Variable v itself? If we need a special treatment for this
-    //  we can implement a separate non-recursive interface function that handles this special case and then calls to this
-    //  function. --> At first, we are ignoring v->v dependencies, so, as we know that we won't encounter that case, we don't
-    //  need that special treatment.
     if(schema->type == VARIABLE_SCHEMA){
         return v == schema->v;
     }
     
-    Schema *subschema = schema->subschemas, *end = schema->subschemas + schema->arity;
-    for(; subschema < end; ++subschema){
+    foreach_in_schemaptr(schema, subschema){
         if(is_self_dependency(v, subschema)){
             return true;
         }

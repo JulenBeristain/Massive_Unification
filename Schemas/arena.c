@@ -6,7 +6,7 @@
 
 #define GET_BIT(Num, Bit) (((Num) >> (Bit)) & 1)
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
-#define SET_TO_ZERO(AllocatedPtr) memset((AllocatedPtr), 0, sizeof(*AllocatedPtr))
+#define SET_TO_ZERO(AllocatedPtr, NumBytes) memset((AllocatedPtr), 0, (NumBytes))
 
 unsigned global_create_memory_block_calls = 0;
 
@@ -60,7 +60,7 @@ static inline MemoryBlock *create_memory_block(size_t block_size){
 //  hopefully avoiding to allocate further blocks.
 void init_arena(Arena *arena, size_t size_in_bytes){
     if(size_in_bytes == 0){
-        SET_TO_ZERO(arena);
+        SET_TO_ZERO(arena, sizeof(*arena));
         return;
     }
     
