@@ -47,6 +47,17 @@ DEFINE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
 
 DEFINE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
 
+static inline unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyPair list, Variable v){
+    unsigned i = 0;
+    for (DependencyPair *iter = (list).array, *_end = (list).array + (list).size; iter < _end; ++iter){
+        if (v == iter->v){
+            return i;
+        }
+        ++i;
+    }
+    return list.size;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END ARRAYLIST DEPENDENCY PAIRS //////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -68,36 +79,6 @@ void init_variable_schema(Schema *s, Variable v){
     s->size = 1;
     s->v = v;
 }
-
-/**
- * NOTE: size is simply set to 1. If nested subschemas, their own sizes have to be added to this
- *      value in creation.
- */
-/* void init_general_schema(Schema *s, unsigned arity) {
-    s->type = GENERAL_SCHEMA;
-    s->size = 1;
-    s->arity = arity;
-    if (arity) {
-        s->subschemas = malloc(arity * sizeof(*(s->subschemas)));
-        if (s->subschemas == NULL) {
-            perror("malloc failed to allocate memory");
-            exit(EXIT_FAILURE);
-        }
-    }
-    else { s->subschemas = NULL; }
-} */
-
-/* void free_schema(Schema *s){
-    if (s->type == VARIABLE_SCHEMA || s->arity == 0) {
-        return;
-    }
-
-    unsigned arity = s->arity;
-    for (unsigned i = 0; i < arity; ++i) {
-        free_schema(s->subschemas + i);
-    }
-    free(s->subschemas);
-} */
 
 /**
  * NOTE: size is simply set to 1. If nested subschemas, their own sizes have to be added to this
@@ -139,22 +120,21 @@ bool equal_schemas(Schema s1, Schema s2){
     return false;
 }
 
-// TODO_YA: as we are passing by value, shouldn't we delete this function altogether?
-// NOTE: implement a "disjoint" version that first checks if the pointers are equal (useful at all? In what
-//  case would we call to this function with the same pointer as both arguments?). Note
-//  that if we end up caching all the schemas so no Schema appears more than once in memory, this function  
-//  can be simplified to a pointer comparison.
-bool equal_schemasptr(Schema *s1, Schema *s2){
-    if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v) { return true; }
-    if(s1->type == GENERAL_SCHEMA && s2->type == GENERAL_SCHEMA && s1->arity == s2->arity) {
-        foreach_in_schemaptrs(s1, s2, sub1, sub2){
-            if(!equal_schemas(*sub1, *sub2)) { 
-                return false; 
-            }
+// NOTE: we could do an Arena version of this function.
+void variables_in_schema(Schema schema, SetVariables *vars){
+    if(schema.type == VARIABLE_SCHEMA){
+        insert_to_set_variables(vars, schema.v);
+    } else {
+        foreach_in_schema(schema, subschema){
+            variables_in_schema_(*subschema, vars);
         }
-        return true;
     }
-    return false;
+}
+
+void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *result){
+    foreach_in_arraylist(Schema, s, set_schema){
+        variables_in_schema(*s, result);
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -165,52 +145,27 @@ bool equal_schemasptr(Schema *s1, Schema *s2){
 /// DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO_YA: shouldn't we be passing by value? High level view it makes more sense. As this is a baseline, we are going for it! We will
-//  see in later optimizations what we can do...
+// NOTE: a possible low-level optimization would be to see if passing schemas by pointer is more optimal!
+
 // NOTE: we are ignoring v->v dependencies, so we don't need a special treatment for that case.
-bool is_self_dependency(Variable v, Schema *schema){
-    if(schema->type == VARIABLE_SCHEMA){
-        return v == schema->v;
+bool is_self_dependency(Variable v, Schema schema){
+    if(schema.type == VARIABLE_SCHEMA){
+        return v == schema.v;
     }
     
-    foreach_in_schemaptr(schema, subschema){
-        if(is_self_dependency(v, subschema)){
+    foreach_in_schema(schema, subschema){
+        if(is_self_dependency(v, *subschema)){
             return true;
         }
     }
     return false;
 }
 
-
-
-void variables_in_schema_(Schema *schema, SetVariables *vars){
-    if(schema->type == VARIABLE_SCHEMA){
-        insert_to_set_variables(vars, schema->v);
-    } else {
-        Schema *subschema = schema->subschemas, *end = schema->subschemas + schema->arity;
-        for(; subschema < end; ++subschema){
-            variables_in_schema_(subschema, vars);
-        }
-    }
-}
-SetVariables variables_in_schema(Schema *schema){
-    SetVariables vars = create_set_variables_defsize();
-    variables_in_schema_(schema, &vars);
-    return vars;
-}
-
-SetVariables variables_in_set_schema(ArrayListSchema set_schema){
-    SetVariables vars = create_set_variables_defsize();
-    foreach_in_arraylist(Schema, s, set_schema){
-        variables_in_schema_(s, &vars);
-    }
-    return vars;
-}
-
 ///////////////////////////////////////////////////////////////////
 /// BASIC IMPLEMENTATION WITH SIMPLE STRUCTURES FOR A BASELINE
 ///////////////////////////////////////////////////////////////////
 
+// NOTE: for debugging
 // PRE: there must not be any repeated Schemas in the list of Dependences of each variable! (set semantics)
 unsigned number_of_dependencies(ArrayListDependencyPair *dependencies){
     unsigned num_dependencies = 0;
@@ -220,69 +175,61 @@ unsigned number_of_dependencies(ArrayListDependencyPair *dependencies){
     return num_dependencies;
 }
 
-bool insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema *s, Arena *arena){
+// NOTE: resizing risk for arena when adding to arraylists. Unavoidable. We don't know the number of dependencies 
+//  that will end up having the new variable with dependencies v. We don't know how many extra variables with 
+//  dependencies we will have neither...
+bool insert_to_dependencies_baseline(ArrayListDependencyPair *dependencies, Variable v, Schema s, Arena *arena){
     for(unsigned i = 0; i < dependencies->size; ++i){
         DependencyPair *pair = dependencies->array + i;
         if(pair->v == v){
-            // TODO: resizing risk for Arena
-            int contained = add_no_repeated_to_array_list_schema_arena(&pair->schemas, *s, arena);
-            if (contained != CONTAINED) { return true; }
-            return false;
+            int contained = add_no_repeated_to_array_list_schema_arena(&pair->schemas, s, arena);
+            return contained != CONTAINED;
         }
     }
 
     //First dependency for v
-    // TODO: resizing risk for Arena + when resizing, we have to copy whole Schemas, not just pointers to them (24B vs 8B)
     ArrayListSchema first_schemas_v = create_array_list_schema_arena(10, arena);
-    //  We don't know the number of dependencies that will end up having the new variable with dependencies v
-    add_to_array_list_schema_arena(&first_schemas_v, *s, arena);
+    add_to_array_list_schema_arena(&first_schemas_v, s, arena);
     DependencyPair first_dependency_pair_v = { .v = v, .schemas = first_schemas_v };
-    //  We don't know how many extra variables with dependies we will have neither...
     add_to_array_list_dependency_pair_arena(dependencies, first_dependency_pair_v, arena);
     return true;
 }
 
+// NOTE: resizing risk because of Arena and ArrayLists
 // destination gets the dependencies found in source that it didn't contain initially.
-void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayListDependencyPair *source, Arena *arena){
-    for(unsigned i = 0; i < source->size; ++i){
-        DependencyPair pair2 = source->array[i];
+void union_of_dependencies_baseline(ArrayListDependencyPair *destination, ArrayListDependencyPair source, Arena *arena){
+    for(unsigned i = 0; i < source.size; ++i){
+        DependencyPair pair2 = source.array[i];
         Variable v = pair2.v;
         ArrayListSchema schemas2 = pair2.schemas;
 
-        unsigned j = 0;
-        for(; j < destination->size; ++j){
-            if(destination->array[j].v == v){
-                break;
-            }
+        unsigned vpos = find_v_in_array_list_dependency_pair(*destination, v);
+        if(vpos == destination->size){
+            add_to_array_list_dependency_pair_arena(destination, pair2, arena); // NOTE: they share the schemas (no memory management problem with Arenas)
         }
-        if(j == destination->size){ //nobreak = not found
-            // TODO: resizing risk for Arena
-            add_to_array_list_dependency_pair_arena(destination, pair2, arena); // NOTE: they share the schemas
-        }
-        else { //found
-            // TODO: resizing risk for Arena
-            extend_no_repeated_array_list_schema_arena(&destination->array[j].schemas, schemas2, arena);
+        else {
+            extend_no_repeated_array_list_schema_arena(&destination->array[vpos].schemas, schemas2, arena);
         }
     }
 }
 
 // Returns the number of dependencies inserted, or -1 if a self-dependency was arised.
-int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDependencyPair *dependencies, Arena *arena){
-    if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v){
+int common_schema_baseline(Schema s1, Schema s2, Schema *common, ArrayListDependencyPair *dependencies, Arena *arena){
+    if(s1.type == VARIABLE_SCHEMA && s2.type == VARIABLE_SCHEMA && s1.v == s2.v){
         // Do not insert v->v dependency
-        init_variable_schema(common, s1->v);
+        init_variable_schema(common, s1.v);
         return 0;
     }
     
-    if (s1->type == VARIABLE_SCHEMA) {
-        Variable v = s1->v;
+    if (s1.type == VARIABLE_SCHEMA) {
+        Variable v = s1.v;
         if(is_self_dependency(v, s2)){ return -1; }
         init_variable_schema(common, v);
         return insert_to_dependencies_baseline(dependencies, v, s2, arena);
     }
     
-    if (s2->type == VARIABLE_SCHEMA) {
-        Variable v = s2->v;
+    if (s2.type == VARIABLE_SCHEMA) {
+        Variable v = s2.v;
         if(is_self_dependency(v, s1)){ return -1; }
         init_variable_schema(common, v);
         return insert_to_dependencies_baseline(dependencies, v, s1, arena);
@@ -290,22 +237,22 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
 
     size_t min_arity, max_arity;
     Schema *longest_schema;
-    if (s1->arity < s2->arity) {
-        min_arity = s1->arity;
-        max_arity = s2->arity;
-        longest_schema = s2;
+    if (s1.arity < s2.arity) {
+        min_arity = s1.arity;
+        max_arity = s2.arity;
+        longest_schema = &s2;
     } else {
-        min_arity = s2->arity;
-        max_arity = s1->arity;
-        longest_schema = s1;
+        min_arity = s2.arity;
+        max_arity = s1.arity;
+        longest_schema = &s1;
     }
 
     init_general_schema_arena(common, max_arity, arena); // .size = 1
     int total_inserted_dependencies = 0;
     size_t i = 0;
     for(; i < min_arity; ++i){
-        int num_inserted_dependencies = common_schema_baseline(s1->subschemas + i, s2->subschemas + i, 
-                                                                common->subschemas + i, dependencies, arena);
+        int num_inserted_dependencies = common_schema_baseline(s1.subschemas[i], s2.subschemas[i], 
+                                                               common->subschemas + i, dependencies, arena);
         if(num_inserted_dependencies < 0){ return -1; }
         total_inserted_dependencies += num_inserted_dependencies;
         common->size += common->subschemas[i].size;
@@ -318,25 +265,25 @@ int common_schema_baseline(Schema *s1, Schema *s2, Schema *common, ArrayListDepe
     return total_inserted_dependencies;
 }
 
-int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDependencyPair *dependencies, Arena *arena){
-    if(s1->type == VARIABLE_SCHEMA && s2->type == VARIABLE_SCHEMA && s1->v == s2->v){
+int common_schema_dependencies_baseline(Schema s1, Schema s2, ArrayListDependencyPair *dependencies, Arena *arena){
+    if(s1.type == VARIABLE_SCHEMA && s2.type == VARIABLE_SCHEMA && s1.v == s2.v){
         // Do not insert v->v dependency
         return 0;
     }
 
-    if (s1->type == VARIABLE_SCHEMA) {
-        if(is_self_dependency(s1->v, s2)){ return -1; }
-        return insert_to_dependencies_baseline(dependencies, s1->v, s2, arena);
+    if (s1.type == VARIABLE_SCHEMA) {
+        if(is_self_dependency(s1.v, s2)){ return -1; }
+        return insert_to_dependencies_baseline(dependencies, s1.v, s2, arena);
     }
-    if (s2->type == VARIABLE_SCHEMA) {
-        if(is_self_dependency(s2->v, s1)){ return -1; }
-        return insert_to_dependencies_baseline(dependencies, s2->v, s1, arena);
+    if (s2.type == VARIABLE_SCHEMA) {
+        if(is_self_dependency(s2.v, s1)){ return -1; }
+        return insert_to_dependencies_baseline(dependencies, s2.v, s1, arena);
     }
 
     int num_new_dependencies = 0;
-    unsigned min_arity = MIN(s1->arity, s2->arity);
+    unsigned min_arity = MIN(s1.arity, s2.arity);
     for(unsigned i = 0; i < min_arity; ++i){
-        int num_new_deps = common_schema_dependencies_baseline(s1->subschemas + i, s2->subschemas + i, dependencies, arena);
+        int num_new_deps = common_schema_dependencies_baseline(s1.subschemas[i], s2.subschemas[i], dependencies, arena);
         if(num_new_deps == -1){ return -1; }
         num_new_dependencies += num_new_deps;
     }
@@ -346,17 +293,18 @@ int common_schema_dependencies_baseline(Schema *s1, Schema *s2, ArrayListDepende
 /**
  * RETURNS: if < 0 (-1), a self-dependency was found (halt).
  *          else, the number of new dependencies added.
+ * NOTE: pair is not modified, but pair.schemas yes!
  */
-int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair, Arena *arena){
+int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair pair, Arena *arena){
     int num_new_dependencies = 0;
-    ArrayListSchema schemas = pair->schemas;
+    ArrayListSchema schemas = pair.schemas;
     // NOTE: since we are making a local copy of the schemas struct, schemas.size will remain the same even if 
     //       new dependencies would be added to schemas.array (so only node->schemas is modified!). That way, 
     //       we ensure that we only take into account the schemas that were initially stored in the list of 
     //       dependencies of the variable at the start of this loop iteration.
     for(size_t i = 0; i < schemas.size; ++i){
         for(size_t j = i + 1; j < schemas.size; ++j){
-            int num_new_deps = common_schema_dependencies_baseline(schemas.array + i, schemas.array + j, dependencies, arena);
+            int num_new_deps = common_schema_dependencies_baseline(schemas.array[i], schemas.array[j], dependencies, arena);
             if(num_new_deps == -1){ return -1; }
             num_new_dependencies += num_new_deps;
         }
@@ -367,37 +315,23 @@ int theta_rule1_baseline(ArrayListDependencyPair *dependencies, DependencyPair *
 // NOTE: we are going to allocate new space for the new Schema that results from the substitution.
 //  We copy the structure of original, but changing occurrences of v with substitution.
 // NOTE: we are making shallow copies of substitution, not deep copies.
-void substitute_arena_(Schema *original, Variable v, Schema *substitution, Schema *result, Arena *arena){
-    if(original->type == VARIABLE_SCHEMA){
-        if(original->v == v){
-            *result = *substitution;
+void substitute_arena_(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena){
+    if(original.type == VARIABLE_SCHEMA){
+        if(original.v == v){
+            *result = substitution;
         } else {
-            init_variable_schema(result, original->v);
+            init_variable_schema(result, original.v);
         }
     } else {
-        init_general_schema_arena(result, original->arity, arena); // NOTE: ->subschemas allocated; ->size = 1
-        for(size_t i = 0; i < original->arity; ++i){
-            substitute_arena_(original->subschemas + i, v, substitution, result->subschemas + i, arena);
+        init_general_schema_arena(result, original.arity, arena); // NOTE: ->subschemas allocated; ->size = 1
+        for(size_t i = 0; i < original.arity; ++i){
+            substitute_arena_(original.subschemas[i], v, substitution, result->subschemas + i, arena);
             result->size += result->subschemas[i].size;
         }
     }
 }
-// TODO: don't let the debugging variable in release!
-unsigned global_substitute_arena_calls = 0;
-// TODO: cleaner to follow the idea of initialializer and not return an allocated pointer to Schema...
-Schema *substitute_arena(Schema *original, Variable v, Schema *substitution, Arena *arena){
-    ++global_substitute_arena_calls;
-    Schema *result = allocate(arena, sizeof(*result));
-    // if(global_print_debugging){
-    //     printf("Substitution function (call=%d):\n", global_substitute_arena_calls);
-    //     printf("Original:\n"); print_schema(original, PRINT_VISUALLY); printf("\n"); print_schema(original, PRINT_FILE_FORMAT); printf("\n");
-    //     printf("Variable: $%u\n", v);
-    //     printf("Substitution:\n"); print_schema(substitution, PRINT_VISUALLY); printf("\n"); print_schema(substitution, PRINT_FILE_FORMAT); printf("\n");
-    // }
+void substitute_arena(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena){
     substitute_arena_(original, v, substitution, result, arena);
-    // if(global_print_debugging){
-    //     printf("Result:\n"); print_schema(result, PRINT_VISUALLY); printf("\n"); print_schema(result, PRINT_FILE_FORMAT); printf("\n");
-    // }
     return result;
 }
 
@@ -405,57 +339,46 @@ Schema *substitute_arena(Schema *original, Variable v, Schema *substitution, Are
 /**
  * RETURNS: if < 0 (-1), a self-dependency was found (halt).
  *          else, the number of new dependencies added.
+ * 
+ * NOTE: pair is not modified, but pair.schemas yes!
+ * NOTE: resizing risk because of Arena and ArrayLists.
  */
-int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair *pair, Arena *arena){
+int theta_rule2_baseline(ArrayListDependencyPair *dependencies, DependencyPair pair, Arena *arena){
     int num_new_dependencies = 0;
-    Variable v = pair->v;
-    ArrayListSchema *schemas = &pair->schemas;
-    //NOTE: important to take the pointer to the arraylist schemas, because it is modified by a direct call to
-    //  add_to_array_list_schema later in this function.
+    Variable v = pair.v;
+    ArrayListSchema *schemas = &pair.schemas;
 
     //NOTE: iteration based on indexes to prevent dangling pointers from resizing
     //NOTE: necessary to take the initial size of the schemas because it may be incremented, and in case of self-dependencies,
     //  it would possibly loop infinitely!!! Additionally, that way we have the same behaviour in both rules!
+    SetVariables ws = create_set_variables_defsize();
     size_t initial_size = schemas->size;
     for(size_t i = 0; i < initial_size; ++i){
-        Schema *gamma = schemas->array + i;
-        SetVariables ws = variables_in_schema(gamma); // TODO: implement init_variables_in_schema, and allocate a single ws outside of the loop to use clear instead of free
+        Schema gamma = schemas->array[i];
+        variables_in_schema(gamma, &ws);
         foreach_in_setvariables(ws, node_var){
             Variable w = node_var->v;
-
-            ArrayListSchema *schemas_ = NULL; // TODO: abstract this to a find function in ArrayLists...
-            for(DependencyPair *it = dependencies->array, *end = dependencies->array + dependencies->size; it < end; ++it){
-                if(it->v == w){
-                    schemas_ = &it->schemas;
-                    break;
-                }
+            unsigned wpos = find_v_in_array_list_dependency_pair(*dependencies, w);
+            if(wpos == dependencies->size){
+                continue;
             }
-            if(schemas_ == NULL){ continue; }
+            ArrayListSchema schemas_ = dependencies->array[wpos].schemas;
 
-            foreach_in_arraylistptr(Schema, schema_, schemas_){
-                Schema *gamma_ = schema_;
-                if(global_print_debugging){
-                    print_dependency_pair(pair, '{', '}', "; ", PRINT_VISUALLY); printf("\n");
-                    printf("i = %lu\n", i);
-                    printf("gamma: "); print_schema(gamma, PRINT_VISUALLY); printf("\n");
-                    printf("w = $%u\n", w);
-                    printf("gamma_: "); print_schema(gamma_, PRINT_VISUALLY); printf("\n");
-                }
-                Schema *gamma__ = substitute_arena(gamma, w, gamma_, arena);
-                if(global_print_debugging){
-                    printf("gamma__: "); print_schema(gamma__, PRINT_VISUALLY); printf("\n\n");
-                }
+            foreach_in_arraylist(Schema, schema_, schemas_){
+                Schema gamma_ = *schema_;
+                Schema gamma__;
+                substitute_arena(gamma, w, gamma_, &gamma__, arena);
                 if(is_self_dependency(v, gamma__)){ 
-                    free_set_variables(ws); // TODO: clear instead of free... (see above)
-                    return -1; 
+                    free_set_variables(ws);
+                    return -1;
                 }
-                // TODO: resizing risk for Arena
-                int contained = add_no_repeated_to_array_list_schema_arena(schemas, *gamma__, arena);
+                int contained = add_no_repeated_to_array_list_schema_arena(schemas, gamma__, arena);
                 if(contained != CONTAINED){ ++num_new_dependencies; }
             }
         }
-        free_set_variables(ws);
+        clear_set_variables(&ws);
     }
+    free_set_variables(ws);
     return num_new_dependencies;
 }
 
@@ -469,7 +392,6 @@ int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena)
     unsigned iteration = 0;
     do {
         ++iteration;
-        //if(global_print_debugging) printf("Theta iteration #%u...\n", iteration);
 
         num_new_deps1 = num_new_deps2 = 0;
         //NOTE: rule1 is much simpler than rule2 as it only needs to access to the schemas a variable depends on, not other
@@ -479,43 +401,30 @@ int theta_operator_baseline(ArrayListDependencyPair *dependencies, Arena *arena)
         //  can be resized (so the iterating pointers would be invalidated...)
 
         for(size_t i = 0; i < dependencies->size; ++i){
-            DependencyPair *pair = dependencies->array + i;
-            //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
-            //if(global_print_debugging) printf("Start rule 1...\n");
+            // NOTE: an obvious possible optimization is to avoid reaplying this rule to the same pair of gamma-gamma_
+            DependencyPair pair = dependencies->array[i];
             int num1 = theta_rule1_baseline(dependencies, pair, arena);
-            //if(global_print_debugging) printf("End rule 1...\n");
             if(num1 == -1){ return -1; }
             num_new_deps1 += num1;
 
-            if(global_print_debugging){
-                printf("---\n"); print_set_dependencies(dependencies, PRINT_VISUALLY);
-            }
-
-            //TODO: would be interesting to somehow avoid reaplying this rule to the same pair of gamma-gamma_
-            //if(global_print_debugging) printf("Start rule 2...\n");
             int num2 = theta_rule2_baseline(dependencies, pair, arena);
-            //if(global_print_debugging) printf("End rule 2...\n");
             if(num2 == -1){ return -1; }
             num_new_deps2 += num2;
-
-            if(global_print_debugging){
-                printf("---\n"); print_set_dependencies(dependencies, PRINT_VISUALLY);
-            }
         }
         num_new_dependencies += num_new_deps1 + num_new_deps2;
     } while(num_new_deps1 + num_new_deps2);
     return num_new_dependencies;
 }
 
+// NOTE: these to functions are for debugging asserts
 bool has_self_dependency_baseline(ArrayListSchema schemas, Variable v){
     foreach_in_arraylist(Schema, schema, schemas){
-        if(is_self_dependency(v, schema)){
+        if(is_self_dependency(v, *schema)){
             return true;
         }
     }
     return false;
 }
-
 bool contains_self_dependency_baseline(ArrayListDependencyPair dependencies){
     foreach_in_arraylist(DependencyPair, pair, dependencies){
         if(has_self_dependency_baseline(pair->schemas, pair->v)){
@@ -529,15 +438,10 @@ void remove_variables_not_in_set_schema_from_dependencies(
     ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena)
 {
     // TODO: see if we can avoid this call with previous computations...
-    SetVariables final_vs = variables_in_set_schema(*set_schema);
-    
-    if(global_print_debugging){
-        printf("Final variables:\n");
-        print_set_variables(final_vs); printf("\n");
-    }
-    
-    SetVariables removed_vs_with_dependencies = create_set_variables_defsize();
+    SetVariables final_vs = create_set_variables_defsize();
+    variables_in_set_schema(*set_schema, &final_vs);
 
+    SetVariables removed_vs_with_dependencies = create_set_variables_defsize();
     // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
     for(int i = dependencies->size - 1; i >= 0; --i){
         DependencyPair pair = dependencies->array[i];
@@ -546,44 +450,20 @@ void remove_variables_not_in_set_schema_from_dependencies(
             insert_to_set_variables(&removed_vs_with_dependencies, pair.v);
         }
     }
-
-    if(global_print_debugging){
-        printf("Removed variables with dependencies:\n");
-        print_set_variables(removed_vs_with_dependencies); printf("\n");
-        print_set_dependencies(dependencies, PRINT_VISUALLY);
-    }
     
     // NOTE: thanks to the use of rule 2, the schema resulting from substituting the longest dependency of the removed
     // variables is already in the set of dependencies, so we can simply remove the schemas that contain those variables.
     // We only need to consider the removed variables that didn't have any dependences, to substitute them for <>.
+    SetVariables schema_vs = create_set_variables_defsize();
+    SetVariables removed_vs_without_dependencies_in_schema = create_set_variables_defsize();
     foreach_in_arraylistptr(DependencyPair, pair, dependencies){
-        if(global_print_debugging){
-            printf("Variable $%u\n", pair->v);
-        }
         // NOTE: from right to left to diminish leftwise copying and to avoid extra index corrections and overhead of call function to get
         ArrayListSchema *dependency_schemas = &pair->schemas;
         for(int i = dependency_schemas->size - 1; i >= 0; --i){
             // NOTE: we take by value because if not, when removing, it will point to the next schema before applying the substitution by <>
             Schema schema = dependency_schemas->array[i];
-            // * Contains only some removed v with dependencies --> Remove
-            // * Contains only some removed v without dependencies --> Remove and substitute it for the version that contains <> instead of v, insert this to the set of dependencies
-            // NOTE: the new schema that instead of v contains <> won't generate new schemas if the theta operator was reaplied, because 
-            //  the subcommon schemas calculated with rule 1 won't generate new dependencies (none is obtained when calculating the common
-            //  schema with <>) and neither rule 2, since the substitutions that contain v are already included and their appearences of v
-            //  will be substituted by <>.
-            // * Contains both kinds of vs --> Remove, substitute the v_no_deps with <>, reaply theta rules with this new dependency and do NOT insert it to the resulting set of dependencies
-            // NOTE: the same previous note applies here, NO new dependencies will be added at all --> This only needs to the the same operation as case 1
-            // * Doesn't contain any removed v --> Do nothing
+            variables_in_schema(schema, &schema_vs);
 
-            // Calculate variables in Schema
-            SetVariables schema_vs = variables_in_schema(&schema);
-
-            if(global_print_debugging){
-                printf("Schema: "); print_schema(&schema, PRINT_VISUALLY); printf("\n");
-                printf("Vars: "); print_set_variables(schema_vs); printf("\n");
-            }
-
-            SetVariables removed_vs_without_dependencies_in_schema = create_set_variables_defsize();
             bool contains_removed_v_with_dependencies = false;
             foreach_in_setvariables(schema_vs, v_node){
                 Variable v = v_node->v;
@@ -595,43 +475,30 @@ void remove_variables_not_in_set_schema_from_dependencies(
                     insert_to_set_variables(&removed_vs_without_dependencies_in_schema, v);
                 }
             }
-            
-            if(global_print_debugging){
-                printf("Removed vars without dependencies: "); print_set_variables(removed_vs_without_dependencies_in_schema); printf("\n");
-            }
 
             // If contains some removed variable with dependencies (in removed_vs_with_dependencies): remove
             if(contains_removed_v_with_dependencies){
                 remove_index_from_array_list_schema(dependency_schemas, i);
             }
-            // If only contains some removed variable without dependencies (not removed_vs_with_dependencies nor final_vs): remove and add substitution (all those variables) with <>
+            // If only contains some removed variable without dependencies (not removed_vs_with_dependencies nor final_vs): 
+            //  remove and add substitution (all those variables) with <>
             else if (removed_vs_without_dependencies_in_schema.num_variables){
                 remove_index_from_array_list_schema(dependency_schemas, i);
-                if(global_print_debugging) {
-                    printf("Just after removing: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
-                }
                 Schema empty; init_general_schema_arena(&empty, 0, arena);
                 foreach_in_setvariables(removed_vs_without_dependencies_in_schema, v_node){
                     Variable v = v_node->v;
+                    // TODO_YA: see how to do this call; why are we reusing the schema variable? --> To accumulate substitutions!
                     schema = *substitute_arena(&schema, v, &empty, arena);
                 }
                 add_no_repeated_to_array_list_schema_arena(dependency_schemas, schema, arena);
             }
 
-            if(global_print_debugging) {
-                printf("Resultant-iter set schema: "); print_set_schema(dependency_schemas, PRINT_VISUALLY); printf("\n");
-            }
-
-            free_set_variables(removed_vs_without_dependencies_in_schema);
-            free_set_variables(schema_vs);
+            clear_set_variables(&removed_vs_without_dependencies_in_schema);
+            clear_set_variables(&schema_vs);
         }
     }
-
-    if(global_print_debugging){
-        printf("Final dependencies after removal of variables that are no longer contained in the common set schema:\n");
-        print_set_dependencies(dependencies, PRINT_VISUALLY);
-        //print_set_dependencies(dependencies, PRINT_FILE_FORMAT);
-    }
+    free_set_variables(removed_vs_without_dependencies_in_schema);
+    free_set_variables(schema_vs);
 
     //NOTE: we shouldn't get new dependencies or a self-dependency after the previous operations
     int theta_result = theta_operator_baseline(dependencies, arena);

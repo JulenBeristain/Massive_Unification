@@ -116,7 +116,6 @@ typedef ArrayListDependencyPair SetDependencies;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void init_variable_schema(Schema *schema, Variable v);
-void init_general_schema(Schema *schema, unsigned arity);
 void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
 unsigned schema_size(Schema *s);
 
@@ -125,7 +124,6 @@ SetVariables variables_in_schema(Schema *schema);
 SetVariables variables_in_set_schema(ArrayListSchema set_schema);
 
 bool equal_schemas(Schema s1, Schema s2);
-bool equal_schemasptr(Schema *s1, Schema *s2);
 
 bool common_set_schema_baseline(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
