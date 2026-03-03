@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include "set_variables.h"
 #include "arena.h"
 #include "arraylist.h"
@@ -19,6 +20,14 @@
  * Implement boolean operations between matrices in C
  * Repropose the code removing a dimension from the matrix...
  */
+
+/*
+TODO_YA:
+1. Clean prints (--> fix variadic macros for printing arraylists)
+4. Pass useful functions from tests.c to schemas.c (review the functions) <-
+5. Public only useful functions/types from schemas.h (see types in other files too)
+6. Check remaining TODOs (in tests.c too)
+*/
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// TYPE DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,7 +71,7 @@ union Schema {
     for(Schema *sub = (schema).subschemas, *_end = (schema).subschemas + (schema).arity; sub < _end; ++sub)
 #define foreach_in_schemaptr(schemaptr, sub) \
     for(Schema *sub = (schemaptr)->subschemas, *_end = (schemaptr)->subschemas + (schemaptr)->arity; sub < _end; ++sub)
-//TODO_YA: see if we can write macros for when traversing two schemas simultaneously (even with different arities, identiyfing which is shorter...)
+
 #define foreach_in_schemas(schema_short, schema_long, sub1, sub2) \
     for(Schema *sub1 = (schema_short).subschemas, *sub2 = (schema_long).subschemas, \
                *_end = (schema_short).subschemas + (schema_short).arity; \
@@ -73,18 +82,17 @@ union Schema {
                *_end = (schema_short)->subschemas + (schema_short)->arity; \
         sub1 < _end; \
         ++sub1, ++sub2)
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-//TODO: for "pure" set-schema management we know that we combine schemas with the same position from the input set-schemas.
+//NOTE: for "pure" set-schema management we know that we combine schemas with the same position from the input set-schemas.
 //  When dealing with M1 and M2 csv files, the columns can refer to different free variables. Therefore, we would need to
 //  store that extra information per schema, to know which schema from M1 combines with which schema of M2. In that case, we
 //  also need a strategy to decide the order of all free variables in M3 (simply first all the free variables from
 //  M1 in the same order as in M1, and then the variables from M2 that don't appear in M1 in the same relative order as 
 //  in M2; OR first the common columns in the same relative order, giving more priority to M1, and the same for the not commons).
 //  Therefore, we should have an arraylist of FreeVar-Schema pairs, not just Schemas... Another possibility is to have two 
-//  arraylists/arrays (as the sizes have to be equal...) separated...
+//  arraylists of FreeVars separated from the arraylist of schemas (i.e., common set schemas of the blocks)...
 DECLARE_ARRAYLIST_TYPE(Schema)
 typedef ArrayListSchema SetSchema;
 
@@ -119,9 +127,8 @@ void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
 unsigned schema_size(Schema *s);
 
-void variables_in_schema_(Schema *schema, SetVariables *vars);
-SetVariables variables_in_schema(Schema *schema);
-SetVariables variables_in_set_schema(ArrayListSchema set_schema);
+void variables_in_schema(Schema schema, SetVariables *vars);
+void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *vars);
 
 bool equal_schemas(Schema s1, Schema s2);
 
@@ -136,7 +143,15 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
-  
+
+ArrayListSchema read_set_schema(char *line, Arena *arena);
+ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
+Variable max_v_in_set_schema(ArrayListSchema set_schema);
+void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment);
+void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
+bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping);
+bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
+
 DECLARE_ARRAYLIST_ADD_ARENA(Schema, schema)
 DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
 DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
@@ -156,13 +171,27 @@ DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
-void print_schema(Schema *s, PrintingMode mode);
-void print_set_schema(ArrayListSchema *set_schema, PrintingMode mode);
-void print_set_dependencies(ArrayListDependencyPair *set_dependencies, PrintingMode mode);
-void print_dependency_pair(DependencyPair *pair, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode);
+void print_schema(Schema s, PrintingMode mode);
+void print_set_schema(ArrayListSchema set_schema, PrintingMode mode);
+void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode);
+void print_set_dependencies(ArrayListDependencyPair set_dependencies, PrintingMode mode);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// OTHER FUNCTIONS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static inline unsigned num_digits(unsigned n){
+    unsigned res = 1;
+    while((n /= 10) != 0){ ++res; }
+    return res;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END OTHER FUNCTIONS /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #endif //SCHEMAS_H
