@@ -55,6 +55,17 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 #define foreach_in_arraylistptr(Type, valptr, listptr)                                                          \
     for(Type *valptr = (listptr)->array, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
 
+#define foreach_in_arraylists(Type, iter_short, iter_long, list_short, list_long) \
+    for(Type *iter_short = (list_short).array, *iter_long = (list_long).array, \
+             *_end = (list_short).array + (list_short).size; \
+    iter_short < _end; \
+    ++iter_short, ++iter_long)
+
+#define foreach_in_arraylistptrs(Type, iter_short, iter_long, list_short, list_long) \
+    for(Type *iter_short = (list_short)->array, *iter_long = (list_long)->array, \
+             *_end = (list_short)->array + (list_short)->size; \
+    iter_short < _end; \
+    ++iter_short, ++iter_long)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// MACROS FOR DECLARATION OF ARRAYLIST FUNCTIONS (and definition of static inline functions) ///////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -155,6 +166,12 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 
 
 // NOTE: in the definition, the print function will follow the same convention of the ArrayList's Type, value or pointer
+#define DECLARE_ARRAYLIST_PRINT_SEPARATORS_1(Type, type, ArgType1, Arg1)        \
+    void print_separators_array_list_##type(                                    \
+        ArrayList##Type list, char opening_brace, char closing_brace,           \
+        char *elem_separator, bool one_line_per_elem, unsigned tab_num,         \
+        ArgType1 Arg1);
+
 #define DECLARE_ARRAYLIST_PRINT_SEPARATORS(Type, type)                   \
     void print_separators_array_list_##type(                             \
         ArrayList##Type list, char opening_brace, char closing_brace,    \
@@ -450,32 +467,63 @@ int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *resul
 /// PRINTING FOR DEBUGGING //////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function, ...)  \
-    void print_separators_array_list_##type(                                \
-        ArrayList##Type list, char opening_brace, char closing_brace,       \
-        char *elem_separator, bool one_line_per_elem, unsigned tab_num)     \
-    {                                                                       \
-        printf("%c", opening_brace);                                        \
-        if(one_line_per_elem){ printf("\n"); }                              \
-        char *tabs;                                                         \
-        if(one_line_per_elem){                                              \
-            tabs = malloc(tab_num * sizeof('\t') + 1);                      \
-            for(unsigned i = 0; i < tab_num; ++i) { tabs[i] = '\t'; }       \
-            tabs[tab_num] = '\0';                                           \
-        } else {                                                            \
-            tabs = malloc(sizeof('\0'));                                    \
-            tabs[0] = '\0';                                                 \
-        }                                                                   \
-        if(list.size){ print_function(list.array[0], ##__VA_ARGS__); }      \
-        for(unsigned i = 1; i < list.size; ++i){                            \
-            printf("%s", elem_separator);                                   \
-            if(one_line_per_elem) { printf("\n"); }                         \
-            printf("%s", tabs);                                             \
-            print_function(list.array[i], ##__VA_ARGS__);                   \
-        }                                                                   \
-        free(tabs);                                                         \
-        if(one_line_per_elem){ printf("\n"); }                              \
-        printf("%c", closing_brace);                                        \
+// NOTE: the number at the end (N) is the number of extra parameters the print_function requires. We will have N pairs of
+//  type-name macro parameters.
+#define DEFINE_ARRAYLIST_PRINT_SEPARATORS_1(Type, type, print_function, ArgType1, Arg1, ...)  \
+    void print_separators_array_list_##type(                                    \
+        ArrayList##Type list, char opening_brace, char closing_brace,           \
+        char *elem_separator, bool one_line_per_elem, unsigned tab_num,         \
+        ArgType1 Arg1)                                                          \
+    {                                                                           \
+        printf("%c", opening_brace);                                            \
+        if(one_line_per_elem){ printf("\n"); }                                  \
+        char *tabs;                                                             \
+        if(one_line_per_elem){                                                  \
+            tabs = malloc(tab_num * sizeof('\t') + 1);                          \
+            for(unsigned i = 0; i < tab_num; ++i) { tabs[i] = '\t'; }           \
+            tabs[tab_num] = '\0';                                               \
+        } else {                                                                \
+            tabs = malloc(sizeof('\0'));                                        \
+            tabs[0] = '\0';                                                     \
+        }                                                                       \
+        if(list.size){ print_function(list.array[0], Arg1, ##__VA_ARGS__); }    \
+        for(unsigned i = 1; i < list.size; ++i){                                \
+            printf("%s", elem_separator);                                       \
+            if(one_line_per_elem) { printf("\n"); }                             \
+            printf("%s", tabs);                                                 \
+            print_function(list.array[i], Arg1, ##__VA_ARGS__);                 \
+        }                                                                       \
+        free(tabs);                                                             \
+        if(one_line_per_elem){ printf("\n"); }                                  \
+        printf("%c", closing_brace);                                            \
+    }
+
+#define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function, ...)      \
+    void print_separators_array_list_##type(                                    \
+        ArrayList##Type list, char opening_brace, char closing_brace,           \
+        char *elem_separator, bool one_line_per_elem, unsigned tab_num)         \
+    {                                                                           \
+        printf("%c", opening_brace);                                            \
+        if(one_line_per_elem){ printf("\n"); }                                  \
+        char *tabs;                                                             \
+        if(one_line_per_elem){                                                  \
+            tabs = malloc(tab_num * sizeof('\t') + 1);                          \
+            for(unsigned i = 0; i < tab_num; ++i) { tabs[i] = '\t'; }           \
+            tabs[tab_num] = '\0';                                               \
+        } else {                                                                \
+            tabs = malloc(sizeof('\0'));                                        \
+            tabs[0] = '\0';                                                     \
+        }                                                                       \
+        if(list.size){ print_function(list.array[0], ##__VA_ARGS__); }          \
+        for(unsigned i = 1; i < list.size; ++i){                                \
+            printf("%s", elem_separator);                                       \
+            if(one_line_per_elem) { printf("\n"); }                             \
+            printf("%s", tabs);                                                 \
+            print_function(list.array[i], ##__VA_ARGS__);                       \
+        }                                                                       \
+        free(tabs);                                                             \
+        if(one_line_per_elem){ printf("\n"); }                                  \
+        printf("%c", closing_brace);                                            \
     }
 
 #define DEFINE_ARRAYLIST_PRINT(Type, type)  \

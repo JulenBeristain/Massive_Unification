@@ -1,14 +1,9 @@
 #include "arena.h"
+#include "utils.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-
-#define GET_BIT(Num, Bit) (((Num) >> (Bit)) & 1)
-#define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
-#define SET_TO_ZERO(AllocatedPtr, NumBytes) memset((AllocatedPtr), 0, (NumBytes))
-
-unsigned global_create_memory_block_calls = 0;
 
 // PRE: size_in_bytes > 0
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit

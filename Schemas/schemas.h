@@ -21,14 +21,6 @@
  * Repropose the code removing a dimension from the matrix...
  */
 
-/*
-TODO_YA:
-1. Clean prints (--> fix variadic macros for printing arraylists)
-4. Pass useful functions from tests.c to schemas.c (review the functions) <-
-5. Public only useful functions/types from schemas.h (see types in other files too)
-6. Check remaining TODOs (in tests.c too)
-*/
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// TYPE DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -43,11 +35,11 @@ TODO_YA:
  * 2) An ordered set of subschemas, including the empty set (<>).
  * 
  */
-// NOTE: size candidate for uint16/32_t if padding may arise. Furthermore, we can check if the attribute is used at some point.
+// OPT: size candidate for uint16/32_t if padding may arise. Furthermore, we can check if the attribute is used at some point.
 //  If not, we can simply delete it...
-// NOTE: another approach would be to use a simple struct where all the data is instroduced (forgetting about the SchemaType)
+// OPT: another approach would be to use a simple struct where all the data is instroduced (forgetting about the SchemaType)
 //  and use v to discern if it is a variable or not (if equal to 0, general schema).
-//typedef enum : uint8_t { VARIABLE, GENERAL } SchemaType; // NOTE: for two types a Byte (even a bit) is enough. Because of padding, no effect
+//typedef enum : uint8_t { VARIABLE, GENERAL } SchemaType; // OPT: for two types a Byte (even a bit) is enough. Because of padding, no effect
 typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
 typedef union Schema Schema, *SchemaPtr;
 union Schema {
@@ -85,7 +77,7 @@ union Schema {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-//NOTE: for "pure" set-schema management we know that we combine schemas with the same position from the input set-schemas.
+//TODO: for "pure" set-schema management we know that we combine schemas with the same position from the input set-schemas.
 //  When dealing with M1 and M2 csv files, the columns can refer to different free variables. Therefore, we would need to
 //  store that extra information per schema, to know which schema from M1 combines with which schema of M2. In that case, we
 //  also need a strategy to decide the order of all free variables in M3 (simply first all the free variables from
@@ -102,7 +94,7 @@ typedef ArrayListSchema SetSchema;
 
 typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
 struct DependencyPair {
-    Variable v;                 // NOTE: in this case, we could use a uint64_t to take advantage of the inevitable padding
+    Variable v;                 // OPT: in this case, we could use a uint64_t to take advantage of the inevitable padding
     ArrayListSchema schemas;
 };
 
@@ -110,14 +102,12 @@ DECLARE_ARRAYLIST_TYPE(DependencyPair)
 typedef ArrayListDependencyPair SetDependencies;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// END TYPE DEFINITIONS ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END TYPE DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// TODO_YA: declare ONLY the public functions that are going to be used in the main.c module (reorganize the order of the functions in .h).
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -127,10 +117,63 @@ void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
 unsigned schema_size(Schema *s);
 
+bool equal_schemas(Schema s1, Schema s2);
+bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);
+bool equivalent_schemas(Schema s1, Schema s2, Variable *mapping);
+bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping);
+
 void variables_in_schema(Schema schema, SetVariables *vars);
 void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *vars);
+Variable max_v_in_schema(Schema schema);
+Variable max_v_in_set_schema(ArrayListSchema set_schema);
+void increment_variables_in_schema(Schema *schema, Variable increment);
+void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment);
 
-bool equal_schemas(Schema s1, Schema s2);
+void substitute_arena(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena);
+void substitute_vars_arena(Schema original, SetVariables vars, Schema substitution, Schema *result, Arena *arena);
+
+ArrayListSchema read_set_schema(char *line, Arena *arena);
+
+DECLARE_ARRAYLIST_CREATE_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_ADD_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_FIND(Schema, schema)
+DEFINE_ARRAYLIST_CONTAINS(Schema, schema)
+DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
+DECLARE_ARRAYLIST_REMOVE_INDEX(Schema, schema)
+unsigned find_equivalent_in_array_list_schema(ArrayListSchema list, Schema elem, Variable *mapping);
+static inline bool contains_equivalent_array_list_schema(ArrayListSchema list, Schema elem, Variable *mapping){
+    return list.size != find_equivalent_in_array_list_schema(list, elem, mapping);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
+bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
+void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
+ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
+
+
+DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
+static inline unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyPair list, Variable v){
+    unsigned i = 0;
+    foreach_in_arraylist(DependencyPair, iter, list){
+        if (v == iter->v){
+            return i;
+        }
+        ++i;
+    }
+    return list.size;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// COMMON SET SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool common_set_schema_baseline(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
@@ -144,54 +187,22 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
-ArrayListSchema read_set_schema(char *line, Arena *arena);
-ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
-Variable max_v_in_set_schema(ArrayListSchema set_schema);
-void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment);
-void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
-bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping);
-bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
-
-DECLARE_ARRAYLIST_ADD_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_CREATE_ARENA(Schema, schema)
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
-DECLARE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
-DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
-DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// PRINT //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
 void print_schema(Schema s, PrintingMode mode);
+void println_schema(Schema s, PrintingMode mode);
+DECLARE_ARRAYLIST_PRINT_SEPARATORS_1(Schema, schema, PrintingMode, printing_mode)
 void print_set_schema(ArrayListSchema set_schema, PrintingMode mode);
-void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, const char *schema_separator, PrintingMode schema_mode);
+void println_set_schema(ArrayListSchema set_schema, PrintingMode mode);
+void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, char *schema_separator, PrintingMode schema_mode);
 void print_set_dependencies(ArrayListDependencyPair set_dependencies, PrintingMode mode);
+void println_set_dependencies(ArrayListDependencyPair set_dependencies, PrintingMode mode);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// OTHER FUNCTIONS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-static inline unsigned num_digits(unsigned n){
-    unsigned res = 1;
-    while((n /= 10) != 0){ ++res; }
-    return res;
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// END OTHER FUNCTIONS /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #endif //SCHEMAS_H

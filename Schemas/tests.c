@@ -4,6 +4,7 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 */
 
 #include "schemas.h"
+#include "utils.h"
 #include "set_variables.h"
 #include "arraylist.h"
 #include "arena.h"
@@ -12,9 +13,6 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include <stdbool.h>
 #include <string.h>
 #include <assert.h>
-
-//size_t global_line_number = 0;
-bool global_print_debugging = false;
 
 void test_set_variables(){
     SetVariables set = create_set_variables_defsize();
@@ -160,7 +158,9 @@ void test_schema_management_(const char *filename, Arena *arena){
     uint64_t num_total_cases = 0;
     
     for(;;){
-        // TODO: a unique dependency set for set_schema1/2 and computed common is enough...
+        // NOTE: a unique dependency set would be enough for the three set_schemas the computing code works with: 
+        //  two operand set_schemas and a computed common set schema, because in the end we are interested in the 
+        //  union of all the dependencies.
         ArrayListSchema set_schema1, set_schema2, common_set_schema, computed_common_set_schema;
         ArrayListDependencyPair dependencies1, dependencies2, common_dependencies, computed_common_dependencies;
 
@@ -229,9 +229,6 @@ void test_schema_management_(const char *filename, Arena *arena){
         else if(common_schema_exists){
             // Compare the computed common schema and its dependencies with the read ones
             
-            // TODO: see if we can avoid this recomputation with the work already done in common_set_schema_baseline...
-            //  (not so important, as this is only testing code; would be helpful to add a field of sets of variables to
-            //  schemas/set_schemas, but that would be more state to manage too...)
             // NOTE: variables are identified from 1 to n in the resulting common schema in the file
             SetVariables read_vars = create_set_variables_defsize(); 
             variables_in_set_schema(common_set_schema, &read_vars);
@@ -275,7 +272,7 @@ void test_schema_management(int argc, char const *argv[]){
         test_schema_management_(argv[i], &arena);
     }
     
-    free_arena(&arena); // TODO: Use Valgrind to ensure we don't leak memory...
+    free_arena(&arena);
 }
 
 int main(int argc, char const *argv[])
