@@ -115,6 +115,15 @@ typedef ArrayListDependencyPair SetDependencies;
 
 void init_variable_schema(Schema *schema, Variable v);
 void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
+static inline Schema empty_schema(){ 
+    // NOTE: unfortunately designated initializer don't behave with unions as with structs :(
+    Schema empty;
+    empty.type = GENERAL_SCHEMA;
+    empty.size = 1;
+    empty.arity = 0;
+    empty.subschemas = NULL;
+    return empty;
+}
 unsigned schema_size(Schema *s);
 
 bool equal_schemas(Schema s1, Schema s2);
