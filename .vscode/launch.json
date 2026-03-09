@@ -57,72 +57,13 @@
         ]
     },
     {
-        "name": "Debug Alex core.c AGT test0010 verbose (gdb)",
+        "name": "Debug Alex core.c AGT002+1 test0011 verbose (gdb)",
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/matrices_no_mappings/AGT006+1/test0010M1.csv", 
-                 "${workspaceFolder}/data/matrices_no_mappings/AGT006+1/test0010M2.csv",
-                 "${workspaceFolder}/data/matrices_no_mappings/AGT006+1/test0010M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug Alex core.c COM test0075 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075M1.csv", 
-                 "${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075M2.csv",
-                 "${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-
-    {
-        "name": "Debug Alex core.c COM test0075_ verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075_M1.csv", 
-                 "${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075_M2.csv",
-                 "${workspaceFolder}/data/matrices_no_mappings/COM123+1/test0075_M3.csv",
+        "args": ["${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M1.csv", 
+                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M2.csv",
+                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M3.csv",
                  "verbose"],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",

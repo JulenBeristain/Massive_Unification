@@ -693,10 +693,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         rb->valid[aux] = 0;
     }
 
-    // Skip unflattened schema and the set of dependencies (and set if the fragment is linear or not)
+    // Skip unflattened schema and the set of dependencies
     getline(&line, &len, stream);
-    // NOTE: either linear or nonlinear, in the current format we store one mapping per fragment, so in rb->ms. rb->lineal_lineal won't be used
-    rb->lineal_lineal = sscanf(line, "$") == EOF;
     unsigned num_variables_with_dependencies;
     if(sscanf(line, "%u, ", &num_variables_with_dependencies) == 0){
         fprintf(stderr, "read_result_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
@@ -706,14 +704,22 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         getline(&line, &len, stream);
     }
 
-    // Get mapping info
+    // If we have a general mapping, it's a linear result block. Then, get mapping info
     unsigned *mapping = (unsigned*)malloc(rb->c*2*sizeof(unsigned));
     getline(&line, &len, stream);
-    get_mapping(line, rb->c, mapping);
-    rb->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
-
-    // Skip largest (flattened) schema
-    getline(&line, &len, stream);
+    if(strchr(line, '-')){
+        // General mapping -> Linear block
+        rb->lineal_lineal = true;
+        get_mapping(line, rb->c, mapping);
+        rb->ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
+        
+        // Skip largest (flattened) schema
+        getline(&line, &len, stream);
+    } /* else {
+        // No general mapping -> Non-linear block
+        //rb->lineal_lineal = false; // NOTE: it was already 0 initialized
+        // Flattened schema already skipped
+    } */
 
     // Iterate the main term rows
     unsigned row = 0;
@@ -722,6 +728,23 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         // If end of matrix reached, exit
         if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
             break;
+
+        // If non-liner block, we have read the mapping
+        if (!rb->lineal_lineal){
+            unsigned row1, row2;
+            int offset;
+            if(sscanf(line, "Mapping %u-%u: %n", &row1, &row2, &offset) != 2){ // NOTE: %n doesn't consume any input so it doesn't increment the returned value!
+                printf("line: '%s'\n",line);
+                fprintf(stderr, "read_result_matrix: no mapping in non-linear block %u-%u for rows %u-%u!\n", rb->t1, rb->t2, row1, row2);
+                free(line);
+                exit(EXIT_FAILURE);
+            }
+            get_mapping(line + offset, rb->c, mapping);
+            rb->terms[row].ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
+
+            // Get the unified row
+            getline(&line, &len, stream);
+        }
 
         // Inspect if line is unifiable, subsumed or not unifiable
         if (strstr(line, "subsumed by exception") != NULL)
@@ -735,8 +758,8 @@ void read_result_matrix(FILE *stream, result_block *rb) {
             //NOTE: es necesario modificar el term? Si no unifican las filas correspondientes, para qué te creas una fila (main_term) vacía, y además el mgu_schema?
             //  si estoy en lo cierto, en compare_results solo comparamos términos si los valid[i] de ambos result_blocks son 0 (han unificado)...
             //  creo que estas dos lineas se podrían ignorar...
-            rb->terms[row] = create_null_main_term();
-            rb->terms[row].ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
+            //rb->terms[row] = create_null_main_term();
+            //rb->terms[row].ms = create_mgu_from_mapping(mapping, rb->c, rb->c1, rb->c2);
             
             rb->valid[row] = 2;
             ++row;
@@ -754,9 +777,11 @@ void read_result_matrix(FILE *stream, result_block *rb) {
             exit(EXIT_FAILURE);
         }
 
-        // Initialize the exception blocks
+        // Initialize the exception blocks. NOTE: since in create_empty_main_term ms is set to NULL, we have to remember it!
+        mgu_schema *ms = rb->terms[row].ms;
         rb->terms[row] = create_empty_main_term(rb->c,e);
-        if (rb->valid[row]!=1) rb->valid[row] = 0;  // NOTE: completely unnecessary, no? valid_ was already 0-initialized...
+        rb->terms[row].ms = ms;
+        //if (rb->valid[row]!=1) rb->valid[row] = 0;  // NOTE: completely unnecessary, no? valid_ was already 0-initialized...
 
         // Get a pointer to the main term for easier working
         main_term *mt = &(rb->terms[row]);
@@ -1147,8 +1172,8 @@ unsigned unifier_matrices(operand_block *ob1, operand_block *ob2, result_block *
         for (j=0; j<ob2->r; j++)
         {
             memset(unifier,0,unifier_size*sizeof(unsigned));  
-            //unsigned index_mt = i*rb->r2+j; //NOTE: in this version the mgu_schema is always holded in the result_block, either linear or non-linear...
-            mgu_schema *schema_holder = rb->ms;
+            unsigned index_mt = i*rb->r2+j;
+            mgu_schema *schema_holder = rb->lineal_lineal ? rb->ms : rb->terms[index_mt].ms;
             code = unifier_rows(&ob1->terms[i], &ob2->terms[j], schema_holder, unifier);
             if (code != 0) continue; // Rows cannot be unified // NOTE: cómo identificamos este caso más adelante en base al unificador? Porque no se modifica rb->valid[index_mt] = 2?
                                                                // Además, el unificador correspondiente en el array unifiers queda sin inicializar!!!
@@ -1425,7 +1450,7 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
         main_term *mt = &my_rb.terms[index_mt];
         *mt = create_empty_main_term(my_rb.c, ob1->terms[ind_A].e + ob2->terms[ind_B].e);
         apply_unifier_left(&ob1->terms[ind_A], &ob2->terms[ind_B], mt, &unifiers[i*unifier_size]);
-        mgu_schema *schema_holder = rb->ms;
+        mgu_schema *schema_holder = rb->lineal_lineal ? rb->ms : rb->terms[index_mt].ms;
         reorder_unified(mt, schema_holder);
         my_rb.valid[index_mt] = 0;
     }
