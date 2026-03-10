@@ -12,7 +12,9 @@
 
 #include "dictionary.h"
 #include "structures.h"
+#ifndef NO_PERF_HASH
 #include "perf_hash.h"
+#endif
 
 // Buffer size for row-string conversion, enough for INT_MAX digits plus null terminator
 #define ROW_STR_SIZE (snprintf(NULL, 0, "%d", INT_MAX) + 1)  
@@ -22,6 +24,10 @@ Dictionary *var_dict;
 
 // Global dictionary for tracking variable–variable substitutions when applying unifier
 Dictionary *unif_dict;  
+
+#ifdef NO_PERF_HASH
+Dictionary *symbols_to_ids;
+#endif
 
 // Flag to skip header check only on the first read_result_block call
 bool first_rb = true;  
@@ -488,8 +494,19 @@ void read_line(char *line, int *row, bool skip_first) {
     clear(var_dict);
     while (tok) {
         if (!isupper(tok[0])) { // If no uppercase appears, it is a constant
+            #ifdef NO_PERF_HASH
+            static size_t next_symbol_id = 1;
+            struct nlist token_id = lookup(symbols_to_ids, tok);
+            if(token_id){
+                row[col-1] = token_id->defn;
+            } else {
+                install(symbols_to_ids, tok, next_symbol_id);
+                row[col-1] = next_symbol_id++;
+            }
+            #else
             const struct Symbol* s = get_value(tok, strlen(tok));
             row[col-1] = s->value;
+            #endif
         } else { // It is a variable
             if (lookup(var_dict, tok) == NULL) {
                 row[col-1] = 0;
@@ -1514,6 +1531,9 @@ int main(int argc, char *argv[]){
 
     var_dict = create_dictionary(501);
     unif_dict = create_dictionary(501);
+    #ifdef NO_PERF_HASH
+    symbols_to_ids = create_dictionary(501);
+    #endif
 
     char *M1_file = argv[1];
     char *M2_file = argv[2];
@@ -1613,6 +1633,9 @@ int main(int argc, char *argv[]){
     // Free dictionaries
     free_dictionary(var_dict);
     free_dictionary(unif_dict);
+    #ifdef NO_PERF_HASH
+    free_dictionary(symbols_to_ids);
+    #endif
 
     fclose(stream_M1);
     fclose(stream_M2);
