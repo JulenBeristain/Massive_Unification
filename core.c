@@ -496,7 +496,7 @@ void read_line(char *line, int *row, bool skip_first) {
         if (!isupper(tok[0])) { // If no uppercase appears, it is a constant
             #ifdef NO_PERF_HASH
             static size_t next_symbol_id = 1;
-            struct nlist token_id = lookup(symbols_to_ids, tok);
+            struct nlist *token_id = lookup(symbols_to_ids, tok);
             if(token_id){
                 row[col-1] = token_id->defn;
             } else {

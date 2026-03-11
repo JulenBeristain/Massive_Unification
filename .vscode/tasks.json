@@ -137,6 +137,51 @@
 				"$gcc"
 			],
 			"group": "build"
+		},
+
+		{
+			"label": "build core no perfect hash for debugging (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"structures.c",
+				"-DNO_PERF_HASH",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "build core no perfect hash optimized (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core.c",
+				"-Wall",
+				"-Wextra",
+				"-O3",
+				"structures.c",
+				"-DNO_PERF_HASH",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
 		}
 	]
 }
