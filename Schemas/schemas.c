@@ -282,6 +282,23 @@ unsigned schema_size(Schema s)
     return total_size;
 }
 
+// TODO: we can add a depth field to precompute this in the creation of the Schemas
+// NOTE: useful to avoid resizing the ArrayList used as the Stack for SchemaIterator. Therefore, variable schemas and empties will return 1,
+//  because they need also to be stored in the Stack.
+unsigned schema_depth(Schema s){
+    if (s.type == VARIABLE_SCHEMA || s.arity == 0) {
+        return 1;
+    }
+
+    unsigned depth = 0;
+    foreach_in_schema(s, sub)
+    {
+        depth = MAX(depth, schema_depth(*sub));
+    }
+
+    return depth + 1;
+}
+
 // TODO: we can define a struct SetSchema with an ArrayList and a size instead of calling to this function each time if we see that
 //  this is used a lot over the same ArrayListSchema...
 unsigned set_schema_size(ArrayListSchema set_schema){
@@ -1410,6 +1427,84 @@ bool common_set_schema_strict_free_vars_baseline(
         arena);
 }
 
+// #region Schema iterator
+
+// NOTE: we will use the already implemented ArrayListSchema to be the base of the Stack that will be the Schema iterator.
+// TODO: we could also use an ArrayList of pointers to Schemas or a simple linked list...
+typedef struct SchemaIteratorNode SchemaIteratorNode;
+struct SchemaIteratorNode {
+    Schema schema;
+    unsigned next_child;
+};
+
+DECLARE_ARRAYLIST_TYPE(SchemaIteratorNode)
+DEFINE_ARRAYLIST_CREATE(SchemaIteratorNode, schema_iterator_node)
+DEFINE_ARRAYLIST_FREE(SchemaIteratorNode, schema_iterator_node)
+DEFINE_ARRAYLIST_REMOVE_INDEX(SchemaIteratorNode, schema_iterator_node)
+
+typedef ArrayListSchemaIteratorNode SchemaIterator;
+
+// NOTE: would be helpful to know the depth of the schema to avoid resizing, specially for an arena version.
+// NOTE: for my use case, I prefer a non-arena version.
+
+SchemaIterator create_schema_iterator(Schema schema){
+    unsigned depth = schema_depth(schema);
+    SchemaIterator it = create_array_list_schema_iterator_node(depth);
+    SchemaIteratorNode node = { .schema = schema, .next_child = 0 };
+    unsafe_add_to_array_list(it, node);
+    return it;
+}
+
+static inline void free_schema_iterator(SchemaIterator iterator){
+    free_array_list_schema_iterator_node(iterator);
+}
+
+static inline bool schema_iterator_has_next(SchemaIterator iterator){
+    return iterator.size;
+}
+
+Schema schema_iterator_next(SchemaIterator *iterator){
+    SchemaIteratorNode *node = &unsafe_last_in_array_list_ptr(iterator);
+    Schema result;
+    if (node->next_child == 0){
+        // NOTE: variable, empty and first time we look at the general
+        result = node->schema;
+    }
+
+    // TODO_YA: clean the code repetition (not simply refactoring out...)
+    if(node->schema.type == VARIABLE_SCHEMA){
+        unsafe_remove_last_in_array_list_ptr(schema_iterator_node, iterator);
+        SchemaIteratorNode *parent_node = last_in_array_list_ptr(iterator);
+        if(parent_node){
+            SchemaIteratorNode new_node = { .schema = node->schema.subschemas[node->next_child], .next_child = 0 };
+            unsafe_add_to_array_list_ptr(iterator, new_node);
+            node->next_child++;
+        }
+    } else {
+        if(node->next_child < node->schema.arity){
+            SchemaIteratorNode new_node = { .schema = node->schema.subschemas[node->next_child], .next_child = 0 };
+            unsafe_add_to_array_list_ptr(iterator, new_node);
+            node->next_child++;
+        } else {
+            unsafe_remove_last_in_array_list_ptr(schema_iterator_node, iterator);
+            SchemaIteratorNode *parent_node = last_in_array_list_ptr(iterator);
+            if(parent_node){
+                SchemaIteratorNode new_node = { .schema = node->schema.subschemas[node->next_child], .next_child = 0 };
+                unsafe_add_to_array_list_ptr(iterator, new_node);
+                node->next_child++;
+            }
+        }
+    }
+
+    return result;
+}
+
+void schema_iterator_skip(SchemaIterator *iterator){
+
+}
+
+// #endregion Schema iterator
+
 // NOTE: some ideas to implement mapping_columns_indexes...
 // First pass through extended rows (R1 and R2) to map each original var in the inductive terms (at least) with its intermediate extending vars
 // * Rows in core format (0 first appearence, -col_first_appearence for next repeated ones)
@@ -1435,6 +1530,7 @@ bool common_set_schema_strict_free_vars_baseline(
 //  - If original num_col, just that value (once only in the mapping)
 //  - If an extending virtual column, its value (if virtual column of a repeated variable, it will appear more than once)
 
+// TODO_YA: take rows as input
 int mapping_column_indexes(
     ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1, ArrayListCharPtr free_vars1,
     ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, ArrayListCharPtr free_vars2,
@@ -1492,11 +1588,11 @@ int mapping_column_indexes(
     init_arena(&row_vars_to_extending_cols_arena, sizeof(unsigned*)*(num_cols1 + num_cols2) + sizeof(unsigned)*100);
     
     unsigned num_bytes1 = sizeof(unsigned*) * num_cols1;
-    unsigned row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes1);
+    unsigned **row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes1);
     SET_TO_ZERO(row_vars_to_extending_cols1, num_bytes1);
     
     unsigned num_bytes2 = sizeof(unsigned*) * num_cols2;
-    unsigned row_vars_to_extending_cols2 = allocate(&row_vars_to_extending_cols_arena, num_bytes2);
+    unsigned **row_vars_to_extending_cols2 = allocate(&row_vars_to_extending_cols_arena, num_bytes2);
     SET_TO_ZERO(row_vars_to_extending_cols2, num_bytes2);
 
     
@@ -1515,6 +1611,15 @@ int mapping_column_indexes(
                 mapping->common_L[mappingL_pos++] = new_virtual_column1++;
             }
         } else {
+            // TODO_YA: if the original inductive term corresponding to free_var has more than one (repeated) variable we have to 
+            //  do this extension operations recursively... --> Schema (tree) iterator (stack?) to save the state of the recursion...
+            //  At the same time, we have to iterate through the row. We have to match row symbol, normalized_common_SUBschema and
+            //  normalized_original_SUBschema. If row symbol is function symbol (positive), we copy the old_col. If row symbol is
+            //  0 (first appearence of a variable, might be repeated so we have to remember the extending vars) or negative (actual
+            //  repetition) we perform the operations below. The iterators of the subschemas will need to be updated to skip the 
+            //  entire SUBschema, to avoid continuing with DFS and keeping the normalized_common_SUBschema (which can be larger)
+            //  at the same level of the row and the original SUBschema.
+
             // NOTE: free_var was originally in M1. We have to compare the normalized common schema with the original 
             //  normalized schema to see if we need to add new virtual columns. We first must copy as many columns as the
             //  size of the original one. Then, if the common is larger, we will have as many new virtual columns as the
@@ -1534,17 +1639,21 @@ int mapping_column_indexes(
             //  we need to use the same virtual columns as the last time. Therefore, we need a mapping from row (existential)
             //  variables (unsigneds) to an array of columns (unsigneds) 
             // We need the rows!!!
-            if () {
+            assert(row_var < 0);
+            unsigned num_new_virtual_cols = normalized_common_schema.size - normalized_original_schema.size;
+            unsigned **extending_cols = row_vars_to_extending_cols1 - row_var;
+            if (*extending_cols) {
                 // NOTE: repeated appearence of the row variable (negative value in the row --> 
                 //  -value to identify the variable in row_vars_to_extending_cols1)
-                // TODO: ...
+                for (unsigned i = 0, *extending_col = *extending_cols; i < num_new_virtual_cols; ++i, ++extending_col) {
+                    mapping->common_L[mappingL_pos++] = *extending_col;
+                }
             } else {
                 // NOTE: first appearence of the row variable (value 0 in the row)
-                // TODO: register the extending vars into row_vars_to_extending_cols1
-                for(unsigned num_new_virtual_cols = normalized_common_schema.size - normalized_original_schema.size; 
-                    num_new_virtual_cols; --num_new_virtual_cols)
-                {
-                    mapping->common_L[mappingL_pos++] = new_virtual_column1++;
+                *extending_cols = allocate(&row_vars_to_extending_cols_arena, sizeof(**extending_cols) * num_new_virtual_cols);
+                for (unsigned i = 0, *extending_col = *extending_cols; i < num_new_virtual_cols; ++i, ++extending_col) {
+                    mapping->common_L[mappingL_pos++] = new_virtual_column1;
+                    *extending_col = new_virtual_column1++;
                 }
             }
         }

@@ -124,7 +124,7 @@ static inline Schema empty_schema(){
     empty.subschemas = NULL;
     return empty;
 }
-unsigned schema_size(Schema *s);
+unsigned schema_size(Schema s);
 
 bool equal_schemas(Schema s1, Schema s2);
 bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);

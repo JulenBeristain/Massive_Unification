@@ -254,6 +254,9 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 /// ADDITION ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define unsafe_add_to_array_list(list, elem) (list).array[(list).size++] = (elem)
+#define unsafe_add_to_array_list_ptr(listptr, elem) (listptr)->array[(listptr)->size++] = (elem)
+
 #define DEFINE_ARRAYLIST_ADD(Type, type)                                            \
 int add_to_array_list_##type(ArrayList##Type *list, Type element){                  \
     int code = NOT_RESIZED;                                                         \
@@ -410,6 +413,9 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
 /// REMOVING ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define unsafe_remove_last_in_array_list(type, list) remove_index_from_array_list_##type((&list), list.size - 1) 
+#define unsafe_remove_last_in_array_list_ptr(type, listptr) remove_index_from_array_list_##type((listptr), listptr->size - 1) 
+
 #define DEFINE_ARRAYLIST_REMOVE_INDEX(Type, type)                                           \
     int remove_index_from_array_list_##type(ArrayList##Type *list, uint32_t index){         \
         if (index >= list->size){                                                           \
@@ -445,13 +451,18 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
 
 #define DEFINE_ARRAYLIST_REMOVE_POINTER_ELEMENT(Type, type)                                 \
     int remove_pointer_element_from_array_list_##type(ArrayList##Type *list, Type element){ \
-        uint32_t index = find_in_array_list_##type(*list, element)                          \
+        uint32_t index = find_in_array_list_##type(*list, element);                         \
         return remove_pointer_index_from_array_list_##type(list, index);                    \
     }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// GETTING /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define unsafe_last_in_array_list(list)         ((list).array[(list).size - 1])
+#define unsafe_last_in_array_list_ptr(listptr)  ((listptr)->array[(listptr)->size - 1])
+#define last_in_array_list(list)                ((list).size ? &unsafe_last_in_array_list(list) : NULL)
+#define last_in_array_list_ptr(listptr)         ((listptr)->size ? &unsafe_last_in_array_list_ptr(listptr) : NULL)
 
 // NOTE: for an unsafe get, simply use list[.|->]array[index].
 #define DEFINE_ARRAYLIST_GET(Type, type)                                                \
