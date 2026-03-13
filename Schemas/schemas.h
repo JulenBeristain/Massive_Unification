@@ -185,14 +185,14 @@ static inline unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyP
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool common_set_schema_baseline(
-    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
-    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
 bool common_set_schema_strict_baseline(
-    ArrayListSchema *set_schema1, ArrayListDependencyPair *dependencies1,
-    ArrayListSchema *set_schema2, ArrayListDependencyPair *dependencies2, 
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 

@@ -413,8 +413,11 @@ int extend_array_list_##type##_arena(ArrayList##Type *list_to_extend, ArrayList#
 /// REMOVING ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define unsafe_remove_last_in_array_list(type, list) remove_index_from_array_list_##type((&list), list.size - 1) 
-#define unsafe_remove_last_in_array_list_ptr(type, listptr) remove_index_from_array_list_##type((listptr), listptr->size - 1) 
+#define unsafe_remove_last_in_array_list(list) (list).size--
+#define unsafe_remove_last_in_array_list_ptr(listptr) (listptr)->size--
+
+#define unsafe_remove_tail_in_array_list(list, n) (list).size -= n
+#define unsafe_remove_tail_in_array_list_ptr(listptr, n) (listptr)->size -= n
 
 #define DEFINE_ARRAYLIST_REMOVE_INDEX(Type, type)                                           \
     int remove_index_from_array_list_##type(ArrayList##Type *list, uint32_t index){         \
