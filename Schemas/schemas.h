@@ -163,7 +163,7 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
 bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
 void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
 ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
-
+int read_set_schema_with_dependencies(FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena);
 
 DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
 DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
@@ -219,8 +219,10 @@ void println_set_dependencies(ArrayListDependencyPair set_dependencies, Printing
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 typedef char *CharPtr;
 DECLARE_ARRAYLIST_TYPE(CharPtr)
-DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
-DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
+DECLARE_ARRAYLIST_CREATE(CharPtr, char_ptr)
+DEFINE_ARRAYLIST_FREE(CharPtr, char_ptr)
+DECLARE_ARRAYLIST_CREATE_ARENA(CharPtr, char_ptr)
+DECLARE_ARRAYLIST_ADD_ARENA(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_EXTEND_ARENA(CharPtr, char_ptr)
 static inline bool equal_strings(char *str1, char *str2){ return strcmp(str1, str2) == 0; }
 DECLARE_ARRAYLIST_FIND(CharPtr, char_ptr)
@@ -228,6 +230,11 @@ DEFINE_ARRAYLIST_CONTAINS(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(CharPtr, char_ptr)
 void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list);
+
+bool mapping_column_indexes(
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, mgu_schema *mapping, Arena *arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////

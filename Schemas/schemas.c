@@ -103,6 +103,7 @@ unsigned find_v_in_array_list_varnum(ArrayListVarNum list, Variable v)
 /// ARRAYLIST STRINGS (Char Pointers) ///////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ARRAYLIST_CREATE(CharPtr, char_ptr)
 DEFINE_ARRAYLIST_CREATE_ARENA(CharPtr, char_ptr)
 
 DEFINE_ARRAYLIST_RESIZE_ARENA(CharPtr, char_ptr)
@@ -373,6 +374,7 @@ bool equivalent_schemas(Schema s1, Schema s2, Variable* mapping)
     return false;
 }
 
+// NOTE: since mapping is an array, we have a supposition that variables are consecutive...
 bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable* mapping)
 {
     if (set_schema1.size != set_schema2.size) {
@@ -788,6 +790,34 @@ ArrayListDependencyPair read_set_dependencies(FILE* stream, unsigned num_vars_wi
         free(line);
     }
     return dependencies;
+}
+
+int read_set_schema_with_dependencies(
+    FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena)
+{
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    if((read = getline(&line, &len, stream)) != -1){
+        unsigned num_vars_with_dependencies;
+        if(sscanf(line, "%u, ", &num_vars_with_dependencies) != 1) {
+            free(line);
+            return 1; // Common schema doesn't exist
+        }
+
+        // Skip "num_vars_with_dependencies, "
+        char *lineptr = line + num_digits(num_vars_with_dependencies) + 2;
+
+        *set_schema = read_set_schema(lineptr, arena);
+        *dependencies = read_set_dependencies(stream, num_vars_with_dependencies, arena);
+
+        free(line);
+        return 0;   // Common schema exists.
+    }
+
+    if(line){ free(line); }
+    return -1;  // EOF
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1588,27 +1618,26 @@ void mapping_column_indexes_free_var(
 
 //FUTURE_WORK: if for getting the mapping we need to actually extend the rows, then we could forget about the mapping and the 
 //  unification would be a simple loop comparing corresponding extended-rows' elements
+// NOTE: common_set_schema and common_dependencies are returned just for testing. Not normalized versions, as in M3 files.
 bool mapping_column_indexes(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    mgu_schema *mapping, Arena *arena)
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, mgu_schema *mapping, Arena *arena)
 {
     assert((set_schema1.size == free_vars1.size) && (set_schema2.size == free_vars2.size));
 
     ArrayListCharPtr final_free_vars = final_free_vars_ordering(free_vars1, free_vars2, arena);
 
-    ArrayListSchema common_set_schema;
-    ArrayListDependencyPair common_dependencies;
     if(!common_set_schema_strict_free_vars_baseline(
         set_schema1, dependencies1, free_vars1,
         set_schema2, dependencies2, free_vars2,
-        &common_set_schema, &common_dependencies, final_free_vars,
+        common_set_schema, common_dependencies, final_free_vars,
         arena))
     {
         return false; // NOTE: not unifiable
     }
 
-    ArrayListSchema normalized_common_set_schema = normalized_set_schema(common_set_schema, common_dependencies, arena);
+    ArrayListSchema normalized_common_set_schema = normalized_set_schema(*common_set_schema, *common_dependencies, arena);
     mapping->n_common = set_schema_size(normalized_common_set_schema);
     
     ArrayListSchema normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
