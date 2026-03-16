@@ -644,7 +644,7 @@ void read_operand_matrix(FILE *stream, operand_block *ob) {
     while ((read = getline(&line, &len, stream)) != -1 && row < ob->r) {
         
         // If end of matrix reached, exit
-        if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
+        if (strstr(line, "%% END") != NULL || strstr(line, "%% End") != NULL)
             break;
         
         // Get first token, which tells the number of exception blocks

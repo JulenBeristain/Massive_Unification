@@ -43,7 +43,30 @@
                 "reveal": "always",
                 "panel": "new"
             },
-            "dependsOn": "build tests (gcc)" 
+            "dependsOn": "build tests " 
+        },
+		{
+            "label": "valgrind test core",
+            "type": "shell",
+            "command": "valgrind",
+            "args": [
+                "--leak-check=full",
+                "--show-leak-kinds=all",
+                "--track-origins=yes",
+                "--verbose",
+                "--log-file=${workspaceFolder}/build/valgrind-core-out.txt",
+                "${workspaceFolder}/c",
+                "${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M1.csv", 
+                "${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M2.csv",
+                "${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M3.csv",
+				"verbose"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "dependsOn": "build core no perfect hash for debugging (gcc)" 
         },
 		{
 			"label": "build alex COM for debugging (gcc)",
