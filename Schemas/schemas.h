@@ -7,6 +7,7 @@
 #include "set_variables.h"
 #include "arena.h"
 #include "arraylist.h"
+#include "../structures.h"
 
 /**
  * FUTURE WORK:
@@ -225,6 +226,7 @@ DECLARE_ARRAYLIST_CREATE_ARENA(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_ADD_ARENA(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_EXTEND_ARENA(CharPtr, char_ptr)
 static inline bool equal_strings(char *str1, char *str2){ return strcmp(str1, str2) == 0; }
+DECLARE_ARRAYLIST_EQUAL(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_FIND(CharPtr, char_ptr)
 DEFINE_ARRAYLIST_CONTAINS(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(CharPtr, char_ptr)
@@ -234,7 +236,8 @@ void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list);
 bool mapping_column_indexes(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, mgu_schema *mapping, Arena *arena);
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr *final_free_vars,
+    mgu_schema *mapping, Arena *arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////

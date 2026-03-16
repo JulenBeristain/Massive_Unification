@@ -532,7 +532,11 @@ void read_operand_block(FILE *stream, operand_block *ob, ArrayListSchema *set_sc
 }
 
 
-void read_result_matrix(FILE *stream, result_block *rb) {
+void read_result_matrix(
+    FILE *stream, 
+    result_block *rb, ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, 
+    Arena *arena
+) {
     char *line = NULL;
     size_t len = 0;
     ssize_t read;
@@ -560,16 +564,7 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         rb->valid[aux] = 0;
     }
 
-    // Skip unflattened schema and the set of dependencies
-    getline(&line, &len, stream);
-    unsigned num_variables_with_dependencies;
-    if(sscanf(line, "%u, ", &num_variables_with_dependencies) == 0){
-        fprintf(stderr, "read_result_matrix: Unexpected start with no information about the number of variables with dependencies!\n");
-        exit(1);
-    }
-    for(unsigned i = 0; i < num_variables_with_dependencies; ++i){
-        getline(&line, &len, stream);
-    }
+    read_set_schema_with_dependencies(stream, common_set_schema, common_dependencies, arena);
 
     // If we have a general mapping, it's a linear result block. Then, get mapping info
     unsigned *mapping = (unsigned*)malloc(rb->c*2*sizeof(unsigned));
@@ -638,7 +633,6 @@ void read_result_matrix(FILE *stream, result_block *rb) {
         if (sscanf(line, "Row %u-%u: %u", &d1, &d2, &e) != 3 &&
             sscanf(line, "Rows %u-%u: %u", &d1, &d2, &e) != 3) 
         {
-            if (verbose) printf("Line is: '%s'\n",line);
             fprintf(stderr, "Could not read number of exception blocks in row\n");
             free(line);
             exit(EXIT_FAILURE);
@@ -673,7 +667,10 @@ void read_result_matrix(FILE *stream, result_block *rb) {
 
 bool first_rb = true;
 void read_result_block(
-    FILE *stream, result_block *rb, ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, Arena *arena
+    FILE *stream, result_block *rb, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, 
+    ArrayListCharPtr *free_vars,
+    Arena *arena
 ) {
     // Create the operand_block structure for later populating it
     *rb = create_null_result_block();
@@ -681,25 +678,20 @@ void read_result_block(
     char *line = NULL;
     size_t len = 0;
 
-    // TODO_YA: we need to save the free_vars of M3 too...
     // Skip matrix header
     if (first_rb) {
         first_rb=false; 
         getline(&line, &len, stream);
-        if (strstr(line, "END: Matrix M1 & M2 + MGU") != NULL) {free(line); return rb;}
+        if (strstr(line, "END: Matrix M1 & M2 + MGU") != NULL) {free(line);}
 
-        // Skip the row identifying the columns' free variables
-        if (getline(&line, &len, stream) == -1) exit(1); // Failed to read the line
-        if (strstr(line, "Free") == NULL) {free(line); exit(1);} // Not the correct line
+        *free_vars = read_free_vars(stream, arena);
     }
 
     // Read the operand block and fill the struct
-    read_result_matrix(stream, rb);
+    read_result_matrix(stream, rb, common_set_schema, common_dependencies, arena);
 
     free(line);
 }
-
-// TODO_YA: clean read_result_block, check if compiles, test
 
 bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
     if(ms1->n_common != ms2->n_common || ms1->new_a != ms2->new_a || ms1->new_b != ms2->new_b){
@@ -721,16 +713,27 @@ bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
 void test_mapping_obtention__(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    ArrayListSchema common_set_schema, ArrayListDependencyPair common_dependencies, mgu_schema *mapping, Arena *arena
+    ArrayListSchema common_set_schema, ArrayListDependencyPair common_dependencies, ArrayListCharPtr free_vars3, mgu_schema *mapping_cols, Arena *arena
 ){
+    printf("###########################################################################\n");
+    printf("### test_mapping_obtention ################################################\n");
+    printf("###########################################################################\n");
+
     // Calculate mgu_schema
     mgu_schema computed_mapping;
     ArrayListSchema computed_common_set_schema;
     ArrayListDependencyPair computed_common_dependencies;
+    ArrayListCharPtr computed_free_vars;
     bool exists_common_schema = mapping_column_indexes(
         set_schema1, dependencies1, free_vars1, row1, row_len1,
         set_schema2, dependencies2, free_vars2, row2, row_len2,
-        &computed_common_set_schema, &computed_common_dependencies, &computed_mapping, arena);
+        &computed_common_set_schema, &computed_common_dependencies, &computed_free_vars, &computed_mapping, arena);
+
+    // Compare the calculated free_vars for M3
+    if(first_rb){
+        bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars);
+        printf("ok_free_vars = %u\n", ok_free_vars);
+    }
 
     // Compare the computed common_schema and dependencies with the read one
     // Compare the computed mgu_schema with the read one
@@ -747,10 +750,14 @@ void test_mapping_obtention__(
 
         bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
         bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
-        bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
+        bool ok_mappings = equal_mgu_schemas(mapping_cols, &computed_mapping);
+        
+        printf("ok_set_schemas = %u\nok_dependencies = %u\nok_mappings = %u\n", ok_set_schemas, ok_dependendencies, ok_mappings);
     } else {
         // NOTE: nothing to do. In core, simply common_schema doesn't exist...
     }
+
+    printf("\n");
 }
 
 void test_mapping_obtention_(
@@ -799,12 +806,13 @@ void test_mapping_obtention_(
     }
 
     first_rb = true;
+    ArrayListCharPtr free_vars3;
     do {
         result_block rb;
         ArrayListSchema common_set_schema;
         ArrayListDependencyPair common_dependencies;
-        read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, arena);
-        
+        read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+
         if (rb.t1) {
             // Get arguments
             ArrayListSchema set_schema1 = set_schemas1[rb.t1];
@@ -833,7 +841,7 @@ void test_mapping_obtention_(
                 test_mapping_obtention__(
                     set_schema1, dependencies1, free_vars1, row1, row_len1,
                     set_schema2, dependencies2, free_vars2, row2, row_len2,
-                    common_set_schema, common_dependencies, mapping, arena);
+                    common_set_schema, common_dependencies, free_vars3, mapping, arena);
             } else {
                 // One mapping per row pairs in non-linear result block
                 for(unsigned i = 0; i < ob1->r; ++i){
@@ -846,7 +854,7 @@ void test_mapping_obtention_(
                         test_mapping_obtention__(
                             set_schema1, dependencies1, free_vars1, row1, row_len1,
                             set_schema2, dependencies2, free_vars2, row2, row_len2,
-                            common_set_schema, common_dependencies, mapping, arena
+                            common_set_schema, common_dependencies, free_vars3, mapping, arena
                         );
                     }
                 }
@@ -870,27 +878,27 @@ void test_mapping_obtention_(
     // NOTE: we could use arenas for these too...
     free(set_schemas1);
     free(set_schemas2);
-    free(dependencies1);
-    free(dependencies2);
+    free(dependencies_array1);
+    free(dependencies_array2);
 
     fclose(stream_M1);
     fclose(stream_M2);
     fclose(stream_M3);
 }
 
-void test_mapping_obtention(int argc, char const *argv[]){
+void test_mapping_obtention(int argc, char *argv[]){
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <folder> [verbose]\n", argv[0]);
-        return 1;
+        return;
     }
 
     char *folder_path = argv[1];
-    int verbose = (argc > 2); // Check if any second argument exists
+    //int verbose = (argc > 2); // Check if any second argument exists
 
     DIR *dir = opendir(folder_path);
     if (!dir) {
         perror("Error opening directory");
-        return 1;
+        return;
     }
 
 
@@ -902,7 +910,7 @@ void test_mapping_obtention(int argc, char const *argv[]){
     
     
     struct dirent *entry;
-    char path_m1[1024], path_m2[1024], path_m3[1024], base[1024];
+    char path_m1[PATH_MAX], path_m2[PATH_MAX], path_m3[PATH_MAX], base[PATH_MAX];
     
     // 2. Iterate through files (similar to find -type f)
     while ((entry = readdir(dir)) != NULL) {
@@ -952,7 +960,7 @@ void test_mapping_obtention(int argc, char const *argv[]){
 /// END TEST MAPPING OBTENTION //////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-int main(int argc, char const *argv[])
+int main(int argc, char *argv[])
 {
     //test_set_variables();
     //test_typeof_or_auto_type();

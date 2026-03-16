@@ -165,6 +165,9 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
     int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *result);
 
 
+#define DECLARE_ARRAYLIST_EQUAL(Type, type) \
+    bool equal_array_lists_##type(ArrayList##Type list1, ArrayList##Type list2);
+
 // NOTE: in the definition, the print function will follow the same convention of the ArrayList's Type, value or pointer
 #define DECLARE_ARRAYLIST_PRINT_SEPARATORS_1(Type, type, ArgType1, Arg1)        \
     void print_separators_array_list_##type(                                    \
@@ -475,6 +478,25 @@ int get_from_array_list_##type(ArrayList##Type list, uint32_t index, Type *resul
     }                                                                                   \
     *result = list.array[index];                                                        \
     return VALID_INDEX;                                                                 \
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// EQUALS //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define DEFINE_ARRAYLIST_EQUAL(Type, type, equal_func)                          \
+bool equal_array_lists_##type(ArrayList##Type list1, ArrayList##Type list2){    \
+    if (list1.size != list2.size){                                              \
+        return false;                                                           \
+    }                                                                           \
+                                                                                \
+    foreach_in_arraylists(Type, it1, it2, list1, list2){                        \
+        if(!equal_func(*it1, *it2)){                                            \
+            return false;                                                       \
+        }                                                                       \
+    }                                                                           \
+                                                                                \
+    return true;                                                                \
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

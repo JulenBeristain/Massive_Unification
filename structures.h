@@ -1,3 +1,6 @@
+#ifndef STRUCTURES_H
+#define STRUCTURES_H
+
 #include <stdio.h>
 
 /* Structs */
@@ -104,3 +107,5 @@ L2 copy_L2(L2 node);
 L3* copy_L3(L3* node);
 
 int timespec_subtract (struct timespec *result, struct timespec *x, struct timespec *y);
+
+#endif

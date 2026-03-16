@@ -1,6 +1,5 @@
 #include "schemas.h"
 #include "utils.h"
-#include "../structures.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -130,6 +129,8 @@ void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list){
         list.array[right_pos] = str1;
     }
 }
+
+DEFINE_ARRAYLIST_EQUAL(CharPtr, char_ptr, equal_strings)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END ARRAYLIST STRINGS (Char Pointers) ///////////////////////////////////////////////////////////////////////////////////////////
@@ -1534,7 +1535,12 @@ void schema_iterator_skip(SchemaIterator *iterator){
     //  --> empty already popped, iterator in a good state, general schema with next_child >= 0 OR EMPTY.
     // 2nd case: variable with extending variables --> Corresponding schema general --> child pushed, with next_child == -1
     //  --> have to remove the first child's and the variable's schemas from the iterator's stack
+    // 3rd case (shouldn't be called here): call with the iterator freshly initialized, with no previous next call (size = 1, last->next_child = -1)
+    //  --> END by setting size to 0...
     if(iterator->size && unsafe_last_in_array_list_ptr(iterator).next_child == -1){
+        // NOTE: we shouldn't call to skip before next is called at least once, skipping the entire schema without any iteration
+        //  (although using min(2, iterator->size) would be more robust here...)
+        assert(iterator->size > 1);
         unsafe_remove_tail_in_array_list_ptr(iterator, 2);
     }
 }
@@ -1622,16 +1628,17 @@ void mapping_column_indexes_free_var(
 bool mapping_column_indexes(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, mgu_schema *mapping, Arena *arena)
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr *final_free_vars,
+    mgu_schema *mapping, Arena *arena)
 {
     assert((set_schema1.size == free_vars1.size) && (set_schema2.size == free_vars2.size));
 
-    ArrayListCharPtr final_free_vars = final_free_vars_ordering(free_vars1, free_vars2, arena);
+    *final_free_vars = final_free_vars_ordering(free_vars1, free_vars2, arena);
 
     if(!common_set_schema_strict_free_vars_baseline(
         set_schema1, dependencies1, free_vars1,
         set_schema2, dependencies2, free_vars2,
-        common_set_schema, common_dependencies, final_free_vars,
+        common_set_schema, common_dependencies, *final_free_vars,
         arena))
     {
         return false; // NOTE: not unifiable
@@ -1681,9 +1688,9 @@ bool mapping_column_indexes(
     
     unsigned new_virtual_column1 = num_cols1 + 1;
     unsigned new_virtual_column2 = num_cols2 + 1;
-    assert(final_free_vars.size == normalized_common_set_schema.size);
-    for(unsigned i = 0, mappingL_pos = 0, mappingR_pos = 0; i < final_free_vars.size; ++i){
-        char *free_var = final_free_vars.array[i];
+    assert(final_free_vars->size == normalized_common_set_schema.size);
+    for(unsigned i = 0, mappingL_pos = 0, mappingR_pos = 0; i < final_free_vars->size; ++i){
+        char *free_var = final_free_vars->array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
         mapping_column_indexes_free_var(
