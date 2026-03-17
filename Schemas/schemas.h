@@ -232,12 +232,24 @@ DEFINE_ARRAYLIST_CONTAINS(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(CharPtr, char_ptr)
 DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(CharPtr, char_ptr)
 void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list);
+static inline void print_string(char *s) { printf("%s", s); }
+DECLARE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
 
-bool mapping_column_indexes(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr *final_free_vars,
-    mgu_schema *mapping, Arena *arena);
+unsigned set_schema_size(ArrayListSchema set_schema);
+unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena);
+ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
+ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
+bool common_set_schema_strict_free_vars_baseline(
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
+    Arena *arena);
+void mapping_column_indexes(
+    ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1, 
+    ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
+    ArrayListSchema normalized_common_set_schema, ArrayListCharPtr final_free_vars,
+    unsigned *starting_col_indices1, unsigned *starting_col_indices2,
+    mgu_schema *mapping);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -132,6 +132,10 @@ void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list){
 
 DEFINE_ARRAYLIST_EQUAL(CharPtr, char_ptr, equal_strings)
 
+DEFINE_ARRAYLIST_PRINT_SEPARATORS(CharPtr, char_ptr, print_string)
+DEFINE_ARRAYLIST_PRINT(CharPtr, char_ptr)
+DEFINE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END ARRAYLIST STRINGS (Char Pointers) ///////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1375,6 +1379,7 @@ ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDepen
     foreach_in_arraylists(Schema, res, schema, result, set_schema){
         *res = normalized_schema(*schema, dependencies, arena);
     }
+    result.size = set_schema.size;
     return result;
 }
 // #endregion
@@ -1625,37 +1630,19 @@ void mapping_column_indexes_free_var(
 //FUTURE_WORK: if for getting the mapping we need to actually extend the rows, then we could forget about the mapping and the 
 //  unification would be a simple loop comparing corresponding extended-rows' elements
 // NOTE: common_set_schema and common_dependencies are returned just for testing. Not normalized versions, as in M3 files.
-bool mapping_column_indexes(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1, int *row1, unsigned row_len1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2, int *row2, unsigned row_len2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr *final_free_vars,
-    mgu_schema *mapping, Arena *arena)
+void mapping_column_indexes(
+    ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1, 
+    ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
+    ArrayListSchema normalized_common_set_schema, ArrayListCharPtr final_free_vars,
+    unsigned *starting_col_indices1, unsigned *starting_col_indices2,
+    mgu_schema *mapping)
 {
-    assert((set_schema1.size == free_vars1.size) && (set_schema2.size == free_vars2.size));
+    assert((normalized_set_schema1.size == free_vars1.size) && (normalized_set_schema2.size == free_vars2.size));
 
-    *final_free_vars = final_free_vars_ordering(free_vars1, free_vars2, arena);
-
-    if(!common_set_schema_strict_free_vars_baseline(
-        set_schema1, dependencies1, free_vars1,
-        set_schema2, dependencies2, free_vars2,
-        common_set_schema, common_dependencies, *final_free_vars,
-        arena))
-    {
-        return false; // NOTE: not unifiable
-    }
-
-    ArrayListSchema normalized_common_set_schema = normalized_set_schema(*common_set_schema, *common_dependencies, arena);
-    mapping->n_common = set_schema_size(normalized_common_set_schema);
-    
-    ArrayListSchema normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
     unsigned num_cols1 = set_schema_size(normalized_set_schema1);
     mapping->new_a = mapping->n_common - num_cols1;
-    assert(num_cols1 == row_len1);
-
-    ArrayListSchema normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
     unsigned num_cols2 = set_schema_size(normalized_set_schema2);
     mapping->new_b = mapping->n_common - num_cols2;
-    assert(num_cols2 == row_len2);
 
     // TODO: see if we use arena for the mapping, instead of malloc
     unsigned num_bytes = sizeof(*mapping->common_columns) * mapping->n_common;
@@ -1665,12 +1652,6 @@ bool mapping_column_indexes(
     mapping->common_R = malloc(num_bytes);
     
     for(unsigned i = 0; i < mapping->n_common; ++i){ mapping->common_columns[i] = i; }
-
-
-    // NOTE: no resizing risk with this arena
-    Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
-    unsigned *starting_col_indices1 = starting_column_indexes(normalized_set_schema1, &starting_indices_arena);
-    unsigned *starting_col_indices2 = starting_column_indexes(normalized_set_schema2, &starting_indices_arena);
 
     // NOTE: at most we will have as many repeated variables as the number of columns (actually, half of it), but we won't calculate
     //  an estimate for the upper bound of the number of new virtual columns corresponding to repeated variables, so resizing risk.
@@ -1688,9 +1669,9 @@ bool mapping_column_indexes(
     
     unsigned new_virtual_column1 = num_cols1 + 1;
     unsigned new_virtual_column2 = num_cols2 + 1;
-    assert(final_free_vars->size == normalized_common_set_schema.size);
-    for(unsigned i = 0, mappingL_pos = 0, mappingR_pos = 0; i < final_free_vars->size; ++i){
-        char *free_var = final_free_vars->array[i];
+    assert(final_free_vars.size == normalized_common_set_schema.size);
+    for(unsigned i = 0, mappingL_pos = 0, mappingR_pos = 0; i < final_free_vars.size; ++i){
+        char *free_var = final_free_vars.array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
         mapping_column_indexes_free_var(
@@ -1715,9 +1696,6 @@ bool mapping_column_indexes(
     }
 
     free_arena(&row_vars_to_extending_cols_arena);
-    free_arena(&starting_indices_arena);
-
-    return true;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
