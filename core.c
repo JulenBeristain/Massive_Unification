@@ -496,6 +496,13 @@ void read_line(char *line, int *row, bool skip_first) {
         if (!isupper(tok[0])) { // If no uppercase appears, it is a constant
             #ifdef NO_PERF_HASH
             static size_t next_symbol_id = 1;
+            
+            // Special treatment for the (,) symbol ONLY if ( and ) can not be individual symbols!!!
+            /* if(strcmp(tok, "(")){
+                tok = "(,)";
+                strtok(NULL, ",\n");
+            } */
+
             struct nlist *token_id = lookup(symbols_to_ids, tok);
             if(token_id){
                 row[col-1] = token_id->defn;
@@ -743,7 +750,7 @@ void read_result_matrix(FILE *stream, result_block *rb) {
     while ((read = getline(&line, &len, stream)) != -1 && row < rb->r) {
         
         // If end of matrix reached, exit
-        if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
+        if (strstr(line, "%% END") != NULL || strstr(line, "%% End") != NULL)
             break;
 
         // If non-liner block, we have read the mapping
@@ -1440,19 +1447,19 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
     struct timespec elapsed, elapsed2;   
     
     // ----- Calculate unifiers start ----- //
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start_unifiers);
+    clock_gettime(CLOCK_MONOTONIC, &start_unifiers);
     
 	unsigned *unifiers = NULL;
     unsigned unifier_size = 1+(2*rb->c)+2;
     unifiers = (unsigned*) malloc (ob1->r*ob2->r*unifier_size*sizeof(unsigned));
     unsigned unif_count = unifier_matrices(ob1, ob2, rb, unifiers);
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end_unifiers);
+    clock_gettime(CLOCK_MONOTONIC, &end_unifiers);
     // ----- Calculate unifiers end ----- //
     
     // ----- Perform unification start ----- //
     if (verbose) printf("\tApplying all unifiers . . . \n");
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start_unification);
+    clock_gettime(CLOCK_MONOTONIC, &start_unification);
     result_block my_rb = create_empty_result_block(ob1->r,ob2->r,ob1->c,ob2->c,rb->c,rb->ms);
     my_rb.t1 = 1;  // NOTE: why concretely 1-1? Doesn't matter? It isn't verified because it isn't important? I guess...
     my_rb.t2 = 1;
@@ -1472,7 +1479,7 @@ void matrix_intersection(operand_block *ob1, operand_block *ob2, result_block *r
         my_rb.valid[index_mt] = 0;
     }
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end_unification);
+    clock_gettime(CLOCK_MONOTONIC, &end_unification);
 
     if (verbose) printf("\tApplied all unifiers\n");
     // ----- Perform unification end ----- //
@@ -1527,7 +1534,7 @@ int main(int argc, char *argv[]){
     struct timespec end_total, end_reading;     
     struct timespec elapsed;         
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start_total);
+    clock_gettime(CLOCK_MONOTONIC, &start_total);
 
     var_dict = create_dictionary(501);
     unif_dict = create_dictionary(501);
@@ -1563,7 +1570,7 @@ int main(int argc, char *argv[]){
     operand_block *obs2 = (operand_block*)malloc(s2*sizeof(operand_block));
     result_block rb;
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start_reading);
+    clock_gettime(CLOCK_MONOTONIC, &start_reading);
 
     // ----- Read file start ----- //
     for (size_t i = 0; i < s1; i++)
@@ -1576,16 +1583,16 @@ int main(int argc, char *argv[]){
         obs2[i] = read_operand_block(stream_M2);
     }
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end_reading);
+    clock_gettime(CLOCK_MONOTONIC, &end_reading);
     timespec_subtract(&read_file_elapsed, &end_reading, &start_reading);    
 
     // ----- Read file end ----- //
 
     // ----- Matrix intersection start ----- //
     do {
-        clock_gettime(CLOCK_MONOTONIC_RAW, &start_reading);
+        clock_gettime(CLOCK_MONOTONIC, &start_reading);
             rb = read_result_block(stream_M3);
-        clock_gettime(CLOCK_MONOTONIC_RAW, &end_reading);
+        clock_gettime(CLOCK_MONOTONIC, &end_reading);
         if (rb.t1)
         {
             // verbose = true; // Check
@@ -1600,7 +1607,7 @@ int main(int argc, char *argv[]){
 
     // ----- Matrix intersection end ----- //
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end_total);
+    clock_gettime(CLOCK_MONOTONIC, &end_total);
 
     if (verbose) printf("-------- TIME MEASUREMENTS --------\n");
     if (verbose) printf("Time for reading from file:    %ld.%0*ld sec\n",read_file_elapsed.tv_sec, 9, read_file_elapsed.tv_nsec);

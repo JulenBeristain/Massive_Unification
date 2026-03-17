@@ -57,6 +57,35 @@
         ]
     },
     {
+        "name": "Debug core.c AGT006+2 test0002 verbose (gdb)",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/c",
+        "args": ["${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M1.csv", 
+                 "${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M2.csv",
+                 "${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M3.csv",
+                 "verbose"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "preLaunchTask": "build tests (gcc)",
+        "setupCommands": [
+            {
+                "description": "Enable pretty-printing for gdb",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": true
+            },
+            {
+                "description": "Set Disassembly Flavor to Intel",
+                "text": "-gdb-set disassembly-flavor intel",
+                "ignoreFailures": true
+            }
+        ]
+    },
+    {
         "name": "Debug core.c ITP018+5 test0361 verbose (gdb)",
         "type": "cppdbg",
         "request": "launch",
