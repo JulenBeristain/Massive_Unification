@@ -1376,10 +1376,10 @@ Schema normalized_schema(Schema schema, ArrayListDependencyPair dependencies, Ar
 ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena){
     // NOTE: no resizing risk.
     ArrayListSchema result = create_array_list_schema_arena(set_schema.size, arena);
+    result.size = set_schema.size;
     foreach_in_arraylists(Schema, res, schema, result, set_schema){
         *res = normalized_schema(*schema, dependencies, arena);
     }
-    result.size = set_schema.size;
     return result;
 }
 // #endregion
@@ -1566,7 +1566,7 @@ void mapping_column_indexes_free_var(
     if (pos == free_vars.size) {
         // NOTE: free_var wasn't originally in M. Add as many virtual columns as the size of the normalized common schema
         for(unsigned num_new_virtual_cols = normalized_common_schema.size; num_new_virtual_cols; --num_new_virtual_cols){
-            mapping_side[*mapping_pos++] = *new_virtual_column++;
+            mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
         }
     } else {
         // NOTE: free_var was originally in M1. We have to compare the normalized common schema with the original 
@@ -1587,24 +1587,26 @@ void mapping_column_indexes_free_var(
 
             if(row[row_pos] > 0){
                 // NOTE: function symbol --> Take original column number, that is, row_pos+1 (1-based column indexes)
-                mapping_side[*mapping_pos++] = row_pos + 1;
+                mapping_side[(*mapping_pos)++] = row_pos + 1;
                 ++row_pos;
             } else {
                 // NOTE: variable
                 for(unsigned count_old_cols = original_subschema.size, old_col = row_pos + 1;
                     count_old_cols; --count_old_cols)
                 {
-                    mapping_side[*mapping_pos++] = old_col++;
+                    mapping_side[(*mapping_pos)++] = old_col++;
                 }
 
                 unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
                 if(row[row_pos] == 0){
+                    // TODO_YA: freeing error with row_vars_to_extending_cols_arena. Seems that I am writing beyond
+                    //  the allocated memory!!!
                     // NOTE: first appearence of the row variable
                     unsigned **extending_cols = row_vars_to_extending_cols + row_pos + 1;
                     *extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(**extending_cols) * num_virtual_cols);
                     for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
-                        mapping_side[*mapping_pos++] = *new_virtual_column;
-                        *extending_col = *new_virtual_column++;
+                        mapping_side[(*mapping_pos)++] = *new_virtual_column;
+                        *extending_col = (*new_virtual_column)++;
                     }
 
                 } else {
@@ -1612,7 +1614,7 @@ void mapping_column_indexes_free_var(
                     unsigned **extending_cols = row_vars_to_extending_cols - row[row_pos];
                     //assert(*extending_cols != NULL);
                     for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
-                        mapping_side[*mapping_pos++] = *extending_col;
+                        mapping_side[(*mapping_pos)++] = *extending_col;
                     }
                 }
 
@@ -1639,6 +1641,7 @@ void mapping_column_indexes(
 {
     assert((normalized_set_schema1.size == free_vars1.size) && (normalized_set_schema2.size == free_vars2.size));
 
+    mapping->n_common = set_schema_size(normalized_common_set_schema);
     unsigned num_cols1 = set_schema_size(normalized_set_schema1);
     mapping->new_a = mapping->n_common - num_cols1;
     unsigned num_cols2 = set_schema_size(normalized_set_schema2);
@@ -1653,10 +1656,10 @@ void mapping_column_indexes(
     
     for(unsigned i = 0; i < mapping->n_common; ++i){ mapping->common_columns[i] = i; }
 
-    // NOTE: at most we will have as many repeated variables as the number of columns (actually, half of it), but we won't calculate
-    //  an estimate for the upper bound of the number of new virtual columns corresponding to repeated variables, so resizing risk.
+    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
+    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
     Arena row_vars_to_extending_cols_arena; 
-    init_arena(&row_vars_to_extending_cols_arena, sizeof(unsigned*)*(num_cols1 + num_cols2) + sizeof(unsigned)*100);
+    init_arena(&row_vars_to_extending_cols_arena, sizeof(unsigned*)*(num_cols1 + num_cols2) + sizeof(unsigned)*(mapping->new_a + mapping->new_b));
     
     unsigned num_bytes1 = sizeof(unsigned*) * num_cols1;
     unsigned **row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes1);

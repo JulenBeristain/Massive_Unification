@@ -866,8 +866,8 @@ void test_mapping_obtention_(
             assert(set_schema_size(normalized_set_schema1) == row_len1);
             assert(set_schema_size(normalized_set_schema2) == row_len2);
 
-            operand_block *ob1 = obs1 + rb.t1;
-            operand_block *ob2 = obs2 + rb.t2;
+            operand_block *ob1 = obs1 + rb.t1-1;
+            operand_block *ob2 = obs2 + rb.t2-1;
 
 
             int *row1, *row2;

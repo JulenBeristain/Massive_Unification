@@ -34,8 +34,6 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
 
 // PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
-    ++global_create_memory_block_calls;
-    printf("Create Memory Block in Arena (call=%u)\n", global_create_memory_block_calls);
     MemoryBlock *memory_block = malloc(sizeof(*memory_block));
     if (memory_block == NULL){
         perror("create_memory_block: malloc failed to allocate memory");
@@ -113,6 +111,9 @@ void *allocate_(Arena *arena, size_t num_bytes){
         else {
             new_block_size = calculate_block_size(num_bytes);
         }
+        
+        ++global_create_memory_block_calls;
+        printf("Create Memory Block in Arena when resizing (call=%u)\n", global_create_memory_block_calls);
         MemoryBlock *new_memory_block = create_memory_block(new_block_size);
 
         // Take the resulting address, insert the new block in the Arena and return the address
