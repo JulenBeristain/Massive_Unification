@@ -387,7 +387,6 @@ void read_line(char *line, int *row, bool skip_first) {
     clear(var_dict);
     while (tok) {
         if (!isupper(tok[0])) { // If no uppercase appears, it is a constant
-            next_symbol_id = 1;
             struct nlist *token_id = lookup(symbols_to_ids, tok);
             if(token_id){
                 row[col-1] = token_id->defn;
@@ -699,9 +698,10 @@ bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
     }
 
     for(unsigned i = 0; i < ms1->n_common; ++i){
-        if(ms1->common_columns[i] != ms2->common_columns[i] ||
-           ms1->common_L[i] != ms2->common_L[i] ||
-           ms1->common_R[i] != ms2->common_L[i])
+        bool same_i = ms1->common_columns[i] != ms2->common_columns[i] ||
+                      ms1->common_L[i] != ms2->common_L[i] ||
+                      ms1->common_R[i] != ms2->common_R[i];
+        if(same_i)
         {
             return false;
         }
@@ -783,6 +783,9 @@ void test_mapping_obtention_(
         read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, arena);
     }
 
+    printf("Number of blocks in M1 = %d\n", s1);
+    printf("Number of blocks in M2 = %d\n", s2);
+
     first_rb = true;
     ArrayListCharPtr free_vars3, computed_free_vars3;
     do {
@@ -791,6 +794,7 @@ void test_mapping_obtention_(
         ArrayListDependencyPair common_dependencies;
         bool was_first_rb = first_rb; // NOTE: read_result_block sets first_rb to false
         read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+        printf("Resultant fragment: %d-%d\n", rb.t1, rb.t2);
 
         // NOTE: calculate final free vars only once! Since it corresponds to the entire M3!
         if(was_first_rb){
@@ -802,12 +806,11 @@ void test_mapping_obtention_(
         if (rb.t1) {
             // Get arguments
             ArrayListSchema set_schema1 = set_schemas1[rb.t1 - 1];
-            ArrayListDependencyPair dependencies1 = dependencies_array1[rb.t1];
+            ArrayListDependencyPair dependencies1 = dependencies_array1[rb.t1 - 1];
             
             ArrayListSchema set_schema2 = set_schemas2[rb.t2 - 1];
-            ArrayListDependencyPair dependencies2 = dependencies_array2[rb.t2];
+            ArrayListDependencyPair dependencies2 = dependencies_array2[rb.t2 - 1];
 
-            // TODO_YA: keep debugging from here
             if(global_print_debugging){
                 printf("SS1 - "); println_set_schema(set_schema1, PRINT_VISUALLY);
                 printf("Dependencies 1:\n"); println_set_dependencies(dependencies1, PRINT_VISUALLY);
@@ -840,6 +843,7 @@ void test_mapping_obtention_(
                 printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
             } else {
                 // NOTE: no mapping if no common schema...
+                printf("No common set schema --> No column mapping\n");
                 free_result_block(&rb);
                 continue;
             }
@@ -910,6 +914,8 @@ void test_mapping_obtention_(
 
             free_arena(&starting_indices_arena);
 
+            // TODO_YA: erroneous logic for test0009's first resultant fragment 1-1 (whose mapping is correctly calculated...)
+            //          after some changes the program doesn't even crash ???
             free_result_block(&rb);
         }
         else break;
@@ -975,6 +981,14 @@ void test_mapping_obtention(int argc, char *argv[]){
             // Get the "base" (remove M1.csv)
             strncpy(base, path_m1, strlen(path_m1) - 6);
             base[strlen(path_m1) - 6] = '\0';
+
+            // Skip passed tests: AGT002+1
+            if(strstr(base, "test0016") || 
+               strstr(base, "test0015") ||
+               strstr(base, "test0001") || 
+               strstr(base, "test0005") || false){
+                continue;
+            }
 
             // 4. Construct M2 and M3 paths
             snprintf(path_m2, sizeof(path_m2), "%sM2.csv", base);

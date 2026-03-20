@@ -36,9 +36,9 @@
  * 2) An ordered set of subschemas, including the empty set (<>).
  * 
  */
-// OPT: size candidate for uint16/32_t if padding may arise. Furthermore, we can check if the attribute is used at some point.
-//  If not, we can simply delete it...
-// OPT: another approach would be to use a simple struct where all the data is instroduced (forgetting about the SchemaType)
+// OPT: size candidate for uint16/32_t if padding may arise. Furthermore, we can store it separately and calculate and store it only where it is used...
+// OPT: using an Arena for Schemas only, we could use a uint32 instead of a pointer for subschemas to use a position instead of a pointer (although more pointer arithmetic cost when accesing...)
+// OPT: another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
 //  and use v to discern if it is a variable or not (if equal to 0, general schema).
 //typedef enum : uint8_t { VARIABLE, GENERAL } SchemaType; // OPT: for two types a Byte (even a bit) is enough. Because of padding, no effect
 typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;

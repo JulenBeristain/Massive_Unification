@@ -157,10 +157,10 @@ void print_schema_(Schema s, char opening_brace, char closing_brace, bool show_a
         if (s.arity) {
             print_schema_(s.subschemas[0], opening_brace, closing_brace, show_arity);
         }
-        foreach_in_schema(s, sub)
+        for(unsigned i = 1; i < s.arity; ++i)
         {
             printf(", ");
-            print_schema_(*sub, opening_brace, closing_brace, show_arity);
+            print_schema_(s.subschemas[i], opening_brace, closing_brace, show_arity);
         }
         printf("%c", closing_brace);
     }
@@ -215,7 +215,7 @@ void print_set_dependencies_(
     char* schema_separator, PrintingMode schema_mode)
 {
     if (set_dependencies.size == 0) {
-        printf("\n");
+        printf("None\n");
         return;
     }
 
@@ -1509,7 +1509,7 @@ bool schema_iterator_next(SchemaIterator *iterator, Schema *next){
         if(next->type == VARIABLE_SCHEMA || next->arity == 0){
             unsafe_remove_last_in_array_list_ptr(iterator);
         } else {
-            node->next_child++; // NOTE: node->next_child == 0
+            node->next_child += 2; // NOTE: node->next_child == 1, important to skip next_child == 0 to avoid iterating that child twice...
             SchemaIteratorNode new_node = { .schema = next->subschemas[0], .next_child = -1 };
             unsafe_add_to_array_list_ptr(iterator, new_node);
         }
@@ -1573,6 +1573,10 @@ void mapping_column_indexes_free_var(
         //  normalized schema to see if we need to add new virtual columns.
 
         Schema normalized_original_schema = normalized_set_schema.array[pos];
+        if(global_print_debugging){
+            printf("Normalized common   schema: "); println_schema(normalized_common_schema, PRINT_VISUALLY);
+            printf("Normalized original schema: "); println_schema(normalized_original_schema, PRINT_VISUALLY);
+        }
         SchemaIterator common_it = create_schema_iterator(normalized_common_schema);
         SchemaIterator original_it = create_schema_iterator(normalized_original_schema);
 
@@ -1583,6 +1587,12 @@ void mapping_column_indexes_free_var(
             Schema common_subschema, original_subschema;
             bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
             bool has_next_original = schema_iterator_next(&original_it, &original_subschema);
+            if(global_print_debugging){
+                printf("row[row_pos=%d]=%d\n", row_pos, row[row_pos]);
+                printf("Next common   subschema: "); println_schema(common_subschema, PRINT_VISUALLY);
+                printf("Next original subschema: "); println_schema(original_subschema, PRINT_VISUALLY);
+                printf("---\n");
+            }
             assert(has_next_common && has_next_original);
 
             if(row[row_pos] > 0){
@@ -1598,20 +1608,29 @@ void mapping_column_indexes_free_var(
                 }
 
                 unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
+                // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
                 if(row[row_pos] == 0){
-                    // TODO_YA: freeing error with row_vars_to_extending_cols_arena. Seems that I am writing beyond
-                    //  the allocated memory!!!
                     // NOTE: first appearence of the row variable
-                    unsigned **extending_cols = row_vars_to_extending_cols + row_pos + 1;
+                    unsigned **extending_cols = row_vars_to_extending_cols + row_pos;
                     *extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(**extending_cols) * num_virtual_cols);
                     for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
                         mapping_side[(*mapping_pos)++] = *new_virtual_column;
                         *extending_col = (*new_virtual_column)++;
+                        // TODO_YA: since new_virtual_column is incremented even for non-repeated variables, since the virtual 
+                        //  extending variables of those won't appear in the mapping + after a non-repeated variable can come
+                        //  a repeated one ==> We can have some "gaps" between new virtual column identifiers...
+                        // Two solutions: 1) POST: post-process the obtained mgu_schema's common_L/R removing the gaps
+                        //      --> Have to identify the columns of all new virtual cols, order them by value of the virtual cols, and reset them 
+                        //          starting from initial_new_virtual_column
+                        //  2) PRE: pre-identify the non-linear variables and save the mapping to extending_cols only in those cases
+                        //      --> Iterate over row saving negative values (previous to the call to this function)
+                        //      --> Advantage, we can reduce to half the allocated bytes for pointers
+                        //      --> SIMPLER!
                     }
 
                 } else {
                     // NOTE: repeated appearence of the row variable
-                    unsigned **extending_cols = row_vars_to_extending_cols - row[row_pos];
+                    unsigned **extending_cols = row_vars_to_extending_cols - row[row_pos] - 1;
                     //assert(*extending_cols != NULL);
                     for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
                         mapping_side[(*mapping_pos)++] = *extending_col;
@@ -1659,24 +1678,28 @@ void mapping_column_indexes(
     // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
     //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
     Arena row_vars_to_extending_cols_arena; 
-    init_arena(&row_vars_to_extending_cols_arena, sizeof(unsigned*)*(num_cols1 + num_cols2) + sizeof(unsigned)*(mapping->new_a + mapping->new_b));
+    unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
+    unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
+    unsigned num_bytes_virtual_columns = sizeof(unsigned)*(mapping->new_a + mapping->new_b);
+    init_arena(&row_vars_to_extending_cols_arena, num_bytes_pointers1 + num_bytes_pointers2 + num_bytes_virtual_columns);
     
-    unsigned num_bytes1 = sizeof(unsigned*) * num_cols1;
-    unsigned **row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes1);
+    // NOTE: row_vars will be identified with the first column where they appear but 0-BASED, to save space for two unused pointers at index 0...
+    unsigned **row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes_pointers1);
     //SET_TO_ZERO(row_vars_to_extending_cols1, num_bytes1);
     
-    unsigned num_bytes2 = sizeof(unsigned*) * num_cols2;
-    unsigned **row_vars_to_extending_cols2 = allocate(&row_vars_to_extending_cols_arena, num_bytes2);
+    unsigned **row_vars_to_extending_cols2 = allocate(&row_vars_to_extending_cols_arena, num_bytes_pointers2);
     //SET_TO_ZERO(row_vars_to_extending_cols2, num_bytes2);
 
     
     unsigned new_virtual_column1 = num_cols1 + 1;
     unsigned new_virtual_column2 = num_cols2 + 1;
+    unsigned mappingL_pos = 0, mappingR_pos = 0;
     assert(final_free_vars.size == normalized_common_set_schema.size);
-    for(unsigned i = 0, mappingL_pos = 0, mappingR_pos = 0; i < final_free_vars.size; ++i){
+    for(unsigned i = 0; i < final_free_vars.size; ++i){
         char *free_var = final_free_vars.array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
+        printf("--- Mapping L ---\n");
         mapping_column_indexes_free_var(
             free_vars1, free_var,
             normalized_common_schema, normalized_set_schema1, num_cols1,
@@ -1686,7 +1709,9 @@ void mapping_column_indexes(
             &new_virtual_column1,
             &mappingL_pos, mapping->common_L
         );
+        assert(mappingL_pos <= mapping->n_common);
 
+        printf("--- Mapping R ---\n");
         mapping_column_indexes_free_var(
             free_vars2, free_var,
             normalized_common_schema, normalized_set_schema2, num_cols2,
@@ -1696,7 +1721,10 @@ void mapping_column_indexes(
             &new_virtual_column2,
             &mappingR_pos, mapping->common_R
         );
+        assert(mappingR_pos <= mapping->n_common);
     }
+    assert(mappingL_pos == mapping->n_common);
+    assert(mappingR_pos == mapping->n_common);
 
     free_arena(&row_vars_to_extending_cols_arena);
 }
