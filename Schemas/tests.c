@@ -590,7 +590,7 @@ void read_result_matrix(
         if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
             break;
 
-        // If non-liner block, we have read the mapping
+        // If non-linear block, we have to read the mapping
         if (!rb->lineal_lineal){
             unsigned row1, row2;
             int offset;
@@ -638,11 +638,14 @@ void read_result_matrix(
         }
 
         // Initialize the exception blocks. NOTE: since in create_empty_main_term ms is set to NULL, we have to remember it!
+        // Only necessary for non-linear blocks. If linear, it's better to leave the ms of each row (main term) as NULL for
+        // the main_term freeing function.
         mgu_schema *ms = rb->terms[row].ms;
         rb->terms[row] = create_empty_main_term(rb->c,e);
-        rb->terms[row].ms = ms;
-        //if (rb->valid[row]!=1) rb->valid[row] = 0;  // NOTE: completely unnecessary, no? valid_ was already 0-initialized...
-
+        if (!rb->lineal_lineal){
+            rb->terms[row].ms = ms;
+        }
+        
         // Get a pointer to the main term for easier working
         main_term *mt = &(rb->terms[row]);
 
@@ -783,9 +786,6 @@ void test_mapping_obtention_(
         read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, arena);
     }
 
-    printf("Number of blocks in M1 = %d\n", s1);
-    printf("Number of blocks in M2 = %d\n", s2);
-
     first_rb = true;
     ArrayListCharPtr free_vars3, computed_free_vars3;
     do {
@@ -794,7 +794,7 @@ void test_mapping_obtention_(
         ArrayListDependencyPair common_dependencies;
         bool was_first_rb = first_rb; // NOTE: read_result_block sets first_rb to false
         read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
-        printf("Resultant fragment: %d-%d\n", rb.t1, rb.t2);
+        printf("Resultant fragment: %d-%d\n", rb.t1, rb.t2); // NOTE: when 0-0 no more fragments
 
         // NOTE: calculate final free vars only once! Since it corresponds to the entire M3!
         if(was_first_rb){
@@ -818,7 +818,6 @@ void test_mapping_obtention_(
                 printf("Dependencies 2:\n"); println_set_dependencies(dependencies2, PRINT_VISUALLY);
             }
 
-            // Calculate common set schema and dependencies of the block only once!
             ArrayListSchema computed_common_set_schema;
             ArrayListDependencyPair computed_common_dependencies;
             bool exists_common_schema = common_set_schema_strict_free_vars_baseline(
@@ -842,10 +841,11 @@ void test_mapping_obtention_(
 
                 printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
             } else {
-                // NOTE: no mapping if no common schema...
-                printf("No common set schema --> No column mapping\n");
+                printf("WRONG: No common set schema --> No column mapping\n");
+                printf("File common set-schema: "); println_set_schema(common_set_schema, PRINT_VISUALLY);
+                printf("File dependencies:\n"); println_set_dependencies(common_dependencies, PRINT_VISUALLY);
                 free_result_block(&rb);
-                continue;
+                exit(-1); //continue;
             }
 
             ArrayListSchema normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
@@ -875,7 +875,7 @@ void test_mapping_obtention_(
 
 
             int *row1, *row2;
-            mgu_schema *mapping;
+            mgu_schema *mapping; // TODO: fix memory leaks with mapping...
 
             if(rb.lineal_lineal){
                 // Only one mapping in linear result block
@@ -914,8 +914,6 @@ void test_mapping_obtention_(
 
             free_arena(&starting_indices_arena);
 
-            // TODO_YA: erroneous logic for test0009's first resultant fragment 1-1 (whose mapping is correctly calculated...)
-            //          after some changes the program doesn't even crash ???
             free_result_block(&rb);
         }
         else break;
@@ -949,7 +947,7 @@ void test_mapping_obtention(int argc, char *argv[]){
     }
 
     char *folder_path = argv[1];
-    //int verbose = (argc > 2); // Check if any second argument exists
+    global_print_debugging = argc > 2;
 
     DIR *dir = opendir(folder_path);
     if (!dir) {
@@ -983,10 +981,13 @@ void test_mapping_obtention(int argc, char *argv[]){
             base[strlen(path_m1) - 6] = '\0';
 
             // Skip passed tests: AGT002+1
-            if(strstr(base, "test0016") || 
-               strstr(base, "test0015") ||
-               strstr(base, "test0001") || 
-               strstr(base, "test0005") || false){
+            if(
+                strstr(base, "test0016") || 
+                strstr(base, "test0015") ||
+                //strstr(base, "test0001") || 
+                //strstr(base, "test0005") || 
+                false)
+            {
                 continue;
             }
 

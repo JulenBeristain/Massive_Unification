@@ -1313,11 +1313,11 @@ bool common_set_schema_strict_baseline(
     ArrayListSchema* common_set_schema, ArrayListDependencyPair* common_dependencies,
     Arena* arena)
 {
-    bool result = first_check(set_schema1, set_schema2, arena) && 
-        common_set_schema_baseline_(set_schema1, dependencies1, set_schema2, dependencies2, 
-            common_set_schema, common_dependencies, arena, false) && 
-        first_check(set_schema1, *common_set_schema, arena) && 
-        unique_dependency_between_vars(*common_dependencies);
+    bool result = first_check(set_schema1, set_schema2, arena);
+    result = result && common_set_schema_baseline_(set_schema1, dependencies1, set_schema2, dependencies2, 
+                                           common_set_schema, common_dependencies, arena, false);
+    result = result && first_check(set_schema1, *common_set_schema, arena);
+    result = result && unique_dependency_between_vars(*common_dependencies);
 
     if (!result) {
         return false;
@@ -1422,7 +1422,11 @@ ArrayListSchema set_schema_with_respect_to_free_vars(
         unsigned pos = find_in_array_list_char_ptr(set_free_vars, *free_var);
         if(pos == set_free_vars.size){
             // NOTE: introducing an empty schema the resulting common schema will be the schema of the other operand that has the free_var
-            // TODO(TEST): see if this doesn't introduce any complications for the first_check of the strict version (number of variables equal...)
+            // TODO_YA: see if this doesn't introduce any complications for the first_check of the strict version (number of variables equal...)
+            //  Indeed. We have to precalculate the max variable in the set_schema, and instead of the empty schema introduce that
+            //  variable +1, +2, ... Then, to compare with the result in the file, we should remember (return as an extra result)
+            //  the list of new variables, and post-process only in the new version of general schema substituting these variables
+            //  by the schema that corresponds to the free var that only appears in one of the matrices.
             unsafe_add_to_array_list(result, empty_schema());
         } else {
             unsafe_add_to_array_list(result, set_schema.array[pos]);
