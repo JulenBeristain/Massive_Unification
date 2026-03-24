@@ -417,6 +417,30 @@ void variables_in_set_schema(ArrayListSchema set_schema, SetVariables* result)
 }
 
 // PRE: variables start from 1 => If 0 returned, there was no variable in the Schema
+Variable min_v_in_schema(Schema schema)
+{
+    if (schema.type == VARIABLE_SCHEMA) {
+        return schema.v;
+    }
+
+    Variable min_v = 0;
+    foreach_in_schema(schema, subschema)
+    {
+        min_v = MIN(min_v, min_v_in_schema(*subschema));
+    }
+    return min_v;
+}
+Variable min_v_in_set_schema(ArrayListSchema set_schema)
+{
+    Variable min_v = 0;
+    foreach_in_arraylist(Schema, s, set_schema)
+    {
+        min_v = MIN(min_v, min_v_in_schema(*s));
+    }
+    return min_v;
+}
+
+// PRE: variables start from 1 => If 0 returned, there was no variable in the Schema
 Variable max_v_in_schema(Schema schema)
 {
     if (schema.type == VARIABLE_SCHEMA) {
@@ -1422,11 +1446,6 @@ ArrayListSchema set_schema_with_respect_to_free_vars(
         unsigned pos = find_in_array_list_char_ptr(set_free_vars, *free_var);
         if(pos == set_free_vars.size){
             // NOTE: introducing an empty schema the resulting common schema will be the schema of the other operand that has the free_var
-            // TODO_YA: see if this doesn't introduce any complications for the first_check of the strict version (number of variables equal...)
-            //  Indeed. We have to precalculate the max variable in the set_schema, and instead of the empty schema introduce that
-            //  variable +1, +2, ... Then, to compare with the result in the file, we should remember (return as an extra result)
-            //  the list of new variables, and post-process only in the new version of general schema substituting these variables
-            //  by the schema that corresponds to the free var that only appears in one of the matrices.
             unsafe_add_to_array_list(result, empty_schema());
         } else {
             unsafe_add_to_array_list(result, set_schema.array[pos]);
@@ -1436,12 +1455,40 @@ ArrayListSchema set_schema_with_respect_to_free_vars(
     return result;
 }
 
+ArrayListSchema strict_set_schema_with_respect_to_free_vars(
+    ArrayListSchema set_schema, ArrayListCharPtr set_free_vars, ArrayListCharPtr final_free_vars, 
+    unsigned max_v, unsigned *num_new_vs, Arena *arena)
+{
+    // NOTE: no resizing risk
+    ArrayListSchema result = create_array_list_schema_arena(final_free_vars.size, arena);
+
+    // NOTE: unsafe adds taking advantage that we know the final size is equal to final_free_vars.size
+    // NOTE: the copies are shallow
+
+    Variable final_max_v = max_v;
+    foreach_in_arraylist(CharPtr, free_var, final_free_vars){
+        unsigned pos = find_in_array_list_char_ptr(set_free_vars, *free_var);
+        if(pos == set_free_vars.size){
+            ++final_max_v;
+            Schema v_schema; init_variable_schema(&v_schema, final_max_v);
+            unsafe_add_to_array_list(result, v_schema);
+        } else {
+            unsafe_add_to_array_list(result, set_schema.array[pos]);
+        }
+    }
+
+    *num_new_vs = final_max_v - max_v;
+    return result;
+}
+
 bool common_set_schema_free_vars_baseline(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
     Arena *arena)
 {
+    // NOTE: variables in set_schema2 were incremented to be different from variables in set_schema1, as they are logically
+    // Since empties are added in non-existent free_var spots, the difference between variables will be respected.
     ArrayListSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_vars1, final_free_vars, arena);
     ArrayListSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_vars2, final_free_vars, arena);
     
@@ -1458,14 +1505,51 @@ bool common_set_schema_strict_free_vars_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
     Arena *arena)
 {
-    ArrayListSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_vars1, final_free_vars, arena);
-    ArrayListSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_vars2, final_free_vars, arena);
+    // TODO: the strict version seems to fail when it has to interact with non-existent free_vars in one of the operands.
+    //  Easy to have different amount of variables (either inserting empties or new vars) failing the first check.
+    //  --> We are going to try with the non-strict version (COMMENT IN THE MEETING!). 
+
+    // NOTE: variables in set_schema2 were incremented to be different from variables in set_schema1, as they are logically
+    Variable max_v1 = max_v_in_set_schema(set_schema1);
+    Variable max_v2 = max_v_in_set_schema(set_schema2);
     
-    return common_set_schema_strict_baseline(
+    unsigned num_new_vars1, num_new_vars2;
+    ArrayListSchema set_schema1_wrt_free_vars = strict_set_schema_with_respect_to_free_vars(set_schema1, free_vars1, final_free_vars, max_v1, &num_new_vars1, arena);
+    ArrayListSchema set_schema2_wrt_free_vars = strict_set_schema_with_respect_to_free_vars(set_schema2, free_vars2, final_free_vars, max_v2, &num_new_vars2, arena);
+    
+    Variable min_v2 = min_v_in_set_schema(set_schema2_wrt_free_vars);
+    Variable new_max_v1 = max_v1 + num_new_vars1;
+    if(new_max_v1 >= min_v2){
+        unsigned increment = new_max_v1 - min_v2 + 1;
+        increment_variables_in_set_schema(set_schema2_wrt_free_vars, increment);
+        increment_variables_in_set_dependencies(dependencies2, increment);
+    }
+
+    bool common_exists = common_set_schema_strict_baseline(
         set_schema1_wrt_free_vars, dependencies1, 
         set_schema2_wrt_free_vars, dependencies2, 
         common_set_schema, common_dependencies,
         arena);
+
+    if(common_exists){
+        // TODO(OPT): iterate only through the positions where we know that there will be the extra variables
+        foreach_in_arraylistptr(Schema, schema, common_set_schema){
+            if(schema->type == VARIABLE_SCHEMA){
+                Variable v = schema->v;
+                if(max_v1 < v && v <= max_v1 + num_new_vars1){
+                    unsigned v_deps_i = find_v_in_array_list_dependency_pair(*common_dependencies, v);
+                    ArrayListSchema v_deps = common_dependencies->array[v_deps_i].schemas;
+                    assert(v_deps.size == 1);
+                    Schema substitution = v_deps.array[0];
+                    *schema = substitution;
+
+                    remove_index_from_array_list_dependency_pair(common_dependencies, v_deps_i);
+                }
+            }
+        }
+    }
+
+    return common_exists;
 }
 
 
@@ -1662,6 +1746,9 @@ void mapping_column_indexes(
     unsigned *starting_col_indices1, unsigned *starting_col_indices2,
     mgu_schema *mapping)
 {
+    // TODO(OPT): instead of passing all three free_vars here too (as to common_set_schema_free_vars) we should precalculate only once
+    //  the positions of free_vars1/2 in final_free_vars and pass this orderings to these functions
+
     assert((normalized_set_schema1.size == free_vars1.size) && (normalized_set_schema2.size == free_vars2.size));
 
     mapping->n_common = set_schema_size(normalized_common_set_schema);
@@ -1703,7 +1790,7 @@ void mapping_column_indexes(
         char *free_var = final_free_vars.array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
-        printf("--- Mapping L ---\n");
+        if (global_print_debugging) { printf("--- Mapping L ---\n"); }
         mapping_column_indexes_free_var(
             free_vars1, free_var,
             normalized_common_schema, normalized_set_schema1, num_cols1,
@@ -1715,7 +1802,7 @@ void mapping_column_indexes(
         );
         assert(mappingL_pos <= mapping->n_common);
 
-        printf("--- Mapping R ---\n");
+        if (global_print_debugging) { printf("--- Mapping R ---\n"); }
         mapping_column_indexes_free_var(
             free_vars2, free_var,
             normalized_common_schema, normalized_set_schema2, num_cols2,

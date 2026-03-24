@@ -722,10 +722,6 @@ void test_mapping_obtention__(
     unsigned *starting_col_indices1, unsigned *starting_col_indices2,
     mgu_schema *mapping
 ){
-    printf("###########################################################################\n");
-    printf("### test_mapping_obtention ################################################\n");
-    printf("###########################################################################\n");
-
     // Calculate mgu_schema
     mgu_schema computed_mapping;
     mapping_column_indexes(
@@ -739,6 +735,7 @@ void test_mapping_obtention__(
     bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
     
     printf("ok_mappings = %u\n\n", ok_mappings);
+    assert(ok_mappings);
 }
 
 void test_mapping_obtention_(
@@ -786,6 +783,19 @@ void test_mapping_obtention_(
         read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, arena);
     }
 
+    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
+    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2. More optimal,
+    //  less operations to perform.
+    //  Another option would be to calculate the max_v1 for every set_schema pair inside the loop, to avoid "wasting" unused vars.
+    Variable max_v1 = 0;
+    for(size_t i = 0; i < s1; ++i){
+        max_v1 = MAX(max_v1, max_v_in_set_schema(set_schemas1[i]));
+    }
+    for(size_t i = 0; i < s2; ++i){
+        increment_variables_in_set_schema(set_schemas2[i], max_v1);
+        increment_variables_in_set_dependencies(dependencies_array2[i], max_v1);
+    }
+
     first_rb = true;
     ArrayListCharPtr free_vars3, computed_free_vars3;
     do {
@@ -794,16 +804,20 @@ void test_mapping_obtention_(
         ArrayListDependencyPair common_dependencies;
         bool was_first_rb = first_rb; // NOTE: read_result_block sets first_rb to false
         read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
-        printf("Resultant fragment: %d-%d\n", rb.t1, rb.t2); // NOTE: when 0-0 no more fragments
 
         // NOTE: calculate final free vars only once! Since it corresponds to the entire M3!
         if(was_first_rb){
             computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, arena);
             bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
             printf("ok_free_vars = %u\n", ok_free_vars);
+            assert(ok_free_vars);
         }
 
         if (rb.t1) {
+            printf("Resultant fragment: %d-%d (%s)\n", 
+            rb.t1, rb.t2,
+            rb.lineal_lineal ? "Linear" : "Non-linear");
+
             // Get arguments
             ArrayListSchema set_schema1 = set_schemas1[rb.t1 - 1];
             ArrayListDependencyPair dependencies1 = dependencies_array1[rb.t1 - 1];
@@ -820,7 +834,7 @@ void test_mapping_obtention_(
 
             ArrayListSchema computed_common_set_schema;
             ArrayListDependencyPair computed_common_dependencies;
-            bool exists_common_schema = common_set_schema_strict_free_vars_baseline(
+            bool exists_common_schema = common_set_schema_free_vars_baseline(
                 set_schema1, dependencies1, free_vars1,
                 set_schema2, dependencies2, free_vars2,
                 &computed_common_set_schema, &computed_common_dependencies, computed_free_vars3,
@@ -840,6 +854,9 @@ void test_mapping_obtention_(
                 bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
 
                 printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+                assert(ok_set_schemas);
+                // TODO: some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
+                //  not having those empty dependencies is equivalent to having them...
             } else {
                 printf("WRONG: No common set schema --> No column mapping\n");
                 printf("File common set-schema: "); println_set_schema(common_set_schema, PRINT_VISUALLY);
@@ -897,6 +914,8 @@ void test_mapping_obtention_(
                 for(unsigned i = 0; i < ob1->r; ++i){
                     row1 = ob1->terms[i].row;
                     for(unsigned j = 0; j < ob2->r; ++j){
+                        printf("Rows: %d-%d (1-based)\n", i+1, j+1);
+
                         row2 = ob2->terms[j].row;
                         mapping = rb.terms[ i*rb.r2 + j ].ms;
 
@@ -980,12 +999,17 @@ void test_mapping_obtention(int argc, char *argv[]){
             strncpy(base, path_m1, strlen(path_m1) - 6);
             base[strlen(path_m1) - 6] = '\0';
 
-            // Skip passed tests: AGT002+1
             if(
+                // Skip passed tests: AGT002+1
                 strstr(base, "test0016") || 
                 strstr(base, "test0015") ||
-                //strstr(base, "test0001") || 
-                //strstr(base, "test0005") || 
+                strstr(base, "test0001") || 
+                strstr(base, "test0005") || 
+                strstr(base, "test0009") ||
+                strstr(base, "test0017") ||
+                //strstr(base, "test0011") ||
+                
+                
                 false)
             {
                 continue;

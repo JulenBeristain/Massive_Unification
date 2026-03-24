@@ -134,6 +134,8 @@ bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_sch
 
 void variables_in_schema(Schema schema, SetVariables *vars);
 void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *vars);
+Variable min_v_in_schema(Schema schema);
+Variable min_v_in_set_schema(ArrayListSchema set_schema);
 Variable max_v_in_schema(Schema schema);
 Variable max_v_in_set_schema(ArrayListSchema set_schema);
 void increment_variables_in_schema(Schema *schema, Variable increment);
@@ -239,11 +241,19 @@ unsigned set_schema_size(ArrayListSchema set_schema);
 unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena);
 ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
+
+bool common_set_schema_free_vars_baseline(
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
+    Arena *arena);
+
 bool common_set_schema_strict_free_vars_baseline(
     ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
     ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
     Arena *arena);
+
 void mapping_column_indexes(
     ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1, 
     ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
