@@ -1560,7 +1560,7 @@ bool common_set_schema_strict_free_vars_baseline(
 typedef struct SchemaIteratorNode SchemaIteratorNode;
 struct SchemaIteratorNode {
     Schema schema;
-    int next_child; // NOTE: -1 value if the schema hasn't been returned by the iterator yet
+    unsigned next_child;
 };
 
 DECLARE_ARRAYLIST_TYPE(SchemaIteratorNode)
@@ -1568,52 +1568,48 @@ DEFINE_ARRAYLIST_CREATE(SchemaIteratorNode, schema_iterator_node)
 DEFINE_ARRAYLIST_FREE(SchemaIteratorNode, schema_iterator_node)
 //DEFINE_ARRAYLIST_REMOVE_INDEX(SchemaIteratorNode, schema_iterator_node)
 
-typedef ArrayListSchemaIteratorNode SchemaIterator;
+typedef struct SchemaIterator SchemaIterator;
+struct SchemaIterator {
+    ArrayListSchemaIteratorNode stack;
+    bool first_next;
+};
 
 // NOTE: would be helpful to know the depth of the schema to avoid resizing, specially for an arena version.
 // NOTE: for my use case, I prefer a non-arena version.
 
 SchemaIterator create_schema_iterator(Schema schema){
     unsigned depth = schema_depth(schema);
-    SchemaIterator it = create_array_list_schema_iterator_node(depth);
-    SchemaIteratorNode node = { .schema = schema, .next_child = -1 };
-    unsafe_add_to_array_list(it, node);
+    ArrayListSchemaIteratorNode stack = create_array_list_schema_iterator_node(depth);
+    SchemaIteratorNode node = { .schema = schema, .next_child = 0 };
+    unsafe_add_to_array_list(stack, node);
+    SchemaIterator it = { .stack = stack, .first_next = true };
     return it;
 }
 
 static inline void free_schema_iterator(SchemaIterator iterator){
-    free_array_list_schema_iterator_node(iterator);
+    free_array_list_schema_iterator_node(iterator.stack);
 }
 
 bool schema_iterator_next(SchemaIterator *iterator, Schema *next){
-    if(iterator->size == 0){
+    if(iterator->stack.size == 0){
         return false;   // END
     }
     
-    SchemaIteratorNode *node = &unsafe_last_in_array_list_ptr(iterator);
-    if(node->next_child == -1){
+    SchemaIteratorNode *node = &unsafe_last_in_array_list(iterator->stack);
+    if(iterator->first_next){
         *next = node->schema;
-
-        if(next->type == VARIABLE_SCHEMA || next->arity == 0){
-            unsafe_remove_last_in_array_list_ptr(iterator);
-        } else {
-            node->next_child += 2; // NOTE: node->next_child == 1, important to skip next_child == 0 to avoid iterating that child twice...
-            SchemaIteratorNode new_node = { .schema = next->subschemas[0], .next_child = -1 };
-            unsafe_add_to_array_list_ptr(iterator, new_node);
-        }
+        iterator->first_next = false;
 
     } else {
-        assert(node->next_child >= 0);
-
-        if(node->schema.type == VARIABLE_SCHEMA || node->schema.arity == 0 || (unsigned)node->next_child == node->schema.arity){
-            unsafe_remove_last_in_array_list_ptr(iterator);
+        if(node->schema.type == VARIABLE_SCHEMA || node->next_child == node->schema.arity){
+            unsafe_remove_last_in_array_list(iterator->stack);
             return schema_iterator_next(iterator, next); // NOTE: recursive call to continue with the next child of parent or END
         }
 
         // NOTE: General schema with children left
         *next = node->schema.subschemas[node->next_child++];
         SchemaIteratorNode new_node = { .schema = *next, .next_child = 0 };
-        unsafe_add_to_array_list_ptr(iterator, new_node);
+        unsafe_add_to_array_list(iterator->stack, new_node);
     }
 
     return true;
@@ -1624,19 +1620,20 @@ bool schema_iterator_next(SchemaIterator *iterator, Schema *next){
 //  to the same variable. To avoid all those iterations and to keep both iterators pointing to the same corresponding schemas, 
 //  we can ignore all the children nodes of the schema already returned for the variable in both iterators.
 void schema_iterator_skip(SchemaIterator *iterator){
-    // 1st case: variable with 0 extending variables --> Corresponding schema empty (no variable schemas after normalized)
-    //  --> empty already popped, iterator in a good state, general schema with next_child >= 0 OR EMPTY.
-    // 2nd case: variable with extending variables --> Corresponding schema general --> child pushed, with next_child == -1
-    //  --> have to remove the first child's and the variable's schemas from the iterator's stack
-    // 3rd case (shouldn't be called here): call with the iterator freshly initialized, with no previous next call (size = 1, last->next_child = -1)
-    //  --> END by setting size to 0...
-    if(iterator->size && unsafe_last_in_array_list_ptr(iterator).next_child == -1){
-        // NOTE: we shouldn't call to skip before next is called at least once, skipping the entire schema without any iteration
-        //  (although using min(2, iterator->size) would be more robust here...)
-        assert(iterator->size > 1);
-        unsafe_remove_tail_in_array_list_ptr(iterator, 2);
+    // NOTE: if called before the first call to next, stack will be empty and the subsequent calls to next will return false.
+    //  Shouldn't be called just after creation.
+    assert(iterator->first_next == false);
+
+    // NOTE: the schema that is on top of the stack was already returned. We simply need to delete it to avoid iterating over its children.
+    if(iterator->stack.size){
+        // TODO: assert next_child was 0 (always?)
+        SchemaIteratorNode top = unsafe_last_in_array_list(iterator->stack);
+        assert(top.next_child == 0);
+
+        unsafe_remove_last_in_array_list(iterator->stack);
     }
 }
+
 
 // #endregion Schema iterator
 
@@ -1687,6 +1684,16 @@ void mapping_column_indexes_free_var(
                 // NOTE: function symbol --> Take original column number, that is, row_pos+1 (1-based column indexes)
                 mapping_side[(*mapping_pos)++] = row_pos + 1;
                 ++row_pos;
+
+                // NOTE: A function symbol (even a constant) can be extended with extra variables too when it's at the end of the row
+                //  but we have remaining "columns" encoded in the common schema??? --> Skip + get size???
+                // TODO: could we have more common_subschemas left as in the variable case
+                if(row_pos == end_pos){
+                    unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
+                    while(num_virtual_cols--){
+                        mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
+                    }
+                }
             } else {
                 // NOTE: variable
                 for(unsigned count_old_cols = original_subschema.size, old_col = row_pos + 1;
@@ -1696,7 +1703,9 @@ void mapping_column_indexes_free_var(
                 }
 
                 unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
-                // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
+                // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols 
+                // NOTE: since row_pos is not incremented before, the first variable, which was already extended in the matrix, 
+                //  will be mapped to the new virtual cols, not the last original extending variable of the repeated one.
                 if(row[row_pos] == 0){
                     // NOTE: first appearence of the row variable
                     unsigned **extending_cols = row_vars_to_extending_cols + row_pos;
@@ -1728,6 +1737,17 @@ void mapping_column_indexes_free_var(
                 row_pos += original_subschema.size;
                 schema_iterator_skip(&common_it);
                 schema_iterator_skip(&original_it);
+
+                // TODO: could we have even more??? Then we should skip after getting the size and perform a while with next...
+                if(row_pos == end_pos){
+                    bool has_remaining = schema_iterator_next(&common_it, &common_subschema);
+                    if(has_remaining){
+                        unsigned num_virtual_cols = common_subschema.size;
+                        while(num_virtual_cols--){
+                            mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
+                        }
+                    }
+                }
             }
         }
 
@@ -1790,6 +1810,7 @@ void mapping_column_indexes(
         char *free_var = final_free_vars.array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
+        // TODO: maybe inlining this function here (extracting smaller parts) is cleaner and can let us relate both mapping sides... + All schema iteration computations are the same for all rows -> Can't we precompute some results?
         if (global_print_debugging) { printf("--- Mapping L ---\n"); }
         mapping_column_indexes_free_var(
             free_vars1, free_var,
@@ -1813,9 +1834,10 @@ void mapping_column_indexes(
             &mappingR_pos, mapping->common_R
         );
         assert(mappingR_pos <= mapping->n_common);
+
+        assert(mappingL_pos == mappingR_pos);
     }
-    assert(mappingL_pos == mapping->n_common);
-    assert(mappingR_pos == mapping->n_common);
+    assert(mappingL_pos == mapping->n_common && mappingR_pos == mapping->n_common);
 
     free_arena(&row_vars_to_extending_cols_arena);
 }

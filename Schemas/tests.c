@@ -291,7 +291,7 @@ int read_num_blocks(FILE *stream, unsigned *s) {
     size_t len = 0;
 
     if (getline(&line, &len, stream) == -1) return 0; // Failed to read the line
-    if (strstr(line, "BEGIN") == NULL) {free(line); return 0;} // Not the correct line
+    if (strstr(line, "% BEGIN") == NULL) {free(line); return 0;} // Not the correct line
 
     char *endptr;
     char *e = strchr(line, '(');
@@ -340,7 +340,7 @@ void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
     long int num;
 
     getline(&line, &len, stream);
-    if (strstr(line, "BEGIN") == NULL) {
+    if (strstr(line, "% BEGIN") == NULL) {
         fprintf(stderr, "Could not read matrix dimensions\n");
         exit(EXIT_FAILURE);
     }
@@ -490,7 +490,7 @@ void read_operand_matrix(FILE *stream, operand_block *ob, ArrayListSchema *set_s
     while ((read = getline(&line, &len, stream)) != -1 && row < ob->r) {
         
         // If end of matrix reached, exit
-        if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
+        if (strstr(line, "% END") != NULL || strstr(line, "% End") != NULL)
             break;
         
         // Get first token, which tells the number of exception blocks
@@ -546,7 +546,7 @@ void read_result_matrix(
                          &rb->t1, &rb->t2, &rb->r1, &rb->r2, &rb->c1, &rb->c2, &rb->c);
     
     if (matched != 7) {
-        if (strstr(line, "END: Matrix M1 & M2 + MGU") != NULL) {free(line); return;}
+        if (strstr(line, "% END: Matrix M1 & M2 + MGU") != NULL) {free(line); return;}
         // if (verbose) 
         printf("line: '%s'\n",line);
         fprintf(stderr, "Could not read matrix subset info, matched: %d\n",matched);
@@ -587,7 +587,7 @@ void read_result_matrix(
     while ((read = getline(&line, &len, stream)) != -1 && row < rb->r) {
         
         // If end of matrix reached, exit
-        if (strstr(line, "END") != NULL || strstr(line, "End") != NULL)
+        if (strstr(line, "% END") != NULL || strstr(line, "% End") != NULL)
             break;
 
         // If non-linear block, we have to read the mapping
@@ -684,7 +684,7 @@ void read_result_block(
     if (first_rb) {
         first_rb=false; 
         getline(&line, &len, stream);
-        if (strstr(line, "END: Matrix M1 & M2 + MGU") != NULL) {free(line);}
+        if (strstr(line, "% END: Matrix M1 & M2 + MGU") != NULL) {free(line);}
 
         *free_vars = read_free_vars(stream, arena);
     }
@@ -965,7 +965,13 @@ void test_mapping_obtention(int argc, char *argv[]){
         return;
     }
 
-    char *folder_path = argv[1];
+    //char *folder_path = argv[1]; // AGT002+1
+    //char *folder_path = "data/experimentation_matrices/AGT004+2";
+    //char *folder_path = "data/experimentation_matrices/AGT/AGT006+2.p";
+    //char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
+    char *folder_path = "data/experimentation_matrices/SEV/SEV437+1.p";
+    // TODO_YA: check with matrices_with_free_vars too!
+
     global_print_debugging = argc > 2;
 
     DIR *dir = opendir(folder_path);
@@ -1000,16 +1006,29 @@ void test_mapping_obtention(int argc, char *argv[]){
             base[strlen(path_m1) - 6] = '\0';
 
             if(
-                // Skip passed tests: AGT002+1
-                strstr(base, "test0016") || 
-                strstr(base, "test0015") ||
-                strstr(base, "test0001") || 
-                strstr(base, "test0005") || 
-                strstr(base, "test0009") ||
-                strstr(base, "test0017") ||
+                // Skip passed tests: AGT002+1 (test0011 too big to test all row pairs)
+                //strstr(base, "test0016") || 
+                //strstr(base, "test0015") ||
+                //strstr(base, "test0001") || 
+                //strstr(base, "test0005") || 
+                //strstr(base, "test0009") ||
+                //strstr(base, "test0017") ||
                 //strstr(base, "test0011") ||
                 
-                
+                // Skip passed tests: AGT004+2
+                //strstr(base, "test0001") || 
+                //strstr(base, "test0004") ||
+
+                // Skip passed tests: AGT006+2.p
+                //strstr(base, "test0002") ||
+
+                // Skip passed tests: ITP018+5.p
+                //strstr(base, "test0361") || // TODO: NOT passed
+                //strstr(base, "test0458") || // TODO: NOT passed
+
+                // Skip passed tests: SEV437+1.p
+                //strstr(base, "test0003") || // TODO: NOT passed
+
                 false)
             {
                 continue;
