@@ -125,6 +125,7 @@ static inline Schema empty_schema(){
     empty.subschemas = NULL;
     return empty;
 }
+static inline bool is_empty(Schema s) { return s.type == GENERAL_SCHEMA && s.arity == 0; }
 unsigned schema_size(Schema s);
 
 bool equal_schemas(Schema s1, Schema s2);

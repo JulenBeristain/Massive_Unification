@@ -1672,8 +1672,32 @@ void mapping_column_indexes_free_var(
             Schema common_subschema, original_subschema;
             bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
             bool has_next_original = schema_iterator_next(&original_it, &original_subschema);
+
+            // TODO: as we note, we have repeated logic here and after the loop. Maybe iterating over the schemas is cleaner
+            //  than basing the loop on row positions.
+            // NOTE: a similar adjustment to the one done after this loop. The normalized common schema (always larger, even in each
+            //  "inductive" level) can have more subschemas than the original one not only at the end, but in the intermediate
+            //  levels. Therefore, we have to add the sizes of those extra subschemas until the common schemas iterator's stack's
+            //  depth equals the original's one.
+            while(common_it.stack.size > original_it.stack.size){
+                unsigned num_virtual_cols = common_subschema.size;
+                while(num_virtual_cols--){
+                    mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
+                }
+
+                // NOTE: thanks to this, we will remain in the same initial level until the exit of the loop.
+                schema_iterator_skip(&common_it);
+                // NOTE: here's where the stack size will be decremented when all subschemas of the initial level are iterated.
+                has_next_common = schema_iterator_next(&common_it, &common_subschema);
+            }
+            assert(common_it.stack.size == original_it.stack.size);
+
             if(global_print_debugging){
-                printf("row[row_pos=%d]=%d\n", row_pos, row[row_pos]);
+                printf("row[row_pos=%d] = %d\n", row_pos, row[row_pos]);
+                int common_child_num = (common_it.stack.size == 1) ? -1 : (int)(common_it.stack.array[common_it.stack.size-2].next_child-1);
+                int original_child_num = (original_it.stack.size == 1) ? -1 : (int)(original_it.stack.array[original_it.stack.size-2].next_child-1);
+                printf("Common   Stack level = %d - Child #%d\n", common_it.stack.size, common_child_num);
+                printf("Original Stack level = %d - Child #%d\n", original_it.stack.size, original_child_num);
                 printf("Next common   subschema: "); println_schema(common_subschema, PRINT_VISUALLY);
                 printf("Next original subschema: "); println_schema(original_subschema, PRINT_VISUALLY);
                 printf("---\n");
@@ -1685,14 +1709,16 @@ void mapping_column_indexes_free_var(
                 mapping_side[(*mapping_pos)++] = row_pos + 1;
                 ++row_pos;
 
-                // NOTE: A function symbol (even a constant) can be extended with extra variables too when it's at the end of the row
-                //  but we have remaining "columns" encoded in the common schema??? --> Skip + get size???
-                // TODO: could we have more common_subschemas left as in the variable case
-                if(row_pos == end_pos){
-                    unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
+                // NOTE: when a constant is one of the leaves of the term, the original subschema will be <>. It might need to be 
+                //  extended with extra variables too if we have remaining "columns" encoded in the common subschema (greater size).
+                if(is_empty(original_subschema)){
+                    unsigned num_virtual_cols = common_subschema.size - 1; // 1 == original_subschema.size;
                     while(num_virtual_cols--){
                         mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
                     }
+                    // NOTE: the extra columns of the common subschema that corresponds to the original subschema of the constant
+                    //  have all been included. We have to skip the subschemas of the common subschema.
+                    schema_iterator_skip(&common_it);
                 }
             } else {
                 // NOTE: variable
@@ -1708,21 +1734,15 @@ void mapping_column_indexes_free_var(
                 //  will be mapped to the new virtual cols, not the last original extending variable of the repeated one.
                 if(row[row_pos] == 0){
                     // NOTE: first appearence of the row variable
+                    // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
+                    //  just a "waste" of memory, but this way we avoid having to precalculate which variables are repeated.
+                    //  Since new virtual columns of non-repeated variables appear (only) once in the mapping, we won't have 
+                    //  "gaps" of unused virtual columns.
                     unsigned **extending_cols = row_vars_to_extending_cols + row_pos;
                     *extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(**extending_cols) * num_virtual_cols);
                     for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
                         mapping_side[(*mapping_pos)++] = *new_virtual_column;
                         *extending_col = (*new_virtual_column)++;
-                        // TODO_YA: since new_virtual_column is incremented even for non-repeated variables, since the virtual 
-                        //  extending variables of those won't appear in the mapping + after a non-repeated variable can come
-                        //  a repeated one ==> We can have some "gaps" between new virtual column identifiers...
-                        // Two solutions: 1) POST: post-process the obtained mgu_schema's common_L/R removing the gaps
-                        //      --> Have to identify the columns of all new virtual cols, order them by value of the virtual cols, and reset them 
-                        //          starting from initial_new_virtual_column
-                        //  2) PRE: pre-identify the non-linear variables and save the mapping to extending_cols only in those cases
-                        //      --> Iterate over row saving negative values (previous to the call to this function)
-                        //      --> Advantage, we can reduce to half the allocated bytes for pointers
-                        //      --> SIMPLER!
                     }
 
                 } else {
@@ -1737,18 +1757,35 @@ void mapping_column_indexes_free_var(
                 row_pos += original_subschema.size;
                 schema_iterator_skip(&common_it);
                 schema_iterator_skip(&original_it);
-
-                // TODO: could we have even more??? Then we should skip after getting the size and perform a while with next...
-                if(row_pos == end_pos){
-                    bool has_remaining = schema_iterator_next(&common_it, &common_subschema);
-                    if(has_remaining){
-                        unsigned num_virtual_cols = common_subschema.size;
-                        while(num_virtual_cols--){
-                            mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
-                        }
-                    }
-                }
             }
+        }
+
+        // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
+        //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
+        assert(row_pos == end_pos);
+
+        // NOTE: if in the common schema we have more subschemas, we need to insert more virtual columns.
+        for(;;){
+            Schema common_subschema;
+            bool has_remaining = schema_iterator_next(&common_it, &common_subschema);
+
+            if(!has_remaining){
+                break;
+            }
+
+            // NOTE: after the skips in the previous loop, we should take the remaining direct subschemas of the
+            //  "header" or general node of the common schema, if any.
+            assert(common_it.stack.size == 2);
+
+            unsigned num_virtual_cols = common_subschema.size;
+            while(num_virtual_cols--){
+                mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
+            }
+
+            // NOTE: we only need to iterate over the "header" nodes of the remaining subschemas, at stack-depth 2.
+            //  That's why we skip here, to avoid iterating over subnodes of the "header" nodes.
+            schema_iterator_skip(&common_it);
+            // OPT: call directly to -> unsafe_remove_last_in_array_list(iterator->stack);
         }
 
         free_schema_iterator(common_it);
