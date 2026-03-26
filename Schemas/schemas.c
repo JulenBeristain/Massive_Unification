@@ -289,6 +289,12 @@ unsigned schema_size(Schema s)
 }
 
 // TODO: we can add a depth field to precompute this in the creation of the Schemas
+//  Another option that can also be applicable to 'size' to AVOID having those values incrementing the size of the Schema struct
+//  is to use an EXCLUSIVE ARENA FOR SCHEMAS that later we can iterate calculating the sizes and depths of each corresponding one
+//  in a separate Arena / ArrayList(if no resizing risk). --> V INTERESTING
+//  Another option would be to default their values to 0 (they both start at 1), don't bother setting them to the correct value 
+//  when creating them in common schema, and computed those values just when we are about to use them (wrapped in a getter function
+//  that checks if they are non-zero) --> X MORE COSTLY
 // NOTE: useful to avoid resizing the ArrayList used as the Stack for SchemaIterator. Therefore, variable schemas and empties will return 1,
 //  because they need also to be stored in the Stack.
 unsigned schema_depth(Schema s){
