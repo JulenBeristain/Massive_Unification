@@ -238,15 +238,23 @@ void insertion_sort_arraylist_char_ptr(ArrayListCharPtr list);
 static inline void print_string(char *s) { printf("%s", s); }
 DECLARE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
 
+static inline void print_uint(unsigned i) { printf("%u", i); }
+typedef unsigned UInt;
+DECLARE_ARRAYLIST_TYPE(UInt)
+DECLARE_ARRAYLIST_CREATE_ARENA(UInt, uint)
+DECLARE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint)
+DECLARE_ARRAYLIST_PRINT(UInt, uint)
+DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
+
 unsigned set_schema_size(ArrayListSchema set_schema);
 unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena);
 ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
 
 bool common_set_schema_free_vars_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListUInt free_var_positions1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListUInt free_var_positions2,
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
 bool common_set_schema_strict_free_vars_baseline(
@@ -255,10 +263,17 @@ bool common_set_schema_strict_free_vars_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
     Arena *arena);
 
+void mapping_column_indexes_side(
+    ArrayListSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    ArrayListSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    unsigned *mapping_side,
+    Arena *row_vars_to_extending_cols_arena);
+
 void mapping_column_indexes(
-    ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1, 
-    ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
-    ArrayListSchema normalized_common_set_schema, ArrayListCharPtr final_free_vars,
+    ArrayListSchema normalized_set_schema1, ArrayListUInt free_var_positions1, int *row1, 
+    ArrayListSchema normalized_set_schema2, ArrayListUInt free_var_positions2, int *row2,
+    ArrayListSchema normalized_common_set_schema,
     unsigned *starting_col_indices1, unsigned *starting_col_indices2,
     mgu_schema *mapping);
 

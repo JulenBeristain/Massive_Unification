@@ -713,31 +713,6 @@ bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
     return true;
 }
 
-
-
-void test_mapping_obtention__(
-    ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1,
-    ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
-    ArrayListSchema normalized_common_set_schema, ArrayListCharPtr free_vars3, 
-    unsigned *starting_col_indices1, unsigned *starting_col_indices2,
-    mgu_schema *mapping
-){
-    // Calculate mgu_schema
-    mgu_schema computed_mapping;
-    mapping_column_indexes(
-        normalized_set_schema1, free_vars1, row1,
-        normalized_set_schema2, free_vars2, row2,
-        normalized_common_set_schema, free_vars3, 
-        starting_col_indices1, starting_col_indices2,
-        &computed_mapping);
-
-    // Compare the computed mgu_schema with the read one
-    bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
-    
-    printf("ok_mappings = %u\n\n", ok_mappings);
-    assert(ok_mappings);
-}
-
 void test_mapping_obtention_(
     char *path_m1, char *path_m2, char *path_m3, 
     Arena *arena)
@@ -798,32 +773,49 @@ void test_mapping_obtention_(
 
     first_rb = true;
     ArrayListCharPtr free_vars3, computed_free_vars3;
-    do {
-        result_block rb;
-        ArrayListSchema common_set_schema;
-        ArrayListDependencyPair common_dependencies;
-        bool was_first_rb = first_rb; // NOTE: read_result_block sets first_rb to false
-        read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+    result_block rb;
+    ArrayListSchema common_set_schema;
+    ArrayListDependencyPair common_dependencies;
+    // NOTE: read_result_block sets first_rb to false
+    read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
 
-        // NOTE: calculate final free vars only once! Since it corresponds to the entire M3!
-        if(was_first_rb){
-            computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, arena);
-            bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
-            printf("ok_free_vars = %u\n", ok_free_vars);
-            assert(ok_free_vars);
+    // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
+    computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, arena);
+    bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
+    printf("ok_free_vars = %u\n", ok_free_vars);
+    assert(ok_free_vars);
+
+    // NOTE: compute free_var_positions1/2
+    // NOTE: no resizing risk with these ArrayLists
+    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(free_vars3.size, arena);
+    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(free_vars3.size, arena);
+    foreach_in_arraylist(CharPtr, free_v, free_vars3){
+        // NOTE: special value for not found = free_vars3.size
+        unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
+        if(pos == free_vars1.size){
+            pos = free_vars3.size;
         }
+        unsafe_add_to_array_list(free_var_positions1, pos);
 
-        if (rb.t1) {
-            printf("Resultant fragment: %d-%d (%s)\n", 
-            rb.t1, rb.t2,
-            rb.lineal_lineal ? "Linear" : "Non-linear");
+        pos = find_in_array_list_char_ptr(free_vars2, *free_v);
+        if(pos == free_vars2.size){
+            pos = free_vars3.size;
+        }
+        unsafe_add_to_array_list(free_var_positions2, pos);
+    }
+    
+    // NOTE: no resizing risk with this arena
+    Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
 
-            // Get arguments
-            ArrayListSchema set_schema1 = set_schemas1[rb.t1 - 1];
-            ArrayListDependencyPair dependencies1 = dependencies_array1[rb.t1 - 1];
+    for(unsigned t1 = 1; t1 <= s1; ++t1){
+        for(unsigned t2 = 1; t2 <= s2; ++t2){
+
+            // NOTE: calculate common schema
+            ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
+            ArrayListDependencyPair dependencies1 = dependencies_array1[t1 - 1];
             
-            ArrayListSchema set_schema2 = set_schemas2[rb.t2 - 1];
-            ArrayListDependencyPair dependencies2 = dependencies_array2[rb.t2 - 1];
+            ArrayListSchema set_schema2 = set_schemas2[t2 - 1];
+            ArrayListDependencyPair dependencies2 = dependencies_array2[t2 - 1];
 
             if(global_print_debugging){
                 printf("SS1 - "); println_set_schema(set_schema1, PRINT_VISUALLY);
@@ -835,109 +827,176 @@ void test_mapping_obtention_(
             ArrayListSchema computed_common_set_schema;
             ArrayListDependencyPair computed_common_dependencies;
             bool exists_common_schema = common_set_schema_free_vars_baseline(
-                set_schema1, dependencies1, free_vars1,
-                set_schema2, dependencies2, free_vars2,
-                &computed_common_set_schema, &computed_common_dependencies, computed_free_vars3,
+                set_schema1, dependencies1, free_var_positions1,
+                set_schema2, dependencies2, free_var_positions2,
+                &computed_common_set_schema, &computed_common_dependencies,
                 arena);
-            if(exists_common_schema){
-                // NOTE: variables are identified from 1 to n in the resulting common schema in the file
-                SetVariables read_vars = create_set_variables_defsize(); 
-                variables_in_set_schema(common_set_schema, &read_vars);
-                unsigned num_read_vars = read_vars.num_variables;
-                free_set_variables(read_vars);
 
-                size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
-                Variable *mapping = allocate(arena, num_bytes_for_mapping);
-                memset(mapping, 0, num_bytes_for_mapping);
+            if(rb.t1 == t1 && rb.t2 == t2){
+                // NOTE: common schema exists so no fragment was skipped
+                printf("Resultant fragment: %d-%d (%s)\n", t1, t2, rb.lineal_lineal ? "Linear" : "Non-linear");
+                assert(exists_common_schema);
 
-                bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
-                bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
+                // NOTE: check correct common schema and dependencies!
+                {
+                    // NOTE: variables are identified from 1 to n in the resulting common schema in the file
+                    SetVariables read_vars = create_set_variables_defsize(); 
+                    variables_in_set_schema(common_set_schema, &read_vars);
+                    unsigned num_read_vars = read_vars.num_variables;
+                    free_set_variables(read_vars);
 
-                printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
-                assert(ok_set_schemas);
-                // TODO: some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
-                //  not having those empty dependencies is equivalent to having them...
-            } else {
-                printf("WRONG: No common set schema --> No column mapping\n");
-                printf("File common set-schema: "); println_set_schema(common_set_schema, PRINT_VISUALLY);
-                printf("File dependencies:\n"); println_set_dependencies(common_dependencies, PRINT_VISUALLY);
-                free_result_block(&rb);
-                exit(-1); //continue;
-            }
+                    size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
+                    Variable *mapping = allocate(arena, num_bytes_for_mapping);
+                    memset(mapping, 0, num_bytes_for_mapping);
 
-            ArrayListSchema normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
-            ArrayListSchema normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
-            ArrayListSchema normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
+                    bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
+                    bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
 
-            if(global_print_debugging){
-                printf("NCSS - "); println_set_schema(normalized_common_set_schema, PRINT_VISUALLY);
-                printf("NSS1 - "); println_set_schema(normalized_set_schema1, PRINT_VISUALLY);
-                printf("NSS2 - "); println_set_schema(normalized_set_schema2, PRINT_VISUALLY);
-            }
-
-            // NOTE: no resizing risk with this arena
-            Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
-            unsigned *starting_col_indices1 = starting_column_indexes(normalized_set_schema1, &starting_indices_arena);
-            unsigned *starting_col_indices2 = starting_column_indexes(normalized_set_schema2, &starting_indices_arena);
-
-
-            unsigned row_len1 = rb.c1;
-            unsigned row_len2 = rb.c2;
-            
-            assert(set_schema_size(normalized_set_schema1) == row_len1);
-            assert(set_schema_size(normalized_set_schema2) == row_len2);
-
-            operand_block *ob1 = obs1 + rb.t1-1;
-            operand_block *ob2 = obs2 + rb.t2-1;
-
-
-            int *row1, *row2;
-            mgu_schema *mapping; // TODO: fix memory leaks with mapping...
-
-            if(rb.lineal_lineal){
-                // Only one mapping in linear result block
-                assert(ob1->r > 0);
-                row1 = ob1->terms[0].row;
-                row2 = ob2->terms[0].row;
-                mapping = rb.ms;
-
-                // Calculate the mgu_schema and compare it with the one in the file
-                test_mapping_obtention__(
-                    normalized_set_schema1, free_vars1, row1,
-                    normalized_set_schema2, free_vars2, row2,
-                    normalized_common_set_schema, free_vars3, 
-                    starting_col_indices1, starting_col_indices2,
-                    mapping
-                );
-            } else {
-                // One mapping per row pairs in non-linear result block
-                for(unsigned i = 0; i < ob1->r; ++i){
-                    row1 = ob1->terms[i].row;
-                    for(unsigned j = 0; j < ob2->r; ++j){
-                        printf("Rows: %d-%d (1-based)\n", i+1, j+1);
-
-                        row2 = ob2->terms[j].row;
-                        mapping = rb.terms[ i*rb.r2 + j ].ms;
-
-                        // Calculate the mgu_schema and compare it with the one in the file
-                        test_mapping_obtention__(
-                            normalized_set_schema1, free_vars1, row1,
-                            normalized_set_schema2, free_vars2, row2,
-                            normalized_common_set_schema, free_vars3, 
-                            starting_col_indices1, starting_col_indices2,
-                            mapping
-                        );
-                    }
+                    printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+                    assert(ok_set_schemas);
+                    // TODO: some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
+                    //  not having those empty dependencies is equivalent to having them...
                 }
+
+                // NOTE: calculate normalized set schemas.
+                ArrayListSchema normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
+                ArrayListSchema normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
+                ArrayListSchema normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
+                assert(normalized_set_schema1.size == free_vars1.size);
+                assert(normalized_set_schema2.size == free_vars2.size);
+                assert(normalized_common_set_schema.size == free_vars3.size);
+
+                if(global_print_debugging){
+                    printf("NCSS - "); println_set_schema(normalized_common_set_schema, PRINT_VISUALLY);
+                    printf("NSS1 - "); println_set_schema(normalized_set_schema1, PRINT_VISUALLY);
+                    printf("NSS2 - "); println_set_schema(normalized_set_schema2, PRINT_VISUALLY);
+                }
+
+                // NOTE: calculate starting column indices
+                clear_arena(&starting_indices_arena);
+                unsigned *starting_col_indices1 = starting_column_indexes(normalized_set_schema1, &starting_indices_arena);
+                unsigned *starting_col_indices2 = starting_column_indexes(normalized_set_schema2, &starting_indices_arena);
+
+                unsigned row_len1 = rb.c1;
+                unsigned row_len2 = rb.c2;
+                assert(set_schema_size(normalized_set_schema1) == row_len1);
+                assert(set_schema_size(normalized_set_schema2) == row_len2);
+
+                operand_block *ob1 = obs1 + t1-1;
+                operand_block *ob2 = obs2 + t2-1;
+
+                mgu_schema computed_mapping;
+                computed_mapping.n_common = set_schema_size(normalized_common_set_schema);
+                unsigned num_cols1 = set_schema_size(normalized_set_schema1);
+                computed_mapping.new_a = computed_mapping.n_common - num_cols1;
+                unsigned num_cols2 = set_schema_size(normalized_set_schema2);
+                computed_mapping.new_b = computed_mapping.n_common - num_cols2;
+
+                // TODO: see if we use arena for the computed_mapping, instead of malloc
+                unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
+                // TODO: check if malloc fails
+                computed_mapping.common_columns = malloc(num_bytes);
+                for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
+
+                // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
+                //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
+                Arena row_vars_to_extending_cols_arena; 
+                unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
+                unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
+                unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(computed_mapping.new_a);
+                unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(computed_mapping.new_b);
+                init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
+
+                unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
+                unsigned *mapping_sides = NULL;
+
+                if(rb.lineal_lineal){
+                    // TODO: in reallity, if linear we don't need to store any row_vars to extending_cols mapping --> Implement a simplified version
+
+                    // TODO: check if malloc fails or use an arena
+                    unsigned *mapping_sides = malloc(2 * mapping_side_size);
+                    unsigned *mappingL = mapping_sides;
+                    unsigned *mappingR = mapping_sides + computed_mapping.n_common;
+
+                    assert(ob1->r > 0 && ob2->r > 0);
+                    
+                    mapping_column_indexes_side(
+                        normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                        starting_col_indices1, ob1->terms[0].row, mappingL, &row_vars_to_extending_cols_arena
+                    );
+                    clear_arena(&row_vars_to_extending_cols_arena);
+                    
+                    mapping_column_indexes_side(
+                        normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                        starting_col_indices2, ob2->terms[0].row, mappingR, &row_vars_to_extending_cols_arena
+                    );
+                    free_arena(&row_vars_to_extending_cols_arena);
+
+                    // Only one mapping in linear result block
+                    mgu_schema *mapping = rb.ms;
+                    computed_mapping.common_L = mappingL;
+                    computed_mapping.common_R = mappingR;
+                    bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
+                    printf("ok_mappings = %u\n\n", ok_mappings);
+                    assert(ok_mappings);
+
+                } else {
+                    // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
+                    
+                    // TODO: check if malloc fails or use an arena
+                    unsigned *mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
+                    unsigned *mapping_side = mapping_sides;
+                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                            starting_col_indices1, ob1->terms[i].row, mapping_side, &row_vars_to_extending_cols_arena
+                        );
+                        clear_arena(&row_vars_to_extending_cols_arena);
+                    }
+                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                            starting_col_indices2, ob2->terms[i].row, mapping_side, &row_vars_to_extending_cols_arena
+                        );
+                        clear_arena(&row_vars_to_extending_cols_arena);
+                    }
+
+                    free_arena(&row_vars_to_extending_cols_arena);
+                    
+                    // Change the mgu_schemas sides and compare
+                    // One mapping per row pairs in non-linear result block
+                    for(unsigned i = 0; i < ob1->r; ++i){
+                        computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                        for(unsigned j = 0; j < ob2->r; ++j){
+                            printf("Rows: %d-%d (1-based)\n", i+1, j+1);
+                            
+                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
+
+                            computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
+
+                            bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
+                            
+                            printf("ok_mappings = %u\n\n", ok_mappings);
+                            assert(ok_mappings);
+                        }
+                    }
+
+                }
+                
+                free(mapping_sides);
+                free(computed_mapping.common_columns);
+                free_result_block(&rb);
+                read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
             }
-
-            free_arena(&starting_indices_arena);
-
-            free_result_block(&rb);
+            else {
+                // NOTE: common schema doesn't exist so a fragment was skipped
+                printf("Resultant fragment: %d-%d (SKIPPED BECAUSE COMMON SCHEMA DOESN'T EXIST!)\n", t1, t2);
+                assert(!exists_common_schema);
+            }
         }
-        else break;
-    } while (true);
+    }
 
+    free_arena(&starting_indices_arena);
 
     for (size_t i = 0; i < s1; i++) {
         free_operand_block(&obs1[i]);
@@ -965,10 +1024,10 @@ void test_mapping_obtention(int argc, char *argv[]){
         return;
     }
 
-    //char *folder_path = argv[1]; // AGT002+1
+    char *folder_path = argv[1]; // AGT002+1
     //char *folder_path = "data/experimentation_matrices/AGT004+2";
     //char *folder_path = "data/experimentation_matrices/AGT/AGT006+2.p";
-    char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
+    //char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
     //char *folder_path = "data/experimentation_matrices/SEV/SEV437+1.p";
     // TODO_YA: check with matrices_with_free_vars too!
 
@@ -1007,13 +1066,13 @@ void test_mapping_obtention(int argc, char *argv[]){
 
             if(
                 // Skip passed tests: AGT002+1 (test0011 too big to test all row pairs)
-                //strstr(base, "test0016") || 
-                //strstr(base, "test0015") ||
-                //strstr(base, "test0001") || 
-                //strstr(base, "test0005") || 
-                //strstr(base, "test0009") ||
-                //strstr(base, "test0017") ||
-                //strstr(base, "test0011") ||
+                strstr(base, "test0016") || 
+                strstr(base, "test0015") ||
+                strstr(base, "test0001") || 
+                strstr(base, "test0005") || 
+                strstr(base, "test0009") ||
+                strstr(base, "test0017") ||
+                //strstr(base, "test0011") || // TODO_YA: not passed, fragment 2-1, M1, row 460 assertion error for(;;) common_it.stack_size == 5 != 2
                 
                 // Skip passed tests: AGT004+2
                 //strstr(base, "test0001") || 
@@ -1023,8 +1082,8 @@ void test_mapping_obtention(int argc, char *argv[]){
                 //strstr(base, "test0002") ||
 
                 // Skip passed tests: ITP018+5.p
-                strstr(base, "test0361") ||
-                //strstr(base, "test0458") || // TODO_YA: NOT passed
+                //strstr(base, "test0361") ||
+                //strstr(base, "test0458") || // TODO: similar problem to SEV. I don't see why the computed is problematic... It seems that the criteria for extending variables already in the file is different than the one I am using (?)
                 //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,107-6,108-7,109-8,110-9,111-10,112-11,113-12,114-13,115-14,116-15,117-16,118-17,96-18,97-19,119-20,120-21,121-22,122-23,123-24,124-25,125-26,126-27,127-28,128-29,98-30,99-31,100-32,129-33,130-34,131-35,132-36,133-37,134-38,101-39,102-40,103-41,135-42,136-43,137-44,138-45,139-46,140-47,141-48,142-49,143-50,144-51,145-52,146-53,147-54,148-55,149-56,150-57,151-58,152-59,153-60,154-61,155-62,156-63,157-64,158-65,159-66,160-67,161-68,162-69,163-70,104-71,105-72,106-73,164-74,165-75,166-76,167-77,168-78,169-79
                 //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,96-6,97-7,98-8,99-9,100-10,101-11,102-12,103-13,104-14,105-15,106-16,107-17,108-18,109-19,110-20,111-21,112-22,113-23,114-24,115-25,116-26,117-27,118-28,119-29,120-30,121-31,122-32,123-33,124-34,125-35,126-36,127-37,128-38,129-39,130-40,131-41,132-42,133-43,134-44,135-45,136-46,137-47,138-48,139-49,140-50,141-51,142-52,143-53,144-54,145-55,146-56,147-57,148-58,149-59,150-60,151-61,152-62,153-63,154-64,155-65,156-66,157-67,158-68,159-69,160-70,161-71,162-72,163-73,164-74,165-75,166-76,167-77,168-78,169-79
                 //                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ^

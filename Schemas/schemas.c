@@ -141,6 +141,19 @@ DEFINE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// ARRAYLIST UInts /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ARRAYLIST_CREATE_ARENA(UInt, uint)
+DEFINE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint, print_uint)
+DEFINE_ARRAYLIST_PRINT(UInt, uint)
+DEFINE_ARRAYLIST_PRINTLN(UInt, uint)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END ARRAYLIST UInts /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// PRINTING FUNCTIONS FOR DEBUGGING ////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1439,28 +1452,25 @@ ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayList
     return result;
 }
 
-ArrayListSchema set_schema_with_respect_to_free_vars(
-    ArrayListSchema set_schema, ArrayListCharPtr set_free_vars, 
-    ArrayListCharPtr final_free_vars, Arena *arena)
-{
+ArrayListSchema set_schema_with_respect_to_free_vars(ArrayListSchema set_schema, ArrayListUInt free_var_positions, Arena *arena){
     // NOTE: no resizing risk
-    ArrayListSchema result = create_array_list_schema_arena(final_free_vars.size, arena);
+    ArrayListSchema result = create_array_list_schema_arena(free_var_positions.size, arena);
 
     // NOTE: unsafe adds taking advantage that we know the final size is equal to final_free_vars.size
     // NOTE: the copies are shallow
-    foreach_in_arraylist(CharPtr, free_var, final_free_vars){
-        unsigned pos = find_in_array_list_char_ptr(set_free_vars, *free_var);
-        if(pos == set_free_vars.size){
+    foreach_in_arraylist(UInt, pos, free_var_positions){
+        if(*pos == free_var_positions.size){
             // NOTE: introducing an empty schema the resulting common schema will be the schema of the other operand that has the free_var
             unsafe_add_to_array_list(result, empty_schema());
         } else {
-            unsafe_add_to_array_list(result, set_schema.array[pos]);
+            unsafe_add_to_array_list(result, set_schema.array[*pos]);
         }
     }
 
     return result;
 }
 
+// TODO: use the precomputed free_var positions...
 ArrayListSchema strict_set_schema_with_respect_to_free_vars(
     ArrayListSchema set_schema, ArrayListCharPtr set_free_vars, ArrayListCharPtr final_free_vars, 
     unsigned max_v, unsigned *num_new_vs, Arena *arena)
@@ -1488,15 +1498,15 @@ ArrayListSchema strict_set_schema_with_respect_to_free_vars(
 }
 
 bool common_set_schema_free_vars_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
+    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListUInt free_var_positions1,
+    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListUInt free_var_positions2,
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena)
 {
     // NOTE: variables in set_schema2 were incremented to be different from variables in set_schema1, as they are logically
     // Since empties are added in non-existent free_var spots, the difference between variables will be respected.
-    ArrayListSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_vars1, final_free_vars, arena);
-    ArrayListSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_vars2, final_free_vars, arena);
+    ArrayListSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_var_positions1, arena);
+    ArrayListSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_var_positions2, arena);
     
     return common_set_schema_baseline(
         set_schema1_wrt_free_vars, dependencies1, 
@@ -1645,7 +1655,7 @@ void schema_iterator_skip(SchemaIterator *iterator){
 
 // NOTE: num_cols = set_schema_size(normalized_set_schema)
 void mapping_column_indexes_free_var(
-    ArrayListCharPtr free_vars, char *free_var,
+    unsigned pos, bool free_var_contained,
     Schema normalized_common_schema, ArrayListSchema normalized_set_schema, unsigned num_cols,
     const unsigned *starting_col_indices,
     const int *row,
@@ -1653,8 +1663,7 @@ void mapping_column_indexes_free_var(
     unsigned *new_virtual_column,
     unsigned *mapping_pos, unsigned *mapping_side
 ){
-    unsigned pos = find_in_array_list_char_ptr(free_vars, free_var);
-    if (pos == free_vars.size) {
+    if (!free_var_contained) {
         // NOTE: free_var wasn't originally in M. Add as many virtual columns as the size of the normalized common schema
         for(unsigned num_new_virtual_cols = normalized_common_schema.size; num_new_virtual_cols; --num_new_virtual_cols){
             mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
@@ -1673,7 +1682,7 @@ void mapping_column_indexes_free_var(
 
         // NOTE: row_pos is 0 based, as opposed to starting_col_indices!!!
         unsigned row_pos = starting_col_indices[pos] - 1;
-        unsigned end_pos = (pos == (free_vars.size - 1)) ? num_cols : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
+        unsigned end_pos = (pos == (normalized_set_schema.size - 1)) ? num_cols : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
         while(row_pos < end_pos){
             Schema common_subschema, original_subschema;
             bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
@@ -1799,21 +1808,52 @@ void mapping_column_indexes_free_var(
     }
 }
 
+void mapping_column_indexes_side(
+    ArrayListSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    ArrayListSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    unsigned *mapping_side,
+    Arena *row_vars_to_extending_cols_arena)
+{
+    // TODO: these should have been precomputed already in the set schemas...
+    unsigned n_common = set_schema_size(normalized_common_set_schema);
+    unsigned num_cols = set_schema_size(normalized_set_schema);
+
+    unsigned **row_vars_to_extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(unsigned*) * num_cols);
+
+    unsigned new_virtual_column = num_cols + 1;
+    unsigned mapping_pos = 0;
+
+    for(unsigned i = 0; i < normalized_common_set_schema.size; ++i){
+        unsigned pos = free_var_positions.array[i];
+        Schema normalized_common_schema = normalized_common_set_schema.array[i];
+
+        // TODO: this could be inlined...
+        bool free_var_contained = pos < normalized_common_set_schema.size;
+        mapping_column_indexes_free_var(
+            pos, free_var_contained,
+            normalized_common_schema, normalized_set_schema, num_cols,
+            starting_col_indices,
+            row,
+            row_vars_to_extending_cols, row_vars_to_extending_cols_arena,
+            &new_virtual_column,
+            &mapping_pos, mapping_side
+        );
+        assert(mapping_pos <= n_common);
+    }
+    assert(mapping_pos == n_common);
+}
+
 //FUTURE_WORK: if for getting the mapping we need to actually extend the rows, then we could forget about the mapping and the 
 //  unification would be a simple loop comparing corresponding extended-rows' elements
 // NOTE: common_set_schema and common_dependencies are returned just for testing. Not normalized versions, as in M3 files.
 void mapping_column_indexes(
-    ArrayListSchema normalized_set_schema1, ArrayListCharPtr free_vars1, int *row1, 
-    ArrayListSchema normalized_set_schema2, ArrayListCharPtr free_vars2, int *row2,
-    ArrayListSchema normalized_common_set_schema, ArrayListCharPtr final_free_vars,
+    ArrayListSchema normalized_set_schema1, ArrayListUInt free_var_positions1, int *row1, 
+    ArrayListSchema normalized_set_schema2, ArrayListUInt free_var_positions2, int *row2,
+    ArrayListSchema normalized_common_set_schema,
     unsigned *starting_col_indices1, unsigned *starting_col_indices2,
     mgu_schema *mapping)
 {
-    // TODO(OPT): instead of passing all three free_vars here too (as to common_set_schema_free_vars) we should precalculate only once
-    //  the positions of free_vars1/2 in final_free_vars and pass this orderings to these functions
-
-    assert((normalized_set_schema1.size == free_vars1.size) && (normalized_set_schema2.size == free_vars2.size));
-
     mapping->n_common = set_schema_size(normalized_common_set_schema);
     unsigned num_cols1 = set_schema_size(normalized_set_schema1);
     mapping->new_a = mapping->n_common - num_cols1;
@@ -1848,15 +1888,15 @@ void mapping_column_indexes(
     unsigned new_virtual_column1 = num_cols1 + 1;
     unsigned new_virtual_column2 = num_cols2 + 1;
     unsigned mappingL_pos = 0, mappingR_pos = 0;
-    assert(final_free_vars.size == normalized_common_set_schema.size);
-    for(unsigned i = 0; i < final_free_vars.size; ++i){
-        char *free_var = final_free_vars.array[i];
+    for(unsigned i = 0; i < normalized_common_set_schema.size; ++i){
+        unsigned pos = free_var_positions1.array[i];
         Schema normalized_common_schema = normalized_common_set_schema.array[i];
 
         // TODO: maybe inlining this function here (extracting smaller parts) is cleaner and can let us relate both mapping sides... + All schema iteration computations are the same for all rows -> Can't we precompute some results?
+        bool free_var_contained = pos < normalized_common_set_schema.size;
         if (global_print_debugging) { printf("--- Mapping L ---\n"); }
         mapping_column_indexes_free_var(
-            free_vars1, free_var,
+            pos, free_var_contained,
             normalized_common_schema, normalized_set_schema1, num_cols1,
             starting_col_indices1,
             row1,
@@ -1866,9 +1906,10 @@ void mapping_column_indexes(
         );
         assert(mappingL_pos <= mapping->n_common);
 
+        pos = free_var_positions2.array[i];
         if (global_print_debugging) { printf("--- Mapping R ---\n"); }
         mapping_column_indexes_free_var(
-            free_vars2, free_var,
+            pos, free_var_contained,
             normalized_common_schema, normalized_set_schema2, num_cols2,
             starting_col_indices2,
             row2,
