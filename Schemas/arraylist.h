@@ -55,6 +55,14 @@ typedef enum ArrayListGetReturnCode { INVALID_INDEX, VALID_INDEX } ArrayListGetR
 #define foreach_in_arraylistptr(Type, valptr, listptr)                                                          \
     for(Type *valptr = (listptr)->array, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
 
+
+#define foreach_after_first_in_arraylist(Type, valptr, list)                                                    \
+    for(Type *valptr = (list).array + 1, *_end = (list).array + (list).size; valptr < _end; ++valptr)   \
+
+#define foreach_after_first_in_arraylistptr(Type, valptr, listptr)                                                          \
+    for(Type *valptr = (listptr)->array + 1, *_end = (listptr)->array + (listptr)->size; valptr < _end; ++valptr)   \
+
+
 #define foreach_in_arraylists(Type, iter_short, iter_long, list_short, list_long) \
     for(Type *iter_short = (list_short).array, *iter_long = (list_long).array, \
              *_end = (list_short).array + (list_short).size; \

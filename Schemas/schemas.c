@@ -1386,24 +1386,28 @@ Schema longest_dependency(ArrayListDependencyPair dependencies, Variable v){
         return empty_schema();
     }
     ArrayListSchema schemas = dependencies.array[v_i].schemas;
+    assert(schemas.size > 0);
 
-    unsigned max_size = 0;
-    unsigned max_i = 0;
-    unsigned i = 0;
-    foreach_in_arraylist(Schema, schema, schemas){
-        if (schema->size > max_size) {
-            max_size = schema->size;
-            max_i = i;
+    Schema *result = schemas.array;
+    foreach_after_first_in_arraylist(Schema, schema, schemas){
+        if (schema->size > result->size) {   
+            result = schema;
         }
-        ++i;
     }
-    return schemas.array[max_i];
+
+    return *result;
 }
 
 // NOTE: the input schema is not overwritten, a new copy is done for the normalized schema.
 Schema normalized_schema(Schema schema, ArrayListDependencyPair dependencies, Arena* arena){
     if (schema.type == VARIABLE_SCHEMA) {
-        return longest_dependency(dependencies, schema.v);
+        // NOTE: this simple version follows strictly the definition in the paper. We can still have some Schema-Variables,
+        //  but we don't need to change them for <> because later we are only interested in the sizes of the schemas, and both
+        //  <> and variable-schemas have size 1.
+        Schema longest_dep = longest_dependency(dependencies, schema.v);
+        return longest_dep;
+        // NOTE: the most efficient option would be to define an empty() operation that changes all variables to <>,
+        //  since we know that's the only change we need thanks to the theta operator.
     }
 
     Schema result;
@@ -1779,7 +1783,8 @@ void mapping_column_indexes_free_var(
         //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
         assert(row_pos == end_pos);
 
-        // NOTE: if in the common schema we have more subschemas, we need to insert more virtual columns.
+        // NOTE: if in the common schema we have more subschemas and/or the common corresponding to the last original has more depth,
+        //  we need to insert more virtual columns.
         for(;;){
             Schema common_subschema;
             bool has_remaining = schema_iterator_next(&common_it, &common_subschema);
@@ -1788,17 +1793,14 @@ void mapping_column_indexes_free_var(
                 break;
             }
 
-            // NOTE: after the skips in the previous loop, we should take the remaining direct subschemas of the
-            //  "header" or general node of the common schema, if any.
-            assert(common_it.stack.size == 2);
-
             unsigned num_virtual_cols = common_subschema.size;
             while(num_virtual_cols--){
                 mapping_side[(*mapping_pos)++] = (*new_virtual_column)++;
             }
 
-            // NOTE: we only need to iterate over the "header" nodes of the remaining subschemas, at stack-depth 2.
-            //  That's why we skip here, to avoid iterating over subnodes of the "header" nodes.
+            // NOTE: we only need to iterate over the "header" nodes of the remaining subschemas.
+            //  That's why we skip here, to avoid iterating over subnodes of the "header" nodes,
+            //  counting multiple times the sizes of some subschemas.
             schema_iterator_skip(&common_it);
             // OPT: call directly to -> unsafe_remove_last_in_array_list(iterator->stack);
         }

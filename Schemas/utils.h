@@ -13,6 +13,8 @@
 //extern size_t global_line_number;
 extern bool global_print_debugging;
 extern unsigned global_create_memory_block_calls;
+extern unsigned global_starting_t1;
+extern unsigned global_starting_t2;
 
 static inline unsigned num_digits(unsigned n){
     unsigned res = 1;

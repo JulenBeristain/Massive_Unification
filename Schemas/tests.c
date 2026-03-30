@@ -778,6 +778,10 @@ void test_mapping_obtention_(
     ArrayListDependencyPair common_dependencies;
     // NOTE: read_result_block sets first_rb to false
     read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+    while((rb.t1 < global_starting_t1) || (rb.t1 == global_starting_t1 && rb.t2 < global_starting_t2)){
+        free_result_block(&rb);
+        read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+    }
 
     // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
     computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, arena);
@@ -807,8 +811,8 @@ void test_mapping_obtention_(
     // NOTE: no resizing risk with this arena
     Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
 
-    for(unsigned t1 = 1; t1 <= s1; ++t1){
-        for(unsigned t2 = 1; t2 <= s2; ++t2){
+    for(unsigned t1 = global_starting_t1; t1 <= s1; ++t1){
+        for(unsigned t2 = global_starting_t2; t2 <= s2; ++t2){
 
             // NOTE: calculate common schema
             ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
@@ -1029,7 +1033,6 @@ void test_mapping_obtention(int argc, char *argv[]){
     //char *folder_path = "data/experimentation_matrices/AGT/AGT006+2.p";
     //char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
     //char *folder_path = "data/experimentation_matrices/SEV/SEV437+1.p";
-    // TODO_YA: check with matrices_with_free_vars too!
 
     global_print_debugging = argc > 2;
 
@@ -1065,14 +1068,14 @@ void test_mapping_obtention(int argc, char *argv[]){
             base[strlen(path_m1) - 6] = '\0';
 
             if(
-                // Skip passed tests: AGT002+1 (test0011 too big to test all row pairs)
-                strstr(base, "test0016") || 
-                strstr(base, "test0015") ||
-                strstr(base, "test0001") || 
-                strstr(base, "test0005") || 
-                strstr(base, "test0009") ||
-                strstr(base, "test0017") ||
-                //strstr(base, "test0011") || // TODO_YA: not passed, fragment 2-1, M1, row 460 assertion error for(;;) common_it.stack_size == 5 != 2
+                // Skip passed tests: AGT002+1
+                //strstr(base, "test0016") || 
+                //strstr(base, "test0015") ||
+                //strstr(base, "test0001") || 
+                //strstr(base, "test0005") || 
+                //strstr(base, "test0009") ||
+                //strstr(base, "test0017") ||
+                //strstr(base, "test0011") ||
                 
                 // Skip passed tests: AGT004+2
                 //strstr(base, "test0001") || 
@@ -1083,7 +1086,9 @@ void test_mapping_obtention(int argc, char *argv[]){
 
                 // Skip passed tests: ITP018+5.p
                 //strstr(base, "test0361") ||
-                //strstr(base, "test0458") || // TODO: similar problem to SEV. I don't see why the computed is problematic... It seems that the criteria for extending variables already in the file is different than the one I am using (?)
+                //strstr(base, "test0458") || // TODO: similar problem to SEV. I don't see why the computed is problematic... 
+                //  It seems that the criteria for extending variables already in the file is different than the one I am using (?)
+                //  But not only that, because all the same column indexes are used, but in a different order...
                 //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,107-6,108-7,109-8,110-9,111-10,112-11,113-12,114-13,115-14,116-15,117-16,118-17,96-18,97-19,119-20,120-21,121-22,122-23,123-24,124-25,125-26,126-27,127-28,128-29,98-30,99-31,100-32,129-33,130-34,131-35,132-36,133-37,134-38,101-39,102-40,103-41,135-42,136-43,137-44,138-45,139-46,140-47,141-48,142-49,143-50,144-51,145-52,146-53,147-54,148-55,149-56,150-57,151-58,152-59,153-60,154-61,155-62,156-63,157-64,158-65,159-66,160-67,161-68,162-69,163-70,104-71,105-72,106-73,164-74,165-75,166-76,167-77,168-78,169-79
                 //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,96-6,97-7,98-8,99-9,100-10,101-11,102-12,103-13,104-14,105-15,106-16,107-17,108-18,109-19,110-20,111-21,112-22,113-23,114-24,115-25,116-26,117-27,118-28,119-29,120-30,121-31,122-32,123-33,124-34,125-35,126-36,127-37,128-38,129-39,130-40,131-41,132-42,133-43,134-44,135-45,136-46,137-47,138-48,139-49,140-50,141-51,142-52,143-53,144-54,145-55,146-56,147-57,148-58,149-59,150-60,151-61,152-62,153-63,154-64,155-65,156-66,157-67,158-68,159-69,160-70,161-71,162-72,163-73,164-74,165-75,166-76,167-77,168-78,169-79
                 //                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ^
