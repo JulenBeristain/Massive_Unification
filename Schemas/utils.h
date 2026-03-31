@@ -9,6 +9,13 @@
 #define GET_BIT(Num, Bit) (((Num) >> (Bit)) & 1)
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
 #define SET_TO_ZERO(AllocatedPtr, NumBytes) memset((AllocatedPtr), 0, (NumBytes))
+#define ERROR_MESSAGE(function, message) fprintf(stderr, "%s(Line %u): %s\n", function, __LINE__, message)
+#define MALLOC_ERROR_MESSAGE(function) ERROR_MESSAGE(function, "malloc failed to allocate memory")
+#define CHECK_MALLOC(pointer, function) \
+    if(pointer == NULL) {               \
+        MALLOC_ERROR_MESSAGE(function); \
+        exit(EXIT_FAILURE);             \
+    }
 
 //extern size_t global_line_number;
 extern bool global_print_debugging;

@@ -36,26 +36,26 @@
  * 2) An ordered set of subschemas, including the empty set (<>).
  * 
  */
-// OPT: size candidate for uint16/32_t if padding may arise. Furthermore, we can store it separately and calculate and store it only where it is used...
 // OPT: using an Arena for Schemas only, we could use a uint32 instead of a pointer for subschemas to use a position instead of a pointer (although more pointer arithmetic cost when accesing...)
 // OPT: another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
 //  and use v to discern if it is a variable or not (if equal to 0, general schema).
-//typedef enum : uint8_t { VARIABLE, GENERAL } SchemaType; // OPT: for two types a Byte (even a bit) is enough. Because of padding, no effect
 typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
 typedef union Schema Schema, *SchemaPtr;
 union Schema {
     struct {
         SchemaType type;
         Variable v;
-        void *__;
-        size_t size;
+        uint32_t size; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+        uint32_t depth; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+        void *_;
     };
 
     struct {
-        SchemaType _;
+        SchemaType __;
         unsigned arity;
+        uint32_t ___;
+        uint32_t ____;
         Schema *subschemas;
-        size_t ___;
     };
 };
 
@@ -77,17 +77,39 @@ union Schema {
         ++sub1, ++sub2)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Schema iterator /////////////////////////////////////////////////////////////////////////////////////////////////////////
+// NOTE: we will use the already implemented ArrayListSchema to be the base of the Stack that will be the Schema iterator.
+// NOTE: we could also use an ArrayList of pointers to Schemas or a simple linked list...
+typedef struct SchemaIteratorNode SchemaIteratorNode;
+struct SchemaIteratorNode {
+    Schema schema;
+    unsigned next_child;
+};
 
-//TODO: for "pure" set-schema management we know that we combine schemas with the same position from the input set-schemas.
-//  When dealing with M1 and M2 csv files, the columns can refer to different free variables. Therefore, we would need to
-//  store that extra information per schema, to know which schema from M1 combines with which schema of M2. In that case, we
-//  also need a strategy to decide the order of all free variables in M3 (simply first all the free variables from
-//  M1 in the same order as in M1, and then the variables from M2 that don't appear in M1 in the same relative order as 
-//  in M2; OR first the common columns in the same relative order, giving more priority to M1, and the same for the not commons).
-//  Therefore, we should have an arraylist of FreeVar-Schema pairs, not just Schemas... Another possibility is to have two 
-//  arraylists of FreeVars separated from the arraylist of schemas (i.e., common set schemas of the blocks)...
+DECLARE_ARRAYLIST_TYPE(SchemaIteratorNode)
+DEFINE_ARRAYLIST_FREE(SchemaIteratorNode, schema_iterator_node)
+
+typedef struct SchemaIterator SchemaIterator;
+struct SchemaIterator {
+    ArrayListSchemaIteratorNode stack;
+    bool first_next;
+};
+
+SchemaIterator create_schema_iterator(Schema schema);
+static inline void free_schema_iterator(SchemaIterator iterator){ free_array_list_schema_iterator_node(iterator.stack); }
+bool schema_iterator_next(SchemaIterator *iterator, Schema *next);
+void schema_iterator_skip(SchemaIterator *iterator);
+
+// End Schema iterator /////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 DECLARE_ARRAYLIST_TYPE(Schema)
-typedef ArrayListSchema SetSchema;
+typedef struct SetSchema SetSchema;
+struct SetSchema {
+    ArrayListSchema list;
+    uint32_t size;          // NOTE: sum of the sizes of the schemas. Init to 0. Valid values start at 1 (no empty SetSchemas).
+};                          // NOTE: no depth in SetSchema because we create iterators of Schemas
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -95,7 +117,7 @@ typedef ArrayListSchema SetSchema;
 
 typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
 struct DependencyPair {
-    Variable v;                 // OPT: in this case, we could use a uint64_t to take advantage of the inevitable padding
+    Variable v;
     ArrayListSchema schemas;
 };
 
@@ -121,12 +143,16 @@ static inline Schema empty_schema(){
     Schema empty;
     empty.type = GENERAL_SCHEMA;
     empty.size = 1;
+    empty.depth = 1;
     empty.arity = 0;
     empty.subschemas = NULL;
     return empty;
 }
 static inline bool is_empty(Schema s) { return s.type == GENERAL_SCHEMA && s.arity == 0; }
 unsigned schema_size(Schema s);
+unsigned schema_depth(Schema s);
+void calculate_schema_size(Schema *s);
+void calculate_schema_depth(Schema *s);
 
 bool equal_schemas(Schema s1, Schema s2);
 bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);
@@ -264,18 +290,11 @@ bool common_set_schema_strict_free_vars_baseline(
     Arena *arena);
 
 void mapping_column_indexes_side(
-    ArrayListSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    ArrayListSchema normalized_common_set_schema,
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
     Arena *row_vars_to_extending_cols_arena);
-
-void mapping_column_indexes(
-    ArrayListSchema normalized_set_schema1, ArrayListUInt free_var_positions1, int *row1, 
-    ArrayListSchema normalized_set_schema2, ArrayListUInt free_var_positions2, int *row2,
-    ArrayListSchema normalized_common_set_schema,
-    unsigned *starting_col_indices1, unsigned *starting_col_indices2,
-    mgu_schema *mapping);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////

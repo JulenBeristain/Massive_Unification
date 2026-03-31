@@ -260,25 +260,20 @@ void println_set_dependencies(ArrayListDependencyPair set_dependencies, Printing
 /// SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/**
- * NOTE: if Schemas are modified at some point, so they are not immutable, then the use of the
- *       size attribute must be reconsidered.
- */
+// TODO(YA): make these static inline
 void init_variable_schema(Schema* s, Variable v)
 {
     s->type = VARIABLE_SCHEMA;
-    s->size = 1;
+    s->size = 0;
+    s->depth = 0;
     s->v = v;
 }
 
-/**
- * NOTE: size is simply set to 1. If nested subschemas, their own sizes have to be added to this
- *      value in creation.
- */
 void init_general_schema_arena(Schema* s, unsigned arity, Arena* arena)
 {
     s->type = GENERAL_SCHEMA;
-    s->size = 1;
+    s->size = 0;
+    s->depth = 0;
     s->arity = arity;
     s->subschemas = allocate(arena, arity * sizeof(*(s->subschemas)));
 }
@@ -301,15 +296,24 @@ unsigned schema_size(Schema s)
     return total_size;
 }
 
-// TODO: we can add a depth field to precompute this in the creation of the Schemas
-//  Another option that can also be applicable to 'size' to AVOID having those values incrementing the size of the Schema struct
-//  is to use an EXCLUSIVE ARENA FOR SCHEMAS that later we can iterate calculating the sizes and depths of each corresponding one
-//  in a separate Arena / ArrayList(if no resizing risk). --> V INTERESTING
-//  Another option would be to default their values to 0 (they both start at 1), don't bother setting them to the correct value 
-//  when creating them in common schema, and computed those values just when we are about to use them (wrapped in a getter function
-//  that checks if they are non-zero) --> X MORE COSTLY
+void calculate_schema_size(Schema *s){
+    // NOTE: since a same schema can be shared as a subschema of several other parent schemas, we have to check if the size
+    //  was already calculated!
+    if(s->size == 0){
+        s->size = 1;
+        if (s->type == GENERAL_SCHEMA) {
+            foreach_in_schemaptr(s, sub) {
+                calculate_schema_size(sub);
+                s->size += sub->size;
+            }
+        }
+    }
+}
+
+
 // NOTE: useful to avoid resizing the ArrayList used as the Stack for SchemaIterator. Therefore, variable schemas and empties will return 1,
 //  because they need also to be stored in the Stack.
+// NOTE: for debugging schemas' depth computations (we store a precomputed depth in Schemas).
 unsigned schema_depth(Schema s){
     if (s.type == VARIABLE_SCHEMA || s.arity == 0) {
         return 1;
@@ -324,8 +328,21 @@ unsigned schema_depth(Schema s){
     return depth + 1;
 }
 
-// TODO: we can define a struct SetSchema with an ArrayList and a size instead of calling to this function each time if we see that
-//  this is used a lot over the same ArrayListSchema...
+void calculate_schema_depth(Schema *s){
+    // NOTE: since a same schema can be shared as a subschema of several other parent schemas, we have to check if the depth
+    //  was already calculated!
+    if(s->depth == 0){
+        if (s->type == GENERAL_SCHEMA) {
+            foreach_in_schemaptr(s, sub){
+                calculate_schema_depth(sub);
+                s->depth = MAX(s->depth, sub->depth);
+            }
+        }
+        s->depth++;
+    }
+}
+
+// NOTE: for debugging set_schemas' size computations
 unsigned set_schema_size(ArrayListSchema set_schema){
     unsigned size = 0;
     foreach_in_arraylist(Schema, schema, set_schema){
@@ -512,10 +529,9 @@ void substitute_arena(Schema original, Variable v, Schema substitution, Schema* 
             init_variable_schema(result, original.v);
         }
     } else {
-        init_general_schema_arena(result, original.arity, arena); // NOTE: ->subschemas allocated; ->size = 1
+        init_general_schema_arena(result, original.arity, arena);
         for (size_t i = 0; i < original.arity; ++i) {
             substitute_arena(original.subschemas[i], v, substitution, result->subschemas + i, arena);
-            result->size += result->subschemas[i].size;
         }
     }
 }
@@ -531,10 +547,9 @@ void substitute_vars_arena(Schema original, SetVariables vars, Schema substituti
             init_variable_schema(result, original.v);
         }
     } else {
-        init_general_schema_arena(result, original.arity, arena); // NOTE: ->subschemas allocated; ->size = 1
+        init_general_schema_arena(result, original.arity, arena);
         for (size_t i = 0; i < original.arity; ++i) {
             substitute_vars_arena(original.subschemas[i], vars, substitution, result->subschemas + i, arena);
-            result->size += result->subschemas[i].size;
         }
     }
 }
@@ -554,11 +569,10 @@ Schema read_schema(char** schema_str, Arena* arena)
 
     unsigned arity;
     if (sscanf(*schema_str, "%u:[", &arity) == 1) {
-        init_general_schema_arena(&result, arity, arena); // size = 1, needs to be updated if arity > 0
+        init_general_schema_arena(&result, arity, arena);
         *schema_str += num_digits(arity) + 2;
         for (size_t i = 0; i < arity; ++i) {
             result.subschemas[i] = read_schema(schema_str, arena);
-            result.size += result.subschemas[i].size;
             if (i != arity - 1) {
                 ++(*schema_str); // Skip comma between subschemas (no comma after the last one!)
             }
@@ -830,8 +844,7 @@ ArrayListDependencyPair read_set_dependencies(FILE* stream, unsigned num_vars_wi
 
         DependencyPair pair = { .v = v, .schemas = read_set_schema(lineptr, arena) };
         // NOTE: we can directly set without bound checking thanks to having read the number of vars with dependencies
-        dependencies.array[dependencies.size++] = pair;
-        // add_to_array_list_dependency_pair_arena(&dependencies, pair, arena); // NOTE: more robust option
+        unsafe_add_to_array_list(dependencies, pair);
     }
 
     if (line) {
@@ -925,11 +938,9 @@ int common_schema_baseline(Schema s1, Schema s2, Schema* common, ArrayListDepend
             return -1;
         }
         total_inserted_dependencies += num_inserted_dependencies;
-        common->size += common->subschemas[i].size;
     }
     for (; i < max_arity; ++i) {
         common->subschemas[i] = longest_schema->subschemas[i]; // NOTE: shallow copy...
-        common->size += common->subschemas[i].size;
     }
 
     return total_inserted_dependencies;
@@ -1410,8 +1421,8 @@ Schema normalized_schema(Schema schema, ArrayListDependencyPair dependencies, Ar
         //  since we know that's the only change we need thanks to the theta operator.
     }
 
-    Schema result;
-    init_general_schema_arena(&result, schema.arity, arena); // NOTE: .size == 1
+    Schema result; init_general_schema_arena(&result, schema.arity, arena); // NOTE: .size == 0
+    result.size = 1;
     foreach_in_schemas(result, schema, subres, sub){
         *subres = normalized_schema(*sub, dependencies, arena);
         result.size += subres->size;
@@ -1474,7 +1485,7 @@ ArrayListSchema set_schema_with_respect_to_free_vars(ArrayListSchema set_schema,
     return result;
 }
 
-// TODO: use the precomputed free_var positions...
+// TODO(Del): use the precomputed free_var positions... Delete this function if not useful in the postprocessing phase...
 ArrayListSchema strict_set_schema_with_respect_to_free_vars(
     ArrayListSchema set_schema, ArrayListCharPtr set_free_vars, ArrayListCharPtr final_free_vars, 
     unsigned max_v, unsigned *num_new_vs, Arena *arena)
@@ -1525,9 +1536,10 @@ bool common_set_schema_strict_free_vars_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
     Arena *arena)
 {
-    // TODO: the strict version seems to fail when it has to interact with non-existent free_vars in one of the operands.
+    // TODO(Del): the strict version seems to fail when it has to interact with non-existent free_vars in one of the operands.
     //  Easy to have different amount of variables (either inserting empties or new vars) failing the first check.
-    //  --> We are going to try with the non-strict version (COMMENT IN THE MEETING!). 
+    //  --> We are going to try with the non-strict version (COMMENT IN THE MEETING!).
+    //  Delete this function if not useful in the postprocessing phase...
 
     // NOTE: variables in set_schema2 were incremented to be different from variables in set_schema1, as they are logically
     Variable max_v1 = max_v_in_set_schema(set_schema1);
@@ -1552,7 +1564,7 @@ bool common_set_schema_strict_free_vars_baseline(
         arena);
 
     if(common_exists){
-        // TODO(OPT): iterate only through the positions where we know that there will be the extra variables
+        // TODO(Del-OPT): iterate only through the positions where we know that there will be the extra variables
         foreach_in_arraylistptr(Schema, schema, common_set_schema){
             if(schema->type == VARIABLE_SCHEMA){
                 Variable v = schema->v;
@@ -1575,39 +1587,15 @@ bool common_set_schema_strict_free_vars_baseline(
 
 // #region Schema iterator
 
-// NOTE: we will use the already implemented ArrayListSchema to be the base of the Stack that will be the Schema iterator.
-// NOTE: we could also use an ArrayList of pointers to Schemas or a simple linked list...
-typedef struct SchemaIteratorNode SchemaIteratorNode;
-struct SchemaIteratorNode {
-    Schema schema;
-    unsigned next_child;
-};
-
-DECLARE_ARRAYLIST_TYPE(SchemaIteratorNode)
 DEFINE_ARRAYLIST_CREATE(SchemaIteratorNode, schema_iterator_node)
-DEFINE_ARRAYLIST_FREE(SchemaIteratorNode, schema_iterator_node)
-//DEFINE_ARRAYLIST_REMOVE_INDEX(SchemaIteratorNode, schema_iterator_node)
 
-typedef struct SchemaIterator SchemaIterator;
-struct SchemaIterator {
-    ArrayListSchemaIteratorNode stack;
-    bool first_next;
-};
-
-// NOTE: would be helpful to know the depth of the schema to avoid resizing, specially for an arena version.
 // NOTE: for my use case, I prefer a non-arena version.
-
 SchemaIterator create_schema_iterator(Schema schema){
-    unsigned depth = schema_depth(schema);
-    ArrayListSchemaIteratorNode stack = create_array_list_schema_iterator_node(depth);
+    ArrayListSchemaIteratorNode stack = create_array_list_schema_iterator_node(schema.depth);
     SchemaIteratorNode node = { .schema = schema, .next_child = 0 };
     unsafe_add_to_array_list(stack, node);
     SchemaIterator it = { .stack = stack, .first_next = true };
     return it;
-}
-
-static inline void free_schema_iterator(SchemaIterator iterator){
-    free_array_list_schema_iterator_node(iterator.stack);
 }
 
 bool schema_iterator_next(SchemaIterator *iterator, Schema *next){
@@ -1646,14 +1634,12 @@ void schema_iterator_skip(SchemaIterator *iterator){
 
     // NOTE: the schema that is on top of the stack was already returned. We simply need to delete it to avoid iterating over its children.
     if(iterator->stack.size){
-        // TODO: assert next_child was 0 (always?)
         SchemaIteratorNode top = unsafe_last_in_array_list(iterator->stack);
         assert(top.next_child == 0);
 
         unsafe_remove_last_in_array_list(iterator->stack);
     }
 }
-
 
 // #endregion Schema iterator
 
@@ -1692,7 +1678,7 @@ void mapping_column_indexes_free_var(
             bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
             bool has_next_original = schema_iterator_next(&original_it, &original_subschema);
 
-            // TODO: as we note, we have repeated logic here and after the loop. Maybe iterating over the schemas is cleaner
+            // TODO(YA): as we note, we have repeated logic here and after the loop. Maybe iterating over the schemas is cleaner
             //  than basing the loop on row positions.
             // NOTE: a similar adjustment to the one done after this loop. The normalized common schema (always larger, even in each
             //  "inductive" level) can have more subschemas than the original one not only at the end, but in the intermediate
@@ -1811,30 +1797,29 @@ void mapping_column_indexes_free_var(
 }
 
 void mapping_column_indexes_side(
-    ArrayListSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    ArrayListSchema normalized_common_set_schema,
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
     Arena *row_vars_to_extending_cols_arena)
 {
-    // TODO: these should have been precomputed already in the set schemas...
-    unsigned n_common = set_schema_size(normalized_common_set_schema);
-    unsigned num_cols = set_schema_size(normalized_set_schema);
+    unsigned n_common = normalized_common_set_schema.size;
+    unsigned num_cols = normalized_set_schema.size;
 
     unsigned **row_vars_to_extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(unsigned*) * num_cols);
 
     unsigned new_virtual_column = num_cols + 1;
     unsigned mapping_pos = 0;
 
-    for(unsigned i = 0; i < normalized_common_set_schema.size; ++i){
+    for(unsigned i = 0; i < normalized_common_set_schema.list.size; ++i){
         unsigned pos = free_var_positions.array[i];
-        Schema normalized_common_schema = normalized_common_set_schema.array[i];
+        Schema normalized_common_schema = normalized_common_set_schema.list.array[i];
 
-        // TODO: this could be inlined...
-        bool free_var_contained = pos < normalized_common_set_schema.size;
+        // TODO(YA): this could be inlined...
+        bool free_var_contained = pos < normalized_common_set_schema.list.size;
         mapping_column_indexes_free_var(
             pos, free_var_contained,
-            normalized_common_schema, normalized_set_schema, num_cols,
+            normalized_common_schema, normalized_set_schema.list, num_cols,
             starting_col_indices,
             row,
             row_vars_to_extending_cols, row_vars_to_extending_cols_arena,
@@ -1844,88 +1829,6 @@ void mapping_column_indexes_side(
         assert(mapping_pos <= n_common);
     }
     assert(mapping_pos == n_common);
-}
-
-//FUTURE_WORK: if for getting the mapping we need to actually extend the rows, then we could forget about the mapping and the 
-//  unification would be a simple loop comparing corresponding extended-rows' elements
-// NOTE: common_set_schema and common_dependencies are returned just for testing. Not normalized versions, as in M3 files.
-void mapping_column_indexes(
-    ArrayListSchema normalized_set_schema1, ArrayListUInt free_var_positions1, int *row1, 
-    ArrayListSchema normalized_set_schema2, ArrayListUInt free_var_positions2, int *row2,
-    ArrayListSchema normalized_common_set_schema,
-    unsigned *starting_col_indices1, unsigned *starting_col_indices2,
-    mgu_schema *mapping)
-{
-    mapping->n_common = set_schema_size(normalized_common_set_schema);
-    unsigned num_cols1 = set_schema_size(normalized_set_schema1);
-    mapping->new_a = mapping->n_common - num_cols1;
-    unsigned num_cols2 = set_schema_size(normalized_set_schema2);
-    mapping->new_b = mapping->n_common - num_cols2;
-
-    // TODO: see if we use arena for the mapping, instead of malloc
-    unsigned num_bytes = sizeof(*mapping->common_columns) * mapping->n_common;
-    // TODO: check if malloc fails
-    mapping->common_columns = malloc(num_bytes);
-    mapping->common_L = malloc(num_bytes);
-    mapping->common_R = malloc(num_bytes);
-    
-    for(unsigned i = 0; i < mapping->n_common; ++i){ mapping->common_columns[i] = i; }
-
-    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
-    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-    Arena row_vars_to_extending_cols_arena; 
-    unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
-    unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
-    unsigned num_bytes_virtual_columns = sizeof(unsigned)*(mapping->new_a + mapping->new_b);
-    init_arena(&row_vars_to_extending_cols_arena, num_bytes_pointers1 + num_bytes_pointers2 + num_bytes_virtual_columns);
-    
-    // NOTE: row_vars will be identified with the first column where they appear but 0-BASED, to save space for two unused pointers at index 0...
-    unsigned **row_vars_to_extending_cols1 = allocate(&row_vars_to_extending_cols_arena, num_bytes_pointers1);
-    //SET_TO_ZERO(row_vars_to_extending_cols1, num_bytes1);
-    
-    unsigned **row_vars_to_extending_cols2 = allocate(&row_vars_to_extending_cols_arena, num_bytes_pointers2);
-    //SET_TO_ZERO(row_vars_to_extending_cols2, num_bytes2);
-
-    
-    unsigned new_virtual_column1 = num_cols1 + 1;
-    unsigned new_virtual_column2 = num_cols2 + 1;
-    unsigned mappingL_pos = 0, mappingR_pos = 0;
-    for(unsigned i = 0; i < normalized_common_set_schema.size; ++i){
-        unsigned pos = free_var_positions1.array[i];
-        Schema normalized_common_schema = normalized_common_set_schema.array[i];
-
-        // TODO: maybe inlining this function here (extracting smaller parts) is cleaner and can let us relate both mapping sides... + All schema iteration computations are the same for all rows -> Can't we precompute some results?
-        bool free_var_contained = pos < normalized_common_set_schema.size;
-        if (global_print_debugging) { printf("--- Mapping L ---\n"); }
-        mapping_column_indexes_free_var(
-            pos, free_var_contained,
-            normalized_common_schema, normalized_set_schema1, num_cols1,
-            starting_col_indices1,
-            row1,
-            row_vars_to_extending_cols1, &row_vars_to_extending_cols_arena,
-            &new_virtual_column1,
-            &mappingL_pos, mapping->common_L
-        );
-        assert(mappingL_pos <= mapping->n_common);
-
-        pos = free_var_positions2.array[i];
-        if (global_print_debugging) { printf("--- Mapping R ---\n"); }
-        mapping_column_indexes_free_var(
-            pos, free_var_contained,
-            normalized_common_schema, normalized_set_schema2, num_cols2,
-            starting_col_indices2,
-            row2,
-            row_vars_to_extending_cols2, &row_vars_to_extending_cols_arena,
-            &new_virtual_column2,
-            &mappingR_pos, mapping->common_R
-        );
-        assert(mappingR_pos <= mapping->n_common);
-
-        assert(mappingL_pos == mappingR_pos);
-    }
-    assert(mappingL_pos == mapping->n_common && mappingR_pos == mapping->n_common);
-
-    free_arena(&row_vars_to_extending_cols_arena);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

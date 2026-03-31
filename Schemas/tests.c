@@ -858,48 +858,131 @@ void test_mapping_obtention_(
 
                     printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
                     assert(ok_set_schemas);
-                    // TODO: some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
+                    // TODO(instance): some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
                     //  not having those empty dependencies is equivalent to having them...
                 }
 
-                // NOTE: calculate normalized set schemas.
-                ArrayListSchema normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
-                ArrayListSchema normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
-                ArrayListSchema normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
-                assert(normalized_set_schema1.size == free_vars1.size);
-                assert(normalized_set_schema2.size == free_vars2.size);
-                assert(normalized_common_set_schema.size == free_vars3.size);
-
-                if(global_print_debugging){
-                    printf("NCSS - "); println_set_schema(normalized_common_set_schema, PRINT_VISUALLY);
-                    printf("NSS1 - "); println_set_schema(normalized_set_schema1, PRINT_VISUALLY);
-                    printf("NSS2 - "); println_set_schema(normalized_set_schema2, PRINT_VISUALLY);
+                // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
+                foreach_in_arraylist(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
+                foreach_in_arraylist(Schema, s, set_schema1) { calculate_schema_size(s); }
+                foreach_in_arraylist(Schema, s, set_schema2) { calculate_schema_size(s); }
+                foreach_in_arraylist(DependencyPair, pair, computed_common_dependencies){
+                    foreach_in_arraylist(Schema, s, pair->schemas){
+                        calculate_schema_size(s);
+                    }
                 }
+                foreach_in_arraylist(DependencyPair, pair, dependencies1){
+                    foreach_in_arraylist(Schema, s, pair->schemas){
+                        calculate_schema_size(s);
+                    }
+                }
+                foreach_in_arraylist(DependencyPair, pair, dependencies2){
+                    foreach_in_arraylist(Schema, s, pair->schemas){
+                        calculate_schema_size(s);
+                    }
+                }
+#ifndef NDEBUG
+                // NOTE: can't create iterators to test sizes if depths are not calculate!
+                foreach_in_arraylist(Schema, s, computed_common_set_schema) { calculate_schema_depth(s); }
+                foreach_in_arraylist(Schema, s, set_schema1) { calculate_schema_depth(s); }
+                foreach_in_arraylist(Schema, s, set_schema2) { calculate_schema_depth(s); }
+
+                foreach_in_arraylist(Schema, s, computed_common_set_schema){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                    }
+                }
+                foreach_in_arraylist(Schema, s, set_schema1){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                    }
+                }
+                foreach_in_arraylist(Schema, s, set_schema2){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                    }
+                }
+#endif          
+                // NOTE: calculate normalized set schemas. Sizes of schemas updated.
+                ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
+                ArrayListSchema list_normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
+                ArrayListSchema list_normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
+                assert(list_normalized_set_schema1.size == free_vars1.size);
+                assert(list_normalized_set_schema2.size == free_vars2.size);
+                assert(list_normalized_common_set_schema.size == free_vars3.size);
+                if(global_print_debugging){
+                    printf("NCSS - "); println_set_schema(list_normalized_common_set_schema, PRINT_VISUALLY);
+                    printf("NSS1 - "); println_set_schema(list_normalized_set_schema1, PRINT_VISUALLY);
+                    printf("NSS2 - "); println_set_schema(list_normalized_set_schema2, PRINT_VISUALLY);
+                }
+
+                // NOTE: calculate depths once to create iterator over Schemas
+                foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) { calculate_schema_depth(s); }
+                foreach_in_arraylist(Schema, s, list_normalized_set_schema1) { calculate_schema_depth(s); }
+                foreach_in_arraylist(Schema, s, list_normalized_set_schema2) { calculate_schema_depth(s); }
+#ifndef NDEBUG
+                foreach_in_arraylist(Schema, s, list_normalized_common_set_schema){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                        assert(schema_depth(current) == current.depth);
+                    }
+                }
+                foreach_in_arraylist(Schema, s, list_normalized_set_schema1){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                        assert(schema_depth(current) == current.depth);
+                    }
+                }
+                foreach_in_arraylist(Schema, s, list_normalized_set_schema2){
+                    SchemaIterator it = create_schema_iterator(*s);
+                    Schema current;
+                    while(schema_iterator_next(&it, &current)){
+                        assert(schema_size(current) == current.size);
+                        assert(schema_depth(current) == current.depth);
+                    }
+                }
+#endif          
+                // NOTE: wrap to calculate size and depth only in one place
+                SetSchema normalized_common_set_schema = { .list = list_normalized_common_set_schema, .size = 0 };
+                SetSchema normalized_set_schema1 = { .list = list_normalized_set_schema1, .size = 0 };
+                SetSchema normalized_set_schema2 = { .list = list_normalized_set_schema2, .size = 0 };
+                foreach_in_arraylist(Schema, s, normalized_common_set_schema.list) { normalized_common_set_schema.size += s->size; }
+                foreach_in_arraylist(Schema, s, normalized_set_schema1.list) { normalized_set_schema1.size += s->size; }
+                foreach_in_arraylist(Schema, s, normalized_set_schema2.list) { normalized_set_schema2.size += s->size; }
 
                 // NOTE: calculate starting column indices
                 clear_arena(&starting_indices_arena);
-                unsigned *starting_col_indices1 = starting_column_indexes(normalized_set_schema1, &starting_indices_arena);
-                unsigned *starting_col_indices2 = starting_column_indexes(normalized_set_schema2, &starting_indices_arena);
+                unsigned *starting_col_indices1 = starting_column_indexes(list_normalized_set_schema1, &starting_indices_arena);
+                unsigned *starting_col_indices2 = starting_column_indexes(list_normalized_set_schema2, &starting_indices_arena);
 
                 unsigned row_len1 = rb.c1;
                 unsigned row_len2 = rb.c2;
-                assert(set_schema_size(normalized_set_schema1) == row_len1);
-                assert(set_schema_size(normalized_set_schema2) == row_len2);
+                assert(set_schema_size(list_normalized_set_schema1) == row_len1);
+                assert(set_schema_size(list_normalized_set_schema2) == row_len2);
 
                 operand_block *ob1 = obs1 + t1-1;
                 operand_block *ob2 = obs2 + t2-1;
 
                 mgu_schema computed_mapping;
-                computed_mapping.n_common = set_schema_size(normalized_common_set_schema);
-                unsigned num_cols1 = set_schema_size(normalized_set_schema1);
+                computed_mapping.n_common = normalized_common_set_schema.size;
+                unsigned num_cols1 = normalized_set_schema1.size;
                 computed_mapping.new_a = computed_mapping.n_common - num_cols1;
-                unsigned num_cols2 = set_schema_size(normalized_set_schema2);
+                unsigned num_cols2 = normalized_set_schema2.size;
                 computed_mapping.new_b = computed_mapping.n_common - num_cols2;
 
-                // TODO: see if we use arena for the computed_mapping, instead of malloc
                 unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
-                // TODO: check if malloc fails
                 computed_mapping.common_columns = malloc(num_bytes);
+                CHECK_MALLOC(computed_mapping.common_columns, "test_mapping_obtention_");
                 for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
                 // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
@@ -915,10 +998,10 @@ void test_mapping_obtention_(
                 unsigned *mapping_sides = NULL;
 
                 if(rb.lineal_lineal){
-                    // TODO: in reallity, if linear we don't need to store any row_vars to extending_cols mapping --> Implement a simplified version
+                    // TODO(YA): in reallity, if linear we don't need to store any row_vars to extending_cols mapping --> Implement a simplified version
 
-                    // TODO: check if malloc fails or use an arena
                     unsigned *mapping_sides = malloc(2 * mapping_side_size);
+                    CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mappingL = mapping_sides;
                     unsigned *mappingR = mapping_sides + computed_mapping.n_common;
 
@@ -947,8 +1030,8 @@ void test_mapping_obtention_(
                 } else {
                     // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
                     
-                    // TODO: check if malloc fails or use an arena
                     unsigned *mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
+                    CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mapping_side = mapping_sides;
                     for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
                         mapping_column_indexes_side(
@@ -1075,7 +1158,7 @@ void test_mapping_obtention(int argc, char *argv[]){
                 //strstr(base, "test0005") || 
                 //strstr(base, "test0009") ||
                 //strstr(base, "test0017") ||
-                //strstr(base, "test0011") ||
+                strstr(base, "test0011") ||
                 
                 // Skip passed tests: AGT004+2
                 //strstr(base, "test0001") || 
@@ -1086,7 +1169,7 @@ void test_mapping_obtention(int argc, char *argv[]){
 
                 // Skip passed tests: ITP018+5.p
                 //strstr(base, "test0361") ||
-                //strstr(base, "test0458") || // TODO: similar problem to SEV. I don't see why the computed is problematic... 
+                //strstr(base, "test0458") || // TODO(instance): similar problem to SEV. I don't see why the computed is problematic... 
                 //  It seems that the criteria for extending variables already in the file is different than the one I am using (?)
                 //  But not only that, because all the same column indexes are used, but in a different order...
                 //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,107-6,108-7,109-8,110-9,111-10,112-11,113-12,114-13,115-14,116-15,117-16,118-17,96-18,97-19,119-20,120-21,121-22,122-23,123-24,124-25,125-26,126-27,127-28,128-29,98-30,99-31,100-32,129-33,130-34,131-35,132-36,133-37,134-38,101-39,102-40,103-41,135-42,136-43,137-44,138-45,139-46,140-47,141-48,142-49,143-50,144-51,145-52,146-53,147-54,148-55,149-56,150-57,151-58,152-59,153-60,154-61,155-62,156-63,157-64,158-65,159-66,160-67,161-68,162-69,163-70,104-71,105-72,106-73,164-74,165-75,166-76,167-77,168-78,169-79
@@ -1095,7 +1178,7 @@ void test_mapping_obtention(int argc, char *argv[]){
 
 
                 // Skip passed tests: SEV437+1.p
-                // TODO: lineal-lineal (1-1) result block passed. In the first non-lineal block's first pair of rows mismatch found,
+                // TODO(instance): lineal-lineal (1-1) result block passed. In the first non-lineal block's first pair of rows mismatch found,
                 //  but I think that both mappings might be equivalent (at least I don't see why the computed one is incorrect...)
                 //  Re-test it when it's integrated with core...
                 //1-1,63-2,64-3,65-4,66-5,67-6,68-7,2-8,3-9,4-10,5-11,6-45,69-46,70-47,71-48,72-49,73-50,74-51,75-52,76-53,77-54,78-55,79-56,7-12,8-13,9-45,80-46,81-47,82-48,83-49,84-50,85-51,86-52,87-53,88-54,89-55,90-56,10-14,11-15,12-57,13-58,14-59,15-60,16-61,17-62,18-63,19-64,20-65,21-66,22-67,23-68,24-16,25-69,26-70,27-71,28-72,29-73,30-74,31-75,32-76,33-77,34-78,35-79,36-80,37-17,38-45,39-46,40-47,41-48,42-49,43-50,44-51,45-52,46-53,47-54,48-55,49-56,50-18,51-19,52-20,53-21,91-22,92-23,93-24,54-25,55-26,94-27,95-28,96-29,97-30,98-31,56-32,57-33,58-34,59-35,99-36,100-37,60-38,61-39,62-40,101-41,102-42,103-43,104-44
