@@ -985,21 +985,10 @@ void test_mapping_obtention_(
                 CHECK_MALLOC(computed_mapping.common_columns, "test_mapping_obtention_");
                 for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
-                // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
-                //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-                Arena row_vars_to_extending_cols_arena; 
-                unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
-                unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
-                unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(computed_mapping.new_a);
-                unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(computed_mapping.new_b);
-                init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
-
                 unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
                 unsigned *mapping_sides = NULL;
 
                 if(rb.lineal_lineal){
-                    // TODO(YA): in reallity, if linear we don't need to store any row_vars to extending_cols mapping --> Implement a simplified version
-
                     unsigned *mapping_sides = malloc(2 * mapping_side_size);
                     CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mappingL = mapping_sides;
@@ -1007,17 +996,13 @@ void test_mapping_obtention_(
 
                     assert(ob1->r > 0 && ob2->r > 0);
                     
-                    mapping_column_indexes_side(
+                    mapping_column_indexes_side_lineal(
                         normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                        starting_col_indices1, ob1->terms[0].row, mappingL, &row_vars_to_extending_cols_arena
-                    );
-                    clear_arena(&row_vars_to_extending_cols_arena);
+                        starting_col_indices1, ob1->terms[0].row, mappingL);
                     
-                    mapping_column_indexes_side(
+                    mapping_column_indexes_side_lineal(
                         normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                        starting_col_indices2, ob2->terms[0].row, mappingR, &row_vars_to_extending_cols_arena
-                    );
-                    free_arena(&row_vars_to_extending_cols_arena);
+                        starting_col_indices2, ob2->terms[0].row, mappingR);
 
                     // Only one mapping in linear result block
                     mgu_schema *mapping = rb.ms;
@@ -1033,6 +1018,16 @@ void test_mapping_obtention_(
                     unsigned *mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
                     CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mapping_side = mapping_sides;
+
+                    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
+                    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
+                    Arena row_vars_to_extending_cols_arena; 
+                    unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
+                    unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
+                    unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(computed_mapping.new_a);
+                    unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(computed_mapping.new_b);
+                    init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
+
                     for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
                         mapping_column_indexes_side(
                             normalized_set_schema1, free_var_positions1, normalized_common_set_schema,

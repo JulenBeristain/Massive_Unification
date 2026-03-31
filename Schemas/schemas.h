@@ -136,8 +136,20 @@ typedef ArrayListDependencyPair SetDependencies;
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void init_variable_schema(Schema *schema, Variable v);
-void init_general_schema_arena(Schema *schema, unsigned arity, Arena *arena);
+static inline void init_variable_schema(Schema* s, Variable v){
+    s->type = VARIABLE_SCHEMA;
+    s->size = 0;
+    s->depth = 0;
+    s->v = v;
+}
+static inline void init_general_schema_arena(Schema* s, unsigned arity, Arena* arena){
+    s->type = GENERAL_SCHEMA;
+    s->size = 0;
+    s->depth = 0;
+    s->arity = arity;
+    s->subschemas = allocate(arena, arity * sizeof(*(s->subschemas)));
+}
+// NOTE: size and depth set to 1, already the correct value.
 static inline Schema empty_schema(){ 
     // NOTE: unfortunately designated initializer don't behave with unions as with structs :(
     Schema empty;
@@ -149,10 +161,12 @@ static inline Schema empty_schema(){
     return empty;
 }
 static inline bool is_empty(Schema s) { return s.type == GENERAL_SCHEMA && s.arity == 0; }
+
 unsigned schema_size(Schema s);
 unsigned schema_depth(Schema s);
 void calculate_schema_size(Schema *s);
 void calculate_schema_depth(Schema *s);
+unsigned set_schema_size(ArrayListSchema set_schema);
 
 bool equal_schemas(Schema s1, Schema s2);
 bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);
@@ -272,7 +286,6 @@ DECLARE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint)
 DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
 
-unsigned set_schema_size(ArrayListSchema set_schema);
 unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena);
 ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
@@ -283,18 +296,18 @@ bool common_set_schema_free_vars_baseline(
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
     Arena *arena);
 
-bool common_set_schema_strict_free_vars_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListCharPtr free_vars1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListCharPtr free_vars2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, ArrayListCharPtr final_free_vars,
-    Arena *arena);
-
 void mapping_column_indexes_side(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
     Arena *row_vars_to_extending_cols_arena);
+
+void mapping_column_indexes_side_lineal(
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    unsigned *mapping_side);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////
