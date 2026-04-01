@@ -9,7 +9,7 @@
 typedef struct RowToMappingSide RowToMappingSide;
 struct RowToMappingSide {
     int *row;
-    int *mapping_side;
+    unsigned *mapping_side;
 };
 
 typedef struct HashMapRowToMappingSide HashMapRowToMappingSide;
@@ -39,7 +39,7 @@ static inline HashMapRowToMappingSide create_hash_map_row_to_mapping_side_defnum
 }
 static inline void free_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm){ free(hm.buckets); }
 void clear_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm);
-MapInsertReturnCode insert_to_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm, int *row, int *mapping_side);
+MapInsertReturnCode insert_to_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm, int *row, unsigned *mapping_side);
 bool is_in_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm, int *row);
 RowToMappingSide *get_pair_in_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm, int *row);
 void print_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm);

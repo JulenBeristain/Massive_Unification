@@ -16,6 +16,7 @@
 				"Schemas/schemas.c",
 				"Schemas/utils.c",
 				"Schemas/tests.c",
+				"Schemas/cache_mapping.c",
 				"structures.c",
 				"-o",
 				"build/tests"

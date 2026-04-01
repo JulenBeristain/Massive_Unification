@@ -10,6 +10,7 @@ gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 #include "arena.h"
 #include "../dictionary.h"
 #include "../structures.h"
+#include "cache_mapping.h"
 #include <stdio.h>
 #include <ctype.h>
 #include <stdbool.h>
@@ -812,6 +813,9 @@ void test_mapping_obtention_(
     // NOTE: no resizing risk with this arena
     Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
 
+    // TODO(YA): al igual que evitamos recalcular los mapping sides de cada fila por cada combinación fila1-fila2, también lo
+    //  podemos ahorrar por cada combinación de bloques! Es decir, lo suyo es precomputar los common y original schema normalizados y 
+    //  los mapping sides antes de entrar en este bucle!
     for(unsigned t1 = global_starting_t1; t1 <= s1; ++t1){
         for(unsigned t2 = global_starting_t2; t2 <= s2; ++t2){
 
@@ -1035,19 +1039,42 @@ void test_mapping_obtention_(
                     unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(computed_mapping.new_b);
                     init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
 
+                    // NOTE: function symbol differences don't affect to the resulting mapping, the mapping is determined by the placement of variables (0s and negatives),
+                    //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
+                    //  for an equivalent row was already computed.
+                    unsigned saved_calls1 = 0; // NOTE: for debugging
+                    MapRowToMappingSide map1 = create_map_row_to_mapping_side(ob1->r, normalized_set_schema1.size, normalized_common_set_schema.size);
                     for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
-                        mapping_column_indexes_side(
-                            normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                            starting_col_indices1, ob1->terms[i].row, mapping_side, &row_vars_to_extending_cols_arena
-                        );
-                        clear_arena(&row_vars_to_extending_cols_arena);
+                        int *row = ob1->terms[i].row;
+                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map1, row);
+                        if(pair){
+                            ++saved_calls1;
+                        } else {
+                            mapping_column_indexes_side(
+                                normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                                starting_col_indices1, row, mapping_side, &row_vars_to_extending_cols_arena
+                            );
+                            clear_arena(&row_vars_to_extending_cols_arena);
+                            insert_to_map_row_to_mapping_side(&map1, row, mapping_side);
+                        }
                     }
+                    
+                    unsigned saved_calls2 = 0;
+                    MapRowToMappingSide map2 = create_map_row_to_mapping_side(ob2->r, normalized_set_schema2.size, normalized_common_set_schema.size);
                     for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
-                        mapping_column_indexes_side(
-                            normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                            starting_col_indices2, ob2->terms[i].row, mapping_side, &row_vars_to_extending_cols_arena
-                        );
-                        clear_arena(&row_vars_to_extending_cols_arena);
+                        int *row = ob2->terms[i].row;
+                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map2, row);
+                        if(pair){
+                            ++saved_calls2;
+                        } else {
+                            mapping_column_indexes_side(
+                                normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                                starting_col_indices2, row, mapping_side, &row_vars_to_extending_cols_arena
+                            );
+                            clear_arena(&row_vars_to_extending_cols_arena);
+                            insert_to_map_row_to_mapping_side(&map2, row, mapping_side);
+                        }
+                        
                     }
 
                     free_arena(&row_vars_to_extending_cols_arena);
@@ -1055,13 +1082,19 @@ void test_mapping_obtention_(
                     // Change the mgu_schemas sides and compare
                     // One mapping per row pairs in non-linear result block
                     for(unsigned i = 0; i < ob1->r; ++i){
-                        computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                        RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map1, ob1->terms[i].row);
+                        assert(row_to_ms);
+                        computed_mapping.common_L = row_to_ms->mapping_side;
+                        //computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
                         for(unsigned j = 0; j < ob2->r; ++j){
                             printf("Rows: %d-%d (1-based)\n", i+1, j+1);
                             
                             mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
 
-                            computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
+                            RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map2, ob2->terms[j].row);
+                            assert(row_to_ms);
+                            computed_mapping.common_R = row_to_ms->mapping_side;
+                            //computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
 
                             bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
                             
@@ -1070,6 +1103,8 @@ void test_mapping_obtention_(
                         }
                     }
 
+                    free_map_row_to_mapping_side(map1);
+                    free_map_row_to_mapping_side(map2);
                 }
                 
                 free(mapping_sides);

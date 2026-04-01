@@ -43,8 +43,6 @@ bool equivalent_rows(int *row1, int *row2, size_t len){
     return true;
 }
 
-// TODO(YA): 
-// - Hash Map where nodes are two arrays of ints (row and unsigned mapping side)
 
 HashMapRowToMappingSide create_hash_map_row_to_mapping_side(uint32_t num_buckets, uint32_t len_rows, uint32_t len_mapping_side){
     HashMapRowToMappingSide hm;
@@ -52,19 +50,19 @@ HashMapRowToMappingSide create_hash_map_row_to_mapping_side(uint32_t num_buckets
     hm.num_buckets = num_buckets;
     hm.len_rows = len_rows;
     hm.len_mapping_sides = len_mapping_side;
-    hm.buckets = malloc(num_buckets * sizeof(*hm.buckets));
-    CHECK_MALLOC(hm.buckets, "create_hash_map_row_to_mapping_side");
+    hm.buckets = calloc(num_buckets, sizeof(*hm.buckets));
+    CHECK_CALLOC(hm.buckets, "create_hash_map_row_to_mapping_side");
     return hm;
 }
 
 // NOTE: put this assert as the first statement in the blocks of for loops over hm.buckets!
-#define assert_row_not_end(hmptr, row) assert((((hmptr)->buckets[0].row - (row)) / 2) < (hmptr)->num_buckets);
+#define assert_row_not_end(hmptr, row) assert(((&((hmptr)->buckets[0].row) - (row)) / 2) < (hmptr)->num_buckets);
 
 // NOTE: we don't shrink the buckets array in any case.
 void clear_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm){
-    for(int *row = hm->buckets[0].row; hm->num_rows; (RowToMappingSide*)row++){
+    for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
         assert_row_not_end(hm, row);
-        if(row){
+        if(*row){
             *row = NULL;
             hm->num_rows--;
         }
@@ -83,10 +81,10 @@ static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *
     RowToMappingSide *new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
     CHECK_CALLOC(new_buckets, "resize_hash_map_row_to_mapping_side");
 
-    for(int *row = hm->buckets[0].row; hm->num_rows; (RowToMappingSide*)row++){
+    for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
         assert_row_not_end(hm, row);
-        if(row){
-            uint32_t bucket_i = hash_row(row, hm->len_rows) % new_num_buckets;
+        if(*row){
+            uint32_t bucket_i = hash_row(*row, hm->len_rows) % new_num_buckets;
 #ifndef NDEBUG
             uint32_t initial_bucket_i = bucket_i;
 #endif
@@ -97,8 +95,8 @@ static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *
                 assert(bucket_i != initial_bucket_i);
             }
 
-            new_buckets[bucket_i].row = row;
-            new_buckets[bucket_i].mapping_side = (int **)row + 1;
+            new_buckets[bucket_i].row = *row;
+            new_buckets[bucket_i].mapping_side = (unsigned*)row[1];
         }
     }
 
@@ -122,7 +120,7 @@ static inline uint32_t find_bucket(HashMapRowToMappingSide *hm, int *row){
     return bucket_i;
 }
 // NOTE: another possibility would be to pass the row size to this function
-MapInsertReturnCode insert_to_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm, int *row, int *mapping_side){
+MapInsertReturnCode insert_to_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm, int *row, unsigned *mapping_side){
     uint32_t bucket_i = find_bucket(hm, row);
     RowToMappingSide *buckets = hm->buckets;
     if(buckets[bucket_i].row == NULL){
@@ -162,17 +160,16 @@ RowToMappingSide *get_pair_in_hash_map_row_to_mapping_side(HashMapRowToMappingSi
 
 
 void print_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm){
-    
-    for(int remaining_rows = hm.num_rows, *row = hm.buckets[0].row; 
+    for(int remaining_rows = hm.num_rows, **row = &hm.buckets[0].row; 
         remaining_rows; 
-        --remaining_rows, (RowToMappingSide*)row++)
+        --remaining_rows, row += 2)
     {
         assert_row_not_end(&hm, row);
-        if(row){
+        if(*row){
             printf("Row:\n");
-            print_array_ints(row, hm.len_rows); printf("\n");
+            print_array_ints(*row, hm.len_rows); printf("\n");
             printf("Mapping Side:\n");
-            print_array_ints((int **)row+1, hm.len_mapping_sides); printf("\n\n");
+            print_array_ints(row[1], hm.len_mapping_sides); printf("\n\n");
         }
     }
 }
