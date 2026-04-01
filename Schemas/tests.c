@@ -310,8 +310,8 @@ ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
     size_t len = 0;
     
     // Read the row identifying the columns' free variables
-    if (getline(&line, &len, stream) == -1) exit(1); // Failed to read the line
-    if (strstr(line, "Free") == NULL) {free(line); exit(1);} // Not the correct line
+    if (getline(&line, &len, stream) == -1) { free(line); exit(1); } // Failed to read the line
+    if (strstr(line, "Free") == NULL) { free(line); exit(1); } // Not the correct line
 
     unsigned num_free_vars = 1;
     for(char *c = line; *c; ++c){
@@ -329,6 +329,7 @@ ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
         unsafe_add_to_array_list(free_vars, var_str);
     }
 
+    free(line);
     return free_vars;
 }
 
@@ -893,6 +894,7 @@ void test_mapping_obtention_(
                     while(schema_iterator_next(&it, &current)){
                         assert(schema_size(current) == current.size);
                     }
+                    free_schema_iterator(it);
                 }
                 foreach_in_arraylist(Schema, s, set_schema1){
                     SchemaIterator it = create_schema_iterator(*s);
@@ -900,6 +902,7 @@ void test_mapping_obtention_(
                     while(schema_iterator_next(&it, &current)){
                         assert(schema_size(current) == current.size);
                     }
+                    free_schema_iterator(it);
                 }
                 foreach_in_arraylist(Schema, s, set_schema2){
                     SchemaIterator it = create_schema_iterator(*s);
@@ -907,6 +910,7 @@ void test_mapping_obtention_(
                     while(schema_iterator_next(&it, &current)){
                         assert(schema_size(current) == current.size);
                     }
+                    free_schema_iterator(it);
                 }
 #endif          
                 // NOTE: calculate normalized set schemas. Sizes of schemas updated.
@@ -934,6 +938,7 @@ void test_mapping_obtention_(
                         assert(schema_size(current) == current.size);
                         assert(schema_depth(current) == current.depth);
                     }
+                    free_schema_iterator(it);
                 }
                 foreach_in_arraylist(Schema, s, list_normalized_set_schema1){
                     SchemaIterator it = create_schema_iterator(*s);
@@ -942,6 +947,7 @@ void test_mapping_obtention_(
                         assert(schema_size(current) == current.size);
                         assert(schema_depth(current) == current.depth);
                     }
+                    free_schema_iterator(it);
                 }
                 foreach_in_arraylist(Schema, s, list_normalized_set_schema2){
                     SchemaIterator it = create_schema_iterator(*s);
@@ -950,6 +956,7 @@ void test_mapping_obtention_(
                         assert(schema_size(current) == current.size);
                         assert(schema_depth(current) == current.depth);
                     }
+                    free_schema_iterator(it);
                 }
 #endif          
                 // NOTE: wrap to calculate size and depth only in one place
@@ -989,7 +996,7 @@ void test_mapping_obtention_(
                 unsigned *mapping_sides = NULL;
 
                 if(rb.lineal_lineal){
-                    unsigned *mapping_sides = malloc(2 * mapping_side_size);
+                    mapping_sides = malloc(2 * mapping_side_size);
                     CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mappingL = mapping_sides;
                     unsigned *mappingR = mapping_sides + computed_mapping.n_common;
@@ -1015,7 +1022,7 @@ void test_mapping_obtention_(
                 } else {
                     // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
                     
-                    unsigned *mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
+                    mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
                     CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
                     unsigned *mapping_side = mapping_sides;
 

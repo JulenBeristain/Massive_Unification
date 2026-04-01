@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-// TODO(YA): define the hash set of variables via general macros.
+// TODO: define the hash set of variables via general macros.
 //  In the same way, define general macros for linked lists...
 //  After that, define only operations that are used for sets of variables, no unused operations for Variables...
 
