@@ -286,7 +286,7 @@ DECLARE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint)
 DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
 
-unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena);
+void starting_column_indexes(ArrayListSchema fragment_set_schema, unsigned *starting_columns);
 ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
 

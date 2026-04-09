@@ -1428,13 +1428,11 @@ ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDepen
 //  We have one partition per each schema, i.e., per each free variable, that are constituted by contiguous integers, so
 //  we will identify each partition with the starting value until (excluding) the starting value of the next partition (the
 //  last one doesn't need a second number, total_cols is its final value).
-unsigned *starting_column_indexes(ArrayListSchema fragment_set_schema, Arena *arena){
-    unsigned *starting_columns = allocate(arena, sizeof(*starting_columns) * fragment_set_schema.size);
+void starting_column_indexes(ArrayListSchema fragment_set_schema, unsigned *starting_columns){
     starting_columns[0] = 1;
     for(unsigned i = 1; i < fragment_set_schema.size; ++i){
         starting_columns[i] = starting_columns[i - 1] + fragment_set_schema.array[i - 1].size;
     }
-    return starting_columns;
 }
 
 // Decide final ordering of free_vars (alphabetically)

@@ -773,6 +773,53 @@ void test_mapping_obtention_(
         increment_variables_in_set_dependencies(dependencies_array2[i], max_v1);
     }
 
+    // NOTE: we normalize the operand blocks' schemas outside the loop, not once per resultant fragment (block combination)
+    SetSchema *normalized_set_schemas1 = malloc(s1 * sizeof(*normalized_set_schemas1));
+    SetSchema *normalized_set_schemas2 = malloc(s2 * sizeof(*normalized_set_schemas2));
+    // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
+    // NOTE: we also calculate the depths of the normalized schemas because we will instantiate iterators over them when calculating 
+    //  column index mappings.
+    // NOTE: we wrap the arraylist of schemas to calculate the entire size of all the schemas.
+    for(unsigned i = 0; i < s1; ++i){
+        ArrayListSchema *set_schema = set_schemas1 + i;
+        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
+        
+        ArrayListDependencyPair *dependencies = dependencies_array1 + i;
+        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+            foreach_in_arraylist(Schema, s, pair->schemas){
+                calculate_schema_size(s);
+            }
+        }
+
+        SetSchema *normalized = normalized_set_schemas1 + i;
+        ArrayListSchema *normalized_list = &normalized->list;
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, arena);
+        foreach_in_arraylistptr(Schema, s, normalized_list) { calculate_schema_depth(s); }
+
+        normalized->size = 0;
+        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+    }
+    for(unsigned i = 0; i < s2; ++i){
+        ArrayListSchema *set_schema = set_schemas2 + i;
+        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
+        
+        ArrayListDependencyPair *dependencies = dependencies_array2 + i;
+        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+            foreach_in_arraylist(Schema, s, pair->schemas){
+                calculate_schema_size(s);
+            }
+        }
+
+        SetSchema *normalized = normalized_set_schemas2 + i;
+        ArrayListSchema *normalized_list = &normalized->list;
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, arena);
+        foreach_in_arraylistptr(Schema, s, normalized_list) { calculate_schema_depth(s); }
+
+        normalized->size = 0;
+        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+    }
+
+    // NOTE: read the first result block (according to global_starting_t1/2)
     first_rb = true;
     ArrayListCharPtr free_vars3, computed_free_vars3;
     result_block rb;
@@ -810,12 +857,25 @@ void test_mapping_obtention_(
         unsafe_add_to_array_list(free_var_positions2, pos);
     }
     
-    // NOTE: no resizing risk with this arena
-    Arena starting_indices_arena; init_arena(&starting_indices_arena, sizeof(unsigned) * (free_vars1.size + free_vars2.size));
+    // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
+    //  before entering the resulting blocks' loop.
+    unsigned *starting_col_indices_array = malloc(sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
+    unsigned *starting_col_indices_array1 = starting_col_indices_array;
+    unsigned *starting_col_indices_array2 = starting_col_indices_array + free_vars1.size*s1;
+    
+    unsigned *starting_indices = starting_col_indices_array1;
+    for(unsigned i = 0; i < s1; ++i){
+        ArrayListSchema normalized = normalized_set_schemas1[i].list;
+        starting_column_indexes(normalized, starting_indices);
+        starting_indices += free_vars1.size;
+    }
+    for(unsigned i = 0; i < s2; ++i){
+        ArrayListSchema normalized = normalized_set_schemas2[i].list;
+        starting_column_indexes(normalized, starting_indices);
+        starting_indices += free_vars2.size;
+    }
 
-    // TODO(YA): al igual que evitamos recalcular los mapping sides de cada fila por cada combinación fila1-fila2, también lo
-    //  podemos ahorrar por cada combinación de bloques! Es decir, lo suyo es precomputar los common y original schema normalizados y 
-    //  los mapping sides antes de entrar en este bucle!
+    // NOTE: resulting fragments' loop
     for(unsigned t1 = global_starting_t1; t1 <= s1; ++t1){
         for(unsigned t2 = global_starting_t2; t2 <= s2; ++t2){
 
@@ -869,19 +929,7 @@ void test_mapping_obtention_(
 
                 // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
                 foreach_in_arraylist(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
-                foreach_in_arraylist(Schema, s, set_schema1) { calculate_schema_size(s); }
-                foreach_in_arraylist(Schema, s, set_schema2) { calculate_schema_size(s); }
                 foreach_in_arraylist(DependencyPair, pair, computed_common_dependencies){
-                    foreach_in_arraylist(Schema, s, pair->schemas){
-                        calculate_schema_size(s);
-                    }
-                }
-                foreach_in_arraylist(DependencyPair, pair, dependencies1){
-                    foreach_in_arraylist(Schema, s, pair->schemas){
-                        calculate_schema_size(s);
-                    }
-                }
-                foreach_in_arraylist(DependencyPair, pair, dependencies2){
                     foreach_in_arraylist(Schema, s, pair->schemas){
                         calculate_schema_size(s);
                     }
@@ -919,8 +967,8 @@ void test_mapping_obtention_(
 #endif          
                 // NOTE: calculate normalized set schemas. Sizes of schemas updated.
                 ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
-                ArrayListSchema list_normalized_set_schema1 = normalized_set_schema(set_schema1, dependencies1, arena);
-                ArrayListSchema list_normalized_set_schema2 = normalized_set_schema(set_schema2, dependencies2, arena);
+                ArrayListSchema list_normalized_set_schema1 = normalized_set_schemas1[t1 - 1].list;
+                ArrayListSchema list_normalized_set_schema2 = normalized_set_schemas2[t2 - 1].list;
                 assert(list_normalized_set_schema1.size == free_vars1.size);
                 assert(list_normalized_set_schema2.size == free_vars2.size);
                 assert(list_normalized_common_set_schema.size == free_vars3.size);
@@ -932,8 +980,6 @@ void test_mapping_obtention_(
 
                 // NOTE: calculate depths once to create iterator over Schemas
                 foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) { calculate_schema_depth(s); }
-                foreach_in_arraylist(Schema, s, list_normalized_set_schema1) { calculate_schema_depth(s); }
-                foreach_in_arraylist(Schema, s, list_normalized_set_schema2) { calculate_schema_depth(s); }
 #ifndef NDEBUG
                 foreach_in_arraylist(Schema, s, list_normalized_common_set_schema){
                     SchemaIterator it = create_schema_iterator(*s);
@@ -963,18 +1009,14 @@ void test_mapping_obtention_(
                     free_schema_iterator(it);
                 }
 #endif          
-                // NOTE: wrap to calculate size and depth only in one place
+                // NOTE: wrap to calculate size only in one place
                 SetSchema normalized_common_set_schema = { .list = list_normalized_common_set_schema, .size = 0 };
-                SetSchema normalized_set_schema1 = { .list = list_normalized_set_schema1, .size = 0 };
-                SetSchema normalized_set_schema2 = { .list = list_normalized_set_schema2, .size = 0 };
                 foreach_in_arraylist(Schema, s, normalized_common_set_schema.list) { normalized_common_set_schema.size += s->size; }
-                foreach_in_arraylist(Schema, s, normalized_set_schema1.list) { normalized_set_schema1.size += s->size; }
-                foreach_in_arraylist(Schema, s, normalized_set_schema2.list) { normalized_set_schema2.size += s->size; }
+                SetSchema normalized_set_schema1 = normalized_set_schemas1[t1 - 1];
+                SetSchema normalized_set_schema2 = normalized_set_schemas2[t2 - 1];
 
-                // NOTE: calculate starting column indices
-                clear_arena(&starting_indices_arena);
-                unsigned *starting_col_indices1 = starting_column_indexes(list_normalized_set_schema1, &starting_indices_arena);
-                unsigned *starting_col_indices2 = starting_column_indexes(list_normalized_set_schema2, &starting_indices_arena);
+                unsigned *starting_col_indices1 = starting_col_indices_array1 + (t1-1)*free_vars1.size;
+                unsigned *starting_col_indices2 = starting_col_indices_array2 + (t2-1)*free_vars2.size;
 
                 unsigned row_len1 = rb.c1;
                 unsigned row_len2 = rb.c2;
@@ -1119,8 +1161,6 @@ void test_mapping_obtention_(
             }
         }
     }
-
-    free_arena(&starting_indices_arena);
 
     for (size_t i = 0; i < s1; i++) {
         free_operand_block(&obs1[i]);
