@@ -2,7 +2,8 @@
 #define UTILS_H
 
 #include <stdbool.h>
-#include<stdlib.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 #define MAX(a, b) ((a) < (b) ? (b) : (a))

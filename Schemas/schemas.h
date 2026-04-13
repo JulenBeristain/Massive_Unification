@@ -97,6 +97,7 @@ struct SchemaIterator {
 };
 
 SchemaIterator create_schema_iterator(Schema schema);
+SchemaIterator create_schema_iterator_arena(Schema schema, Arena *arena);
 static inline void free_schema_iterator(SchemaIterator iterator){ free_array_list_schema_iterator_node(iterator.stack); }
 bool schema_iterator_next(SchemaIterator *iterator, Schema *next);
 void schema_iterator_skip(SchemaIterator *iterator);
@@ -301,13 +302,15 @@ void mapping_column_indexes_side(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *row_vars_to_extending_cols_arena);
+    Arena *row_vars_to_extending_cols_arena,
+    Arena *schema_iterator_arena);
 
 void mapping_column_indexes_side_lineal(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
-    unsigned *mapping_side);
+    unsigned *mapping_side,
+    Arena *schema_iterator_arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -306,20 +306,35 @@ int read_num_blocks(FILE *stream, unsigned *s) {
     return 0;
 }
 
-ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
-    char *line = NULL;
-    size_t len = 0;
-    
-    // Read the row identifying the columns' free variables
-    if (getline(&line, &len, stream) == -1) { free(line); exit(1); } // Failed to read the line
-    if (strstr(line, "Free") == NULL) { free(line); exit(1); } // Not the correct line
 
+unsigned scan_num_free_vars(char *line){
     unsigned num_free_vars = 1;
     for(char *c = line; *c; ++c){
         if(*c == ','){
             ++num_free_vars;
         }
     }
+    return num_free_vars;
+}
+ArrayListCharPtr scan_free_vars(char *line, unsigned num_free_vars, Arena *arena){
+    // NOTE: no resizing risk
+    // NOTE: another option would be to use non-arena version, malloc and define the free_pointers for arraylists of charptrs...
+    ArrayListCharPtr free_vars = create_array_list_char_ptr_arena(num_free_vars, arena);
+    for(char* token = strtok(line, ",\n"); token; token = strtok(NULL, ",\n")){
+        char *var_str = allocate(arena, strlen(token) + 1);
+        strcpy(var_str, token);
+        unsafe_add_to_array_list(free_vars, var_str);
+    }
+    return free_vars;
+}
+ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
+    char *line = NULL;
+    size_t len;
+    
+    if (getline(&line, &len, stream) == -1) { free(line); exit(1); } // Failed to read the line
+    if (strstr(line, "Free") == NULL) { free(line); exit(1); } // Not the correct line
+
+    unsigned num_free_vars = scan_num_free_vars(line);
 
     // NOTE: no resizing risk
     // NOTE: another option would be to use non-arena version, malloc and define the free_pointers for arraylists of charptrs...
@@ -330,10 +345,8 @@ ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
         unsafe_add_to_array_list(free_vars, var_str);
     }
 
-    free(line);
     return free_vars;
 }
-
 
 void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
     char *line = NULL;
@@ -668,13 +681,11 @@ void read_result_matrix(
     free(mapping);
 }
 
-
-bool first_rb = true;
-void read_result_block(
+void read_first_result_block(
     FILE *stream, result_block *rb, 
     ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, 
     ArrayListCharPtr *free_vars,
-    Arena *arena
+    Arena *arena, Arena *debug_arena
 ) {
     // Create the operand_block structure for later populating it
     *rb = create_null_result_block();
@@ -683,18 +694,26 @@ void read_result_block(
     size_t len = 0;
 
     // Skip matrix header
-    if (first_rb) {
-        first_rb=false; 
-        getline(&line, &len, stream);
-        if (strstr(line, "% END: Matrix M1 & M2 + MGU") != NULL) {free(line);}
+    getline(&line, &len, stream);
+    if (strstr(line, "% END: Matrix M1 & M2 + MGU") != NULL) {free(line);}
 
-        *free_vars = read_free_vars(stream, arena);
-    }
-
+    *free_vars = read_free_vars(stream, debug_arena);
+    
     // Read the operand block and fill the struct
     read_result_matrix(stream, rb, common_set_schema, common_dependencies, arena);
 
     free(line);
+}
+void read_next_result_block(
+    FILE *stream, result_block *rb, 
+    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies, 
+    Arena *arena
+) {
+    // Create the operand_block structure for later populating it
+    *rb = create_null_result_block();
+
+    // Read the operand block and fill the struct
+    read_result_matrix(stream, rb, common_set_schema, common_dependencies, arena);
 }
 
 bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
@@ -715,10 +734,14 @@ bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
     return true;
 }
 
-void test_mapping_obtention_(
-    char *path_m1, char *path_m2, char *path_m3, 
-    Arena *arena)
+void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
 {
+    // TODO(CLEAN/OPT_MEM - not very relevant...): 
+    //  we could perform a first read to the operand blocks to determine the total memory we need for them. With the result blocks, we could calculate the size
+    //  of the greatest one to allocate that amount of memory which would be reused. In the case of operand schemas we could also determine the total number of schemas in the
+    //  operand files to further limit the allocated memory for them. Another option would be to add a header to the files that summarizes the sizes of the operand blocks, the 
+    //  largest possible resulting block, and so on... to avoid that first read.
+
     // Open the files and check so
     FILE *stream_M1 = fopen(path_m1, "r");
     FILE *stream_M2 = fopen(path_m2, "r");
@@ -738,26 +761,47 @@ void test_mapping_obtention_(
     if (read_num_blocks(stream_M2,&s2)) fprintf(stderr, "Could not read number of blocks in %s\n", path_m2);
     printf("M1 blocks: %u - M2 blocks: %u\n",s1,s2); // Check
 
-    operand_block *obs1 = (operand_block*)malloc(s1*sizeof(operand_block));
-    operand_block *obs2 = (operand_block*)malloc(s2*sizeof(operand_block));
-    // NOTE: we could use arenas for these too...
-    ArrayListSchema *set_schemas1 = malloc(s1 * sizeof(*set_schemas1));
-    ArrayListSchema *set_schemas2 = malloc(s2 * sizeof(*set_schemas2));
-    ArrayListDependencyPair *dependencies_array1 = malloc(s1 * sizeof(*dependencies_array1));
-    ArrayListDependencyPair *dependencies_array2 = malloc(s2 * sizeof(*dependencies_array2));
+    // Read the row identifying the columns' free variables
+    char *line1 = NULL, *line2 = NULL;
+    size_t len1 = 0, len2 = 0;
+    if (getline(&line1, &len1, stream_M1) == -1) { free(line1); exit(1); } // Failed to read the line
+    if (strstr(line1, "Free") == NULL) { free(line1); exit(1); } // Not the correct line
+    if (getline(&line2, &len2, stream_M2) == -1) { free(line2); exit(1); } // Failed to read the line
+    if (strstr(line2, "Free") == NULL) { free(line2); exit(1); } // Not the correct line
 
-    ArrayListCharPtr free_vars1 = read_free_vars(stream_M1, arena);
-    ArrayListCharPtr free_vars2 = read_free_vars(stream_M2, arena);
-    
+    unsigned num_free_vars1 = scan_num_free_vars(line1);
+    unsigned num_free_vars2 = scan_num_free_vars(line2);
 
-    for (size_t i = 0; i < s1; i++)
-    {
-        read_operand_block(stream_M1, obs1 + i, set_schemas1 + i, dependencies_array1 + i, arena);
+    Arena arena_operands;
+    size_t arena_operands_bytes = 
+        (s1 + s2)*(sizeof(operand_block) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
+        2*(num_free_vars1 + num_free_vars2)*(sizeof(char*)) + strlen(line1) + strlen(line2) +
+        2*(num_free_vars1 + num_free_vars2)*(sizeof(unsigned)) +
+        (num_free_vars1*s1 + num_free_vars2*s2)*(sizeof(unsigned)) +
+        100000*(sizeof(Schema));
+    init_arena(&arena_operands, arena_operands_bytes);
+
+    ArrayListCharPtr free_vars1 = scan_free_vars(line1, num_free_vars1, &arena_operands);
+    ArrayListCharPtr free_vars2 = scan_free_vars(line2, num_free_vars2, &arena_operands);
+    free(line1);
+    free(line2);
+    ArrayListCharPtr computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, &arena_operands);
+
+
+    operand_block *obs1 = allocate(&arena_operands, s1 * sizeof(operand_block));
+    operand_block *obs2 = allocate(&arena_operands, s2 * sizeof(operand_block));
+    ArrayListSchema *set_schemas1 = allocate(&arena_operands, s1 * sizeof(*set_schemas1));
+    ArrayListSchema *set_schemas2 = allocate(&arena_operands, s2 * sizeof(*set_schemas2));
+    ArrayListDependencyPair *dependencies_array1 = allocate(&arena_operands, s1 * sizeof(*dependencies_array1));
+    ArrayListDependencyPair *dependencies_array2 = allocate(&arena_operands, s2 * sizeof(*dependencies_array2));
+
+    // NOTE: arena_operands is used only for Schemas and DependencyPairs, not OperandBlocks
+    for (size_t i = 0; i < s1; i++) {
+        read_operand_block(stream_M1, obs1 + i, set_schemas1 + i, dependencies_array1 + i, &arena_operands);
     }
 
-    for (size_t i = 0; i < s2; i++)
-    {
-        read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, arena);
+    for (size_t i = 0; i < s2; i++) {
+        read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, &arena_operands);
     }
 
     // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
@@ -774,12 +818,14 @@ void test_mapping_obtention_(
     }
 
     // NOTE: we normalize the operand blocks' schemas outside the loop, not once per resultant fragment (block combination)
-    SetSchema *normalized_set_schemas1 = malloc(s1 * sizeof(*normalized_set_schemas1));
-    SetSchema *normalized_set_schemas2 = malloc(s2 * sizeof(*normalized_set_schemas2));
+    SetSchema *normalized_set_schemas1 = allocate(&arena_operands, s1 * sizeof(*normalized_set_schemas1));
+    SetSchema *normalized_set_schemas2 = allocate(&arena_operands, s2 * sizeof(*normalized_set_schemas2));
     // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
     // NOTE: we also calculate the depths of the normalized schemas because we will instantiate iterators over them when calculating 
     //  column index mappings.
     // NOTE: we wrap the arraylist of schemas to calculate the entire size of all the schemas.
+    // NOTE: max_operand_depth to calculate the size of the Arena for Schema iterators.
+    unsigned max_operand_depth = 0;
     for(unsigned i = 0; i < s1; ++i){
         ArrayListSchema *set_schema = set_schemas1 + i;
         foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
@@ -793,8 +839,11 @@ void test_mapping_obtention_(
 
         SetSchema *normalized = normalized_set_schemas1 + i;
         ArrayListSchema *normalized_list = &normalized->list;
-        *normalized_list = normalized_set_schema(*set_schema, *dependencies, arena);
-        foreach_in_arraylistptr(Schema, s, normalized_list) { calculate_schema_depth(s); }
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
+        foreach_in_arraylistptr(Schema, s, normalized_list) {
+            calculate_schema_depth(s);
+            max_operand_depth = MAX(max_operand_depth, s->depth);
+        }
 
         normalized->size = 0;
         foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
@@ -812,36 +861,46 @@ void test_mapping_obtention_(
 
         SetSchema *normalized = normalized_set_schemas2 + i;
         ArrayListSchema *normalized_list = &normalized->list;
-        *normalized_list = normalized_set_schema(*set_schema, *dependencies, arena);
-        foreach_in_arraylistptr(Schema, s, normalized_list) { calculate_schema_depth(s); }
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
+        foreach_in_arraylistptr(Schema, s, normalized_list) {
+            calculate_schema_depth(s);
+            max_operand_depth = MAX(max_operand_depth, s->depth);
+        }
 
         normalized->size = 0;
         foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
     }
 
+    // TODO(YA): the arena_result is created with a variable number of bytes in mind. Nonetheless, we could use a safer lower bound if we calculate
+    //  the maximum number of rows among obs1 + the maximum number of rows of obs2, and even a safer lower bound if we calculate all the normalized
+    //  common set schemas before the loop and take into account the maximum size (number of columns) too (although that has its own memory tradeoffs
+    //  too; if there is a huge number of resulting blocks, we would have to store a lot of normalized common schemas at once; it shouldn't be
+    //  infeasible with the data we have worked with). Furthermore, precalculating the normalized common set schemas would allow to extract the creation
+    //  of the helper arenas (schema iterator and map row to extending cols) outside the loop, avoiding repeated create and free calls.
+    //  Note that in that case we would need to use the OperandArena for the common and normalized common schemas to persist in memory during the loop.
+    Arena arena_result; init_arena(&arena_result, 100000*sizeof(Schema));
+    Arena debug_arena; init_arena(&debug_arena, 10000);
+
     // NOTE: read the first result block (according to global_starting_t1/2)
-    first_rb = true;
-    ArrayListCharPtr free_vars3, computed_free_vars3;
+    ArrayListCharPtr free_vars3;
     result_block rb;
     ArrayListSchema common_set_schema;
     ArrayListDependencyPair common_dependencies;
-    // NOTE: read_result_block sets first_rb to false
-    read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &arena_result, &debug_arena);
     while((rb.t1 < global_starting_t1) || (rb.t1 == global_starting_t1 && rb.t2 < global_starting_t2)){
         free_result_block(&rb);
-        read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+        read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
     }
 
     // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
-    computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, arena);
     bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
     printf("ok_free_vars = %u\n", ok_free_vars);
     assert(ok_free_vars);
 
     // NOTE: compute free_var_positions1/2
     // NOTE: no resizing risk with these ArrayLists
-    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(free_vars3.size, arena);
-    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(free_vars3.size, arena);
+    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(free_vars3.size, &arena_operands);
+    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(free_vars3.size, &arena_operands);
     foreach_in_arraylist(CharPtr, free_v, free_vars3){
         // NOTE: special value for not found = free_vars3.size
         unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
@@ -859,7 +918,7 @@ void test_mapping_obtention_(
     
     // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
     //  before entering the resulting blocks' loop.
-    unsigned *starting_col_indices_array = malloc(sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
+    unsigned *starting_col_indices_array = allocate(&arena_operands, sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
     unsigned *starting_col_indices_array1 = starting_col_indices_array;
     unsigned *starting_col_indices_array2 = starting_col_indices_array + free_vars1.size*s1;
     
@@ -899,7 +958,7 @@ void test_mapping_obtention_(
                 set_schema1, dependencies1, free_var_positions1,
                 set_schema2, dependencies2, free_var_positions2,
                 &computed_common_set_schema, &computed_common_dependencies,
-                arena);
+                &arena_result);
 
             if(rb.t1 == t1 && rb.t2 == t2){
                 // NOTE: common schema exists so no fragment was skipped
@@ -914,8 +973,9 @@ void test_mapping_obtention_(
                     unsigned num_read_vars = read_vars.num_variables;
                     free_set_variables(read_vars);
 
+                    clear_arena(&debug_arena);
                     size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
-                    Variable *mapping = allocate(arena, num_bytes_for_mapping);
+                    Variable *mapping = allocate(&debug_arena, num_bytes_for_mapping);
                     memset(mapping, 0, num_bytes_for_mapping);
 
                     bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
@@ -966,7 +1026,7 @@ void test_mapping_obtention_(
                 }
 #endif          
                 // NOTE: calculate normalized set schemas. Sizes of schemas updated.
-                ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, arena);
+                ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, &arena_result);
                 ArrayListSchema list_normalized_set_schema1 = normalized_set_schemas1[t1 - 1].list;
                 ArrayListSchema list_normalized_set_schema2 = normalized_set_schemas2[t2 - 1].list;
                 assert(list_normalized_set_schema1.size == free_vars1.size);
@@ -1034,16 +1094,18 @@ void test_mapping_obtention_(
                 computed_mapping.new_b = computed_mapping.n_common - num_cols2;
 
                 unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
-                computed_mapping.common_columns = malloc(num_bytes);
-                CHECK_MALLOC(computed_mapping.common_columns, "test_mapping_obtention_");
+                computed_mapping.common_columns = allocate(&arena_result, num_bytes);
                 for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
                 unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
-                unsigned *mapping_sides = NULL;
+                
+                unsigned max_common_depth = 0;
+                foreach_in_arraylist(Schema, s, normalized_common_set_schema.list){ max_common_depth = MAX(max_common_depth, s->depth); }
+                Arena schema_iterator_arena; init_arena(&schema_iterator_arena, sizeof(SchemaIteratorNode) * (max_operand_depth + max_common_depth));
+                // NOTE: cleans to this arena are done in the mapping_column_indexes_side functions
 
                 if(rb.lineal_lineal){
-                    mapping_sides = malloc(2 * mapping_side_size);
-                    CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
+                    unsigned *mapping_sides = allocate(&arena_result, 2 * mapping_side_size);
                     unsigned *mappingL = mapping_sides;
                     unsigned *mappingR = mapping_sides + computed_mapping.n_common;
 
@@ -1051,11 +1113,11 @@ void test_mapping_obtention_(
                     
                     mapping_column_indexes_side_lineal(
                         normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                        starting_col_indices1, ob1->terms[0].row, mappingL);
+                        starting_col_indices1, ob1->terms[0].row, mappingL, &schema_iterator_arena);
                     
                     mapping_column_indexes_side_lineal(
                         normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                        starting_col_indices2, ob2->terms[0].row, mappingR);
+                        starting_col_indices2, ob2->terms[0].row, mappingR, &schema_iterator_arena);
 
                     // Only one mapping in linear result block
                     mgu_schema *mapping = rb.ms;
@@ -1067,14 +1129,12 @@ void test_mapping_obtention_(
 
                 } else {
                     // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
-                    
-                    mapping_sides = malloc((ob1->r + ob2->r) * mapping_side_size);
-                    CHECK_MALLOC(mapping_sides, "test_mapping_obtention_");
+                    unsigned *mapping_sides = allocate(&arena_result, (ob1->r + ob2->r) * mapping_side_size);
                     unsigned *mapping_side = mapping_sides;
 
                     // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
                     //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-                    Arena row_vars_to_extending_cols_arena; 
+                    Arena row_vars_to_extending_cols_arena;
                     unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
                     unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
                     unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(computed_mapping.new_a);
@@ -1085,7 +1145,8 @@ void test_mapping_obtention_(
                     //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
                     //  for an equivalent row was already computed.
                     unsigned saved_calls1 = 0; // NOTE: for debugging
-                    MapRowToMappingSide map1 = create_map_row_to_mapping_side(ob1->r, normalized_set_schema1.size, normalized_common_set_schema.size);
+                    // NOTE: resizing risk (very improbable with our data)
+                    MapRowToMappingSide map1 = create_map_row_to_mapping_side_arena(ob1->r, normalized_set_schema1.size, normalized_common_set_schema.size, &arena_result);
                     for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
                         int *row = ob1->terms[i].row;
                         RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map1, row);
@@ -1094,15 +1155,17 @@ void test_mapping_obtention_(
                         } else {
                             mapping_column_indexes_side(
                                 normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                                starting_col_indices1, row, mapping_side, &row_vars_to_extending_cols_arena
+                                starting_col_indices1, row, mapping_side, &row_vars_to_extending_cols_arena,
+                                &schema_iterator_arena
                             );
                             clear_arena(&row_vars_to_extending_cols_arena);
-                            insert_to_map_row_to_mapping_side(&map1, row, mapping_side);
+                            insert_to_map_row_to_mapping_side_arena(&map1, row, mapping_side, &arena_result);
                         }
                     }
                     
                     unsigned saved_calls2 = 0;
-                    MapRowToMappingSide map2 = create_map_row_to_mapping_side(ob2->r, normalized_set_schema2.size, normalized_common_set_schema.size);
+                    // NOTE: resizing risk (very improbable with our data)
+                    MapRowToMappingSide map2 = create_map_row_to_mapping_side_arena(ob2->r, normalized_set_schema2.size, normalized_common_set_schema.size, &arena_result);
                     for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
                         int *row = ob2->terms[i].row;
                         RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map2, row);
@@ -1111,12 +1174,12 @@ void test_mapping_obtention_(
                         } else {
                             mapping_column_indexes_side(
                                 normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                                starting_col_indices2, row, mapping_side, &row_vars_to_extending_cols_arena
+                                starting_col_indices2, row, mapping_side, &row_vars_to_extending_cols_arena,
+                                &schema_iterator_arena
                             );
                             clear_arena(&row_vars_to_extending_cols_arena);
-                            insert_to_map_row_to_mapping_side(&map2, row, mapping_side);
+                            insert_to_map_row_to_mapping_side_arena(&map2, row, mapping_side, &arena_result);
                         }
-                        
                     }
 
                     free_arena(&row_vars_to_extending_cols_arena);
@@ -1144,20 +1207,18 @@ void test_mapping_obtention_(
                             assert(ok_mappings);
                         }
                     }
-
-                    free_map_row_to_mapping_side(map1);
-                    free_map_row_to_mapping_side(map2);
                 }
                 
-                free(mapping_sides);
-                free(computed_mapping.common_columns);
+                free_arena(&schema_iterator_arena);
+                clear_arena(&arena_result);
                 free_result_block(&rb);
-                read_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, arena);
+                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
             }
             else {
                 // NOTE: common schema doesn't exist so a fragment was skipped
                 printf("Resultant fragment: %d-%d (SKIPPED BECAUSE COMMON SCHEMA DOESN'T EXIST!)\n", t1, t2);
                 assert(!exists_common_schema);
+                clear_arena(&arena_result);
             }
         }
     }
@@ -1168,14 +1229,10 @@ void test_mapping_obtention_(
     for (size_t i = 0; i < s2; i++) {
         free_operand_block(&obs2[i]);
     }
-    free(obs1);
-    free(obs2);
 
-    // NOTE: we could use arenas for these too...
-    free(set_schemas1);
-    free(set_schemas2);
-    free(dependencies_array1);
-    free(dependencies_array2);
+    free_arena(&arena_operands);
+    free_arena(&arena_result);
+    free_arena(&debug_arena);
 
     fclose(stream_M1);
     fclose(stream_M2);
@@ -1201,10 +1258,6 @@ void test_mapping_obtention(int argc, char *argv[]){
         perror("Error opening directory");
         return;
     }
-
-
-    Arena arena;
-    init_arena(&arena, sizeof(Schema) * 100000);
     
     var_dict = create_dictionary(501);
     symbols_to_ids = create_dictionary(501);
@@ -1276,11 +1329,8 @@ void test_mapping_obtention(int argc, char *argv[]){
             if (access(path_m2, F_OK) == 0 && access(path_m3, F_OK) == 0) {
                 printf("%s\n", base);
                 
-                test_mapping_obtention_(
-                    path_m1, path_m2, path_m3,
-                    &arena);
+                test_mapping_obtention_(path_m1, path_m2, path_m3);
 
-                clear_arena(&arena);
                 clear(var_dict);
                 clear(symbols_to_ids);
                 next_symbol_id = 1;
@@ -1294,7 +1344,6 @@ void test_mapping_obtention(int argc, char *argv[]){
     
     free_dictionary(symbols_to_ids);
     free_dictionary(var_dict);
-    free_arena(&arena);
     closedir(dir);
 }
 

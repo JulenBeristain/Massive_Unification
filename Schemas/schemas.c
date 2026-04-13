@@ -1568,10 +1568,18 @@ bool common_set_schema_strict_free_vars_baseline(
 // #region Schema iterator
 
 DEFINE_ARRAYLIST_CREATE(SchemaIteratorNode, schema_iterator_node)
+DEFINE_ARRAYLIST_CREATE_ARENA(SchemaIteratorNode, schema_iterator_node)
 
-// NOTE: for my use case, I prefer a non-arena version.
 SchemaIterator create_schema_iterator(Schema schema){
     ArrayListSchemaIteratorNode stack = create_array_list_schema_iterator_node(schema.depth);
+    SchemaIteratorNode node = { .schema = schema, .next_child = 0 };
+    unsafe_add_to_array_list(stack, node);
+    SchemaIterator it = { .stack = stack, .first_next = true };
+    return it;
+}
+
+SchemaIterator create_schema_iterator_arena(Schema schema, Arena *arena){
+    ArrayListSchemaIteratorNode stack = create_array_list_schema_iterator_node_arena(schema.depth, arena);
     SchemaIteratorNode node = { .schema = schema, .next_child = 0 };
     unsafe_add_to_array_list(stack, node);
     SchemaIterator it = { .stack = stack, .first_next = true };
@@ -1628,7 +1636,8 @@ void mapping_column_indexes_side(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *row_vars_to_extending_cols_arena)
+    Arena *row_vars_to_extending_cols_arena,
+    Arena *schema_iterator_arena)
 {
     unsigned n_common = normalized_common_set_schema.size;
     unsigned n_cols_side = normalized_set_schema.size;
@@ -1659,8 +1668,9 @@ void mapping_column_indexes_side(
                 printf("Normalized common   schema: "); println_schema(normalized_common_schema, PRINT_VISUALLY);
                 printf("Normalized original schema: "); println_schema(normalized_original_schema, PRINT_VISUALLY);
             }
-            SchemaIterator common_it = create_schema_iterator(normalized_common_schema);
-            SchemaIterator original_it = create_schema_iterator(normalized_original_schema);
+            clear_arena(schema_iterator_arena);
+            SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
+            SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
 
             // NOTE: row_pos is 0 based, as opposed to starting_col_indices!!!
             unsigned row_pos = starting_col_indices[pos] - 1;
@@ -1746,9 +1756,6 @@ void mapping_column_indexes_side(
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
             //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
             assert(row_pos == end_pos);
-
-            free_schema_iterator(common_it);
-            free_schema_iterator(original_it);
         }
 
         assert(mapping_pos <= n_common);
@@ -1761,7 +1768,8 @@ void mapping_column_indexes_side_lineal(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
-    unsigned *mapping_side)
+    unsigned *mapping_side,
+    Arena *schema_iterator_arena)
 {
     unsigned n_common = normalized_common_set_schema.size;
     unsigned n_cols_side = normalized_set_schema.size;
@@ -1790,8 +1798,9 @@ void mapping_column_indexes_side_lineal(
                 printf("Normalized common   schema: "); println_schema(normalized_common_schema, PRINT_VISUALLY);
                 printf("Normalized original schema: "); println_schema(normalized_original_schema, PRINT_VISUALLY);
             }
-            SchemaIterator common_it = create_schema_iterator(normalized_common_schema);
-            SchemaIterator original_it = create_schema_iterator(normalized_original_schema);
+            clear_arena(schema_iterator_arena);
+            SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
+            SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
 
             // NOTE: row_pos is 0 based, as opposed to starting_col_indices!!!
             unsigned row_pos = starting_col_indices[pos] - 1;
@@ -1858,9 +1867,6 @@ void mapping_column_indexes_side_lineal(
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
             //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
             assert(row_pos == end_pos);
-
-            free_schema_iterator(common_it);
-            free_schema_iterator(original_it);
         }
 
         assert(mapping_pos <= n_common);

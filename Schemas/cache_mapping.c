@@ -55,6 +55,17 @@ HashMapRowToMappingSide create_hash_map_row_to_mapping_side(uint32_t num_buckets
     return hm;
 }
 
+HashMapRowToMappingSide create_hash_map_row_to_mapping_side_arena(uint32_t num_buckets, uint32_t len_rows, uint32_t len_mapping_side, Arena *arena){
+    HashMapRowToMappingSide hm;
+    hm.num_rows = 0;
+    hm.num_buckets = num_buckets;
+    hm.len_rows = len_rows;
+    hm.len_mapping_sides = len_mapping_side;
+    hm.buckets = allocate(arena, num_buckets * sizeof(*hm.buckets));
+    SET_TO_ZERO(hm.buckets, num_buckets * sizeof(*hm.buckets));
+    return hm;
+}
+
 // NOTE: put this assert as the first statement in the blocks of for loops over hm.buckets!
 #define assert_row_not_end(hmptr, row) assert(((&((hmptr)->buckets[0].row) - (row)) / 2) < (hmptr)->num_buckets);
 
@@ -105,6 +116,34 @@ static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *
     hm->num_buckets = new_num_buckets;
     //hm->num_rows remains equal, as well as len_rows and len_mapping_sides (which are constant)
 }
+static inline void resize_hash_map_row_to_mapping_side_arena(HashMapRowToMappingSide *hm, Arena *arena){
+    uint32_t new_num_buckets = hm->num_buckets * 2;
+    RowToMappingSide *new_buckets = allocate(arena, new_num_buckets * sizeof(*new_buckets));
+    SET_TO_ZERO(new_buckets, new_num_buckets * sizeof(*new_buckets));
+
+    for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
+        assert_row_not_end(hm, row);
+        if(*row){
+            uint32_t bucket_i = hash_row(*row, hm->len_rows) % new_num_buckets;
+#ifndef NDEBUG
+            uint32_t initial_bucket_i = bucket_i;
+#endif
+            // NOTE: we know that we don't have two equivalents! So simpler while condition and no need to check the exit condition afterwards.
+            while(new_buckets[bucket_i].row != NULL){
+                bucket_i = (bucket_i + 1) % new_num_buckets;
+                // NOTE: thanks to the load factor we should always have an empty spot
+                assert(bucket_i != initial_bucket_i);
+            }
+
+            new_buckets[bucket_i].row = *row;
+            new_buckets[bucket_i].mapping_side = (unsigned*)row[1];
+        }
+    }
+
+    hm->buckets = new_buckets;
+    hm->num_buckets = new_num_buckets;
+    //hm->num_rows remains equal, as well as len_rows and len_mapping_sides (which are constant)
+}
 static inline uint32_t find_bucket(HashMapRowToMappingSide *hm, int *row){
     uint32_t bucket_i = hash_row(row, hm->len_rows) % hm->num_buckets;
 #ifndef NDEBUG
@@ -133,6 +172,32 @@ MapInsertReturnCode insert_to_hash_map_row_to_mapping_side(HashMapRowToMappingSi
         #define MAX_LOAD_FACTOR 0.75f
         if(load_factor(*hm) > MAX_LOAD_FACTOR){
             resize_hash_map_row_to_mapping_side(hm);
+            return MAP_INSERT_ADDED_RESIZING;
+        }
+        #undef MAX_LOAD_FACTOR
+
+        return MAP_INSERT_ADDED;
+
+    } else {
+        // NOTE: equivalent in the hashmap, do not insert
+        return MAP_INSERT_ALREADY_CONTAINED;
+    }
+}
+
+// NOTE: only use if the HashMap was previously created in an Arena, be consistent!
+MapInsertReturnCode insert_to_hash_map_row_to_mapping_side_arena(HashMapRowToMappingSide *hm, int *row, unsigned *mapping_side, Arena *arena){
+    uint32_t bucket_i = find_bucket(hm, row);
+    RowToMappingSide *buckets = hm->buckets;
+    if(buckets[bucket_i].row == NULL){
+        // NOTE: not in the hashmap, insert
+        buckets[bucket_i].row = row;
+        buckets[bucket_i].mapping_side = mapping_side;
+
+        hm->num_rows++;
+
+        #define MAX_LOAD_FACTOR 0.75f
+        if(load_factor(*hm) > MAX_LOAD_FACTOR){
+            resize_hash_map_row_to_mapping_side_arena(hm, arena);
             return MAP_INSERT_ADDED_RESIZING;
         }
         #undef MAX_LOAD_FACTOR
