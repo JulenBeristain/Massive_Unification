@@ -345,6 +345,7 @@ ArrayListCharPtr read_free_vars(FILE *stream, Arena *arena){
         unsafe_add_to_array_list(free_vars, var_str);
     }
 
+    free(line);
     return free_vars;
 }
 
@@ -778,6 +779,7 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
         2*(num_free_vars1 + num_free_vars2)*(sizeof(char*)) + strlen(line1) + strlen(line2) +
         2*(num_free_vars1 + num_free_vars2)*(sizeof(unsigned)) +
         (num_free_vars1*s1 + num_free_vars2*s2)*(sizeof(unsigned)) +
+        s1*s2 * (sizeof(bool) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
         100000*(sizeof(Schema));
     init_arena(&arena_operands, arena_operands_bytes);
 
@@ -786,6 +788,25 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
     free(line1);
     free(line2);
     ArrayListCharPtr computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, &arena_operands);
+
+    // NOTE: compute free_var_positions1/2
+    // NOTE: no resizing risk with these ArrayLists
+    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
+    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
+    foreach_in_arraylist(CharPtr, free_v, computed_free_vars3){
+        // NOTE: special value for not found = free_vars3.size
+        unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
+        if(pos == free_vars1.size){
+            pos = computed_free_vars3.size;
+        }
+        unsafe_add_to_array_list(free_var_positions1, pos);
+
+        pos = find_in_array_list_char_ptr(free_vars2, *free_v);
+        if(pos == free_vars2.size){
+            pos = computed_free_vars3.size;
+        }
+        unsafe_add_to_array_list(free_var_positions2, pos);
+    }
 
 
     operand_block *obs1 = allocate(&arena_operands, s1 * sizeof(operand_block));
@@ -796,12 +817,16 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
     ArrayListDependencyPair *dependencies_array2 = allocate(&arena_operands, s2 * sizeof(*dependencies_array2));
 
     // NOTE: arena_operands is used only for Schemas and DependencyPairs, not OperandBlocks
+    unsigned max_rows1 = 0;
     for (size_t i = 0; i < s1; i++) {
         read_operand_block(stream_M1, obs1 + i, set_schemas1 + i, dependencies_array1 + i, &arena_operands);
+        max_rows1 = MAX(max_rows1, obs1[i].r);
     }
 
+    unsigned max_rows2 = 0;
     for (size_t i = 0; i < s2; i++) {
         read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, &arena_operands);
+        max_rows2 = MAX(max_rows2, obs2[i].r);
     }
 
     // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
@@ -824,8 +849,10 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
     // NOTE: we also calculate the depths of the normalized schemas because we will instantiate iterators over them when calculating 
     //  column index mappings.
     // NOTE: we wrap the arraylist of schemas to calculate the entire size of all the schemas.
-    // NOTE: max_operand_depth to calculate the size of the Arena for Schema iterators.
-    unsigned max_operand_depth = 0;
+    // NOTE: max_operand_depth to calculate the size of the Arena for Schema iterators, and the other for the row to mapping side mapping Arena.
+    unsigned max_normalized_operand_depth = 0;
+    unsigned max_normalized_operand_set_size1 = 0;
+    unsigned min_normalized_operand_set_size1 = UINT32_MAX;
     for(unsigned i = 0; i < s1; ++i){
         ArrayListSchema *set_schema = set_schemas1 + i;
         foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
@@ -842,12 +869,16 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
         *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
         foreach_in_arraylistptr(Schema, s, normalized_list) {
             calculate_schema_depth(s);
-            max_operand_depth = MAX(max_operand_depth, s->depth);
+            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
         }
 
         normalized->size = 0;
         foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+        max_normalized_operand_set_size1 = MAX(max_normalized_operand_set_size1, normalized->size);
+        min_normalized_operand_set_size1 = MIN(min_normalized_operand_set_size1, normalized->size);
     }
+    unsigned max_normalized_operand_set_size2 = 0;
+    unsigned min_normalized_operand_set_size2 = UINT32_MAX;
     for(unsigned i = 0; i < s2; ++i){
         ArrayListSchema *set_schema = set_schemas2 + i;
         foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
@@ -864,58 +895,82 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
         *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
         foreach_in_arraylistptr(Schema, s, normalized_list) {
             calculate_schema_depth(s);
-            max_operand_depth = MAX(max_operand_depth, s->depth);
+            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
         }
 
         normalized->size = 0;
         foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+        max_normalized_operand_set_size2 = MAX(max_normalized_operand_set_size2, normalized->size);
+        min_normalized_operand_set_size2 = MIN(min_normalized_operand_set_size2, normalized->size);
     }
 
-    // TODO(YA): the arena_result is created with a variable number of bytes in mind. Nonetheless, we could use a safer lower bound if we calculate
-    //  the maximum number of rows among obs1 + the maximum number of rows of obs2, and even a safer lower bound if we calculate all the normalized
-    //  common set schemas before the loop and take into account the maximum size (number of columns) too (although that has its own memory tradeoffs
-    //  too; if there is a huge number of resulting blocks, we would have to store a lot of normalized common schemas at once; it shouldn't be
-    //  infeasible with the data we have worked with). Furthermore, precalculating the normalized common set schemas would allow to extract the creation
-    //  of the helper arenas (schema iterator and map row to extending cols) outside the loop, avoiding repeated create and free calls.
-    //  Note that in that case we would need to use the OperandArena for the common and normalized common schemas to persist in memory during the loop.
-    Arena arena_result; init_arena(&arena_result, 100000*sizeof(Schema));
-    Arena debug_arena; init_arena(&debug_arena, 10000);
 
-    // NOTE: read the first result block (according to global_starting_t1/2)
-    ArrayListCharPtr free_vars3;
-    result_block rb;
-    ArrayListSchema common_set_schema;
-    ArrayListDependencyPair common_dependencies;
-    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &arena_result, &debug_arena);
-    while((rb.t1 < global_starting_t1) || (rb.t1 == global_starting_t1 && rb.t2 < global_starting_t2)){
-        free_result_block(&rb);
-        read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
-    }
+    bool *exists_common_schema_array = allocate(&arena_operands, s1*s2 * sizeof(bool));
+    ArrayListSchema *common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*common_set_schemas));
+    ArrayListDependencyPair *common_dependencies_array = allocate(&arena_operands, s1*s2 * sizeof(*common_dependencies_array));
+    SetSchema *normalized_common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*normalized_common_set_schemas));
+    // NOTE: loop to calculate the common set schemas and normalize them.
+    unsigned max_normalized_common_set_size = 0;
+    unsigned max_normalized_common_depth = 0;
+    for(unsigned t1 = global_starting_t1; t1 <= s1; ++t1){
+        for(unsigned t2 = global_starting_t2; t2 <= s2; ++t2){
 
-    // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
-    bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
-    printf("ok_free_vars = %u\n", ok_free_vars);
-    assert(ok_free_vars);
+            // NOTE: calculate common schema
+            ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
+            ArrayListDependencyPair dependencies1 = dependencies_array1[t1 - 1];
+            
+            ArrayListSchema set_schema2 = set_schemas2[t2 - 1];
+            ArrayListDependencyPair dependencies2 = dependencies_array2[t2 - 1];
 
-    // NOTE: compute free_var_positions1/2
-    // NOTE: no resizing risk with these ArrayLists
-    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(free_vars3.size, &arena_operands);
-    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(free_vars3.size, &arena_operands);
-    foreach_in_arraylist(CharPtr, free_v, free_vars3){
-        // NOTE: special value for not found = free_vars3.size
-        unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
-        if(pos == free_vars1.size){
-            pos = free_vars3.size;
+            if(global_print_debugging){
+                printf("SS1 - "); println_set_schema(set_schema1, PRINT_VISUALLY);
+                printf("Dependencies 1:\n"); println_set_dependencies(dependencies1, PRINT_VISUALLY);
+                printf("SS2 - "); println_set_schema(set_schema2, PRINT_VISUALLY);
+                printf("Dependencies 2:\n"); println_set_dependencies(dependencies2, PRINT_VISUALLY);
+            }
+
+            ArrayListSchema *computed_common_set_schema = common_set_schemas + (t1-1)*s2 + (t2-1);
+            ArrayListDependencyPair *computed_common_dependencies = common_dependencies_array + (t1-1)*s2 + (t2-1);
+            exists_common_schema_array[(t1-1)*s2 + (t2-1)] = common_set_schema_free_vars_baseline(
+                set_schema1, dependencies1, free_var_positions1,
+                set_schema2, dependencies2, free_var_positions2,
+                computed_common_set_schema, computed_common_dependencies,
+                &arena_operands);
+
+            // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
+            foreach_in_arraylistptr(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
+            foreach_in_arraylistptr(DependencyPair, pair, computed_common_dependencies){
+                foreach_in_arraylist(Schema, s, pair->schemas){
+                    calculate_schema_size(s);
+                }
+            }
+
+            // NOTE: calculate normalized set schemas. Sizes of schemas updated.
+            ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(*computed_common_set_schema, *computed_common_dependencies, &arena_operands);
+            
+            if(global_print_debugging){
+                ArrayListSchema list_normalized_set_schema1 = normalized_set_schemas1[t1 - 1].list;
+                ArrayListSchema list_normalized_set_schema2 = normalized_set_schemas2[t2 - 1].list;
+                printf("NCSS - "); println_set_schema(list_normalized_common_set_schema, PRINT_VISUALLY);
+                printf("NSS1 - "); println_set_schema(list_normalized_set_schema1, PRINT_VISUALLY);
+                printf("NSS2 - "); println_set_schema(list_normalized_set_schema2, PRINT_VISUALLY);
+            }
+
+            // NOTE: calculate depths once to create iterator over Schemas
+            foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) {
+                calculate_schema_depth(s);
+                max_normalized_common_depth = MAX(max_normalized_common_depth, s->depth);
+            }
+
+            // NOTE: wrap to calculate size only in one place
+            SetSchema *normalized_common_set_schema = normalized_common_set_schemas + (t1-1)*s2 + (t2-1);
+            normalized_common_set_schema->list = list_normalized_common_set_schema;
+            normalized_common_set_schema->size = 0;
+            foreach_in_arraylist(Schema, s, normalized_common_set_schema->list) { normalized_common_set_schema->size += s->size; }
+            max_normalized_common_set_size = MAX(max_normalized_common_set_size, normalized_common_set_schema->size);
         }
-        unsafe_add_to_array_list(free_var_positions1, pos);
-
-        pos = find_in_array_list_char_ptr(free_vars2, *free_v);
-        if(pos == free_vars2.size){
-            pos = free_vars3.size;
-        }
-        unsafe_add_to_array_list(free_var_positions2, pos);
     }
-    
+
     // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
     //  before entering the resulting blocks' loop.
     unsigned *starting_col_indices_array = allocate(&arena_operands, sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
@@ -934,31 +989,48 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
         starting_indices += free_vars2.size;
     }
 
+    Arena arena_result; 
+    init_arena(&arena_result, 
+        (max_rows1 + max_rows2) * (max_normalized_common_set_size*sizeof(unsigned) + 2*sizeof(unsigned*)) +
+        (max_normalized_common_set_size) * sizeof(unsigned));
+    
+    Arena debug_arena; init_arena(&debug_arena, 10000*sizeof(Schema));
+
+    // NOTE: cleans to this arena are done in the mapping_column_indexes_side functions
+    Arena schema_iterator_arena; init_arena(&schema_iterator_arena, sizeof(SchemaIteratorNode) * (max_normalized_operand_depth + max_normalized_common_depth));
+
+    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
+    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
+    Arena row_vars_to_extending_cols_arena;
+    unsigned num_bytes_pointers1 = sizeof(unsigned*) * max_normalized_operand_set_size1;
+    unsigned num_bytes_pointers2 = sizeof(unsigned*) * max_normalized_operand_set_size2;
+    unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size1);
+    unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size2);
+    init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
+
+    // NOTE: read the first result block (according to global_starting_t1/2)
+    ArrayListCharPtr free_vars3;
+    result_block rb;
+    ArrayListSchema common_set_schema;
+    ArrayListDependencyPair common_dependencies;
+    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &debug_arena, &debug_arena);
+    while((rb.t1 < global_starting_t1) || (rb.t1 == global_starting_t1 && rb.t2 < global_starting_t2)){
+        free_result_block(&rb);
+        read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &debug_arena);
+    }
+
+    // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
+    bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
+    printf("ok_free_vars = %u\n", ok_free_vars);
+    assert(ok_free_vars);
+    
     // NOTE: resulting fragments' loop
     for(unsigned t1 = global_starting_t1; t1 <= s1; ++t1){
         for(unsigned t2 = global_starting_t2; t2 <= s2; ++t2){
 
-            // NOTE: calculate common schema
-            ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
-            ArrayListDependencyPair dependencies1 = dependencies_array1[t1 - 1];
-            
-            ArrayListSchema set_schema2 = set_schemas2[t2 - 1];
-            ArrayListDependencyPair dependencies2 = dependencies_array2[t2 - 1];
-
-            if(global_print_debugging){
-                printf("SS1 - "); println_set_schema(set_schema1, PRINT_VISUALLY);
-                printf("Dependencies 1:\n"); println_set_dependencies(dependencies1, PRINT_VISUALLY);
-                printf("SS2 - "); println_set_schema(set_schema2, PRINT_VISUALLY);
-                printf("Dependencies 2:\n"); println_set_dependencies(dependencies2, PRINT_VISUALLY);
-            }
-
-            ArrayListSchema computed_common_set_schema;
-            ArrayListDependencyPair computed_common_dependencies;
-            bool exists_common_schema = common_set_schema_free_vars_baseline(
-                set_schema1, dependencies1, free_var_positions1,
-                set_schema2, dependencies2, free_var_positions2,
-                &computed_common_set_schema, &computed_common_dependencies,
-                &arena_result);
+            ArrayListSchema computed_common_set_schema = common_set_schemas[(t1-1)*s2 + (t2-1)];
+            ArrayListDependencyPair computed_common_dependencies = common_dependencies_array[(t1-1)*s2 + (t2-1)];
+            bool exists_common_schema = exists_common_schema_array[(t1-1)*s2 + (t2-1)];
 
             if(rb.t1 == t1 && rb.t2 == t2){
                 // NOTE: common schema exists so no fragment was skipped
@@ -973,7 +1045,6 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                     unsigned num_read_vars = read_vars.num_variables;
                     free_set_variables(read_vars);
 
-                    clear_arena(&debug_arena);
                     size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
                     Variable *mapping = allocate(&debug_arena, num_bytes_for_mapping);
                     memset(mapping, 0, num_bytes_for_mapping);
@@ -987,101 +1058,17 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                     //  not having those empty dependencies is equivalent to having them...
                 }
 
-                // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
-                foreach_in_arraylist(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
-                foreach_in_arraylist(DependencyPair, pair, computed_common_dependencies){
-                    foreach_in_arraylist(Schema, s, pair->schemas){
-                        calculate_schema_size(s);
-                    }
-                }
-#ifndef NDEBUG
-                // NOTE: can't create iterators to test sizes if depths are not calculate!
-                foreach_in_arraylist(Schema, s, computed_common_set_schema) { calculate_schema_depth(s); }
-                foreach_in_arraylist(Schema, s, set_schema1) { calculate_schema_depth(s); }
-                foreach_in_arraylist(Schema, s, set_schema2) { calculate_schema_depth(s); }
-
-                foreach_in_arraylist(Schema, s, computed_common_set_schema){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                    }
-                    free_schema_iterator(it);
-                }
-                foreach_in_arraylist(Schema, s, set_schema1){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                    }
-                    free_schema_iterator(it);
-                }
-                foreach_in_arraylist(Schema, s, set_schema2){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                    }
-                    free_schema_iterator(it);
-                }
-#endif          
-                // NOTE: calculate normalized set schemas. Sizes of schemas updated.
-                ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(computed_common_set_schema, computed_common_dependencies, &arena_result);
-                ArrayListSchema list_normalized_set_schema1 = normalized_set_schemas1[t1 - 1].list;
-                ArrayListSchema list_normalized_set_schema2 = normalized_set_schemas2[t2 - 1].list;
-                assert(list_normalized_set_schema1.size == free_vars1.size);
-                assert(list_normalized_set_schema2.size == free_vars2.size);
-                assert(list_normalized_common_set_schema.size == free_vars3.size);
-                if(global_print_debugging){
-                    printf("NCSS - "); println_set_schema(list_normalized_common_set_schema, PRINT_VISUALLY);
-                    printf("NSS1 - "); println_set_schema(list_normalized_set_schema1, PRINT_VISUALLY);
-                    printf("NSS2 - "); println_set_schema(list_normalized_set_schema2, PRINT_VISUALLY);
-                }
-
-                // NOTE: calculate depths once to create iterator over Schemas
-                foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) { calculate_schema_depth(s); }
-#ifndef NDEBUG
-                foreach_in_arraylist(Schema, s, list_normalized_common_set_schema){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                        assert(schema_depth(current) == current.depth);
-                    }
-                    free_schema_iterator(it);
-                }
-                foreach_in_arraylist(Schema, s, list_normalized_set_schema1){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                        assert(schema_depth(current) == current.depth);
-                    }
-                    free_schema_iterator(it);
-                }
-                foreach_in_arraylist(Schema, s, list_normalized_set_schema2){
-                    SchemaIterator it = create_schema_iterator(*s);
-                    Schema current;
-                    while(schema_iterator_next(&it, &current)){
-                        assert(schema_size(current) == current.size);
-                        assert(schema_depth(current) == current.depth);
-                    }
-                    free_schema_iterator(it);
-                }
-#endif          
-                // NOTE: wrap to calculate size only in one place
-                SetSchema normalized_common_set_schema = { .list = list_normalized_common_set_schema, .size = 0 };
-                foreach_in_arraylist(Schema, s, normalized_common_set_schema.list) { normalized_common_set_schema.size += s->size; }
-                SetSchema normalized_set_schema1 = normalized_set_schemas1[t1 - 1];
-                SetSchema normalized_set_schema2 = normalized_set_schemas2[t2 - 1];
+                SetSchema normalized_common_set_schema = normalized_common_set_schemas[(t1-1)*s2 + (t2-1)];
+                SetSchema normalized_set_schema1 = normalized_set_schemas1[t1-1];
+                SetSchema normalized_set_schema2 = normalized_set_schemas2[t2-1];
 
                 unsigned *starting_col_indices1 = starting_col_indices_array1 + (t1-1)*free_vars1.size;
                 unsigned *starting_col_indices2 = starting_col_indices_array2 + (t2-1)*free_vars2.size;
 
                 unsigned row_len1 = rb.c1;
                 unsigned row_len2 = rb.c2;
-                assert(set_schema_size(list_normalized_set_schema1) == row_len1);
-                assert(set_schema_size(list_normalized_set_schema2) == row_len2);
+                assert(normalized_set_schema1.size == row_len1);
+                assert(normalized_set_schema2.size == row_len2);
 
                 operand_block *ob1 = obs1 + t1-1;
                 operand_block *ob2 = obs2 + t2-1;
@@ -1098,11 +1085,6 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                 for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
                 unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
-                
-                unsigned max_common_depth = 0;
-                foreach_in_arraylist(Schema, s, normalized_common_set_schema.list){ max_common_depth = MAX(max_common_depth, s->depth); }
-                Arena schema_iterator_arena; init_arena(&schema_iterator_arena, sizeof(SchemaIteratorNode) * (max_operand_depth + max_common_depth));
-                // NOTE: cleans to this arena are done in the mapping_column_indexes_side functions
 
                 if(rb.lineal_lineal){
                     unsigned *mapping_sides = allocate(&arena_result, 2 * mapping_side_size);
@@ -1131,15 +1113,6 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                     // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
                     unsigned *mapping_sides = allocate(&arena_result, (ob1->r + ob2->r) * mapping_side_size);
                     unsigned *mapping_side = mapping_sides;
-
-                    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
-                    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-                    Arena row_vars_to_extending_cols_arena;
-                    unsigned num_bytes_pointers1 = sizeof(unsigned*) * num_cols1;
-                    unsigned num_bytes_pointers2 = sizeof(unsigned*) * num_cols2;
-                    unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(computed_mapping.new_a);
-                    unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(computed_mapping.new_b);
-                    init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
 
                     // NOTE: function symbol differences don't affect to the resulting mapping, the mapping is determined by the placement of variables (0s and negatives),
                     //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
@@ -1181,8 +1154,6 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                             insert_to_map_row_to_mapping_side_arena(&map2, row, mapping_side, &arena_result);
                         }
                     }
-
-                    free_arena(&row_vars_to_extending_cols_arena);
                     
                     // Change the mgu_schemas sides and compare
                     // One mapping per row pairs in non-linear result block
@@ -1209,16 +1180,17 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
                     }
                 }
                 
-                free_arena(&schema_iterator_arena);
                 clear_arena(&arena_result);
+                clear_arena(&debug_arena);
                 free_result_block(&rb);
-                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
+                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &debug_arena);
             }
             else {
                 // NOTE: common schema doesn't exist so a fragment was skipped
                 printf("Resultant fragment: %d-%d (SKIPPED BECAUSE COMMON SCHEMA DOESN'T EXIST!)\n", t1, t2);
                 assert(!exists_common_schema);
                 clear_arena(&arena_result);
+                clear_arena(&debug_arena);
             }
         }
     }
@@ -1233,6 +1205,8 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
     free_arena(&arena_operands);
     free_arena(&arena_result);
     free_arena(&debug_arena);
+    free_arena(&schema_iterator_arena);
+    free_arena(&row_vars_to_extending_cols_arena);
 
     fclose(stream_M1);
     fclose(stream_M2);

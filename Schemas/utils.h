@@ -7,6 +7,14 @@
 
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
+typedef struct { unsigned min, max; } MinMax;
+static inline MinMax min_max(unsigned a, unsigned b){
+    if(a < b){
+        return (MinMax){ .min = a, .max = b };
+    } else {
+        return (MinMax){ .min = b, .max = a };
+    }
+}
 
 #define GET_BIT(Num, Bit) (((Num) >> (Bit)) & 1)
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
