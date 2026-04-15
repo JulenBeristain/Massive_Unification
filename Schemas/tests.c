@@ -717,24 +717,6 @@ void read_next_result_block(
     read_result_matrix(stream, rb, common_set_schema, common_dependencies, arena);
 }
 
-bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
-    if(ms1->n_common != ms2->n_common || ms1->new_a != ms2->new_a || ms1->new_b != ms2->new_b){
-        return false;
-    }
-
-    for(unsigned i = 0; i < ms1->n_common; ++i){
-        bool same_i = ms1->common_columns[i] != ms2->common_columns[i] ||
-                      ms1->common_L[i] != ms2->common_L[i] ||
-                      ms1->common_R[i] != ms2->common_R[i];
-        if(same_i)
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
 {
     // TODO(CLEAN/OPT_MEM - not very relevant...): 

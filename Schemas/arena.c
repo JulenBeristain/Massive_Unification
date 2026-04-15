@@ -9,27 +9,31 @@
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit
 // is 63, we return the size itself (to avoid returning 0).
 static inline size_t calculate_block_size(size_t size_in_bytes){
-    bool is_power_of_2 = true;
     unsigned most_significant_1; // Range: [0, 63] - Ensured to initialize because size_in_bytes has at least a bit activated
     unsigned i = MOST_SIGNIFICANT_BIT(size_t);
-    for(; i; --i){
+    while(i){
         if(GET_BIT(size_in_bytes, i)){
             most_significant_1 = i;
             break;
         }
+        --i;
     }
-
+    
     if(most_significant_1 == MOST_SIGNIFICANT_BIT(size_t)){
         return size_in_bytes;
     }
-
-    for(; i; --i){
+    
+    bool is_power_of_2 = true;
+    while(i){
+        --i;
         if(GET_BIT(size_in_bytes, i)){
             is_power_of_2 = false;
             break;
         }
     }
-    return is_power_of_2 ? size_in_bytes : (1u << (most_significant_1 + 1));
+
+    size_t block_size = is_power_of_2 ? size_in_bytes : (1ul << (most_significant_1 + 1));
+    return block_size;
 }
 
 // PRE: block_size > 0

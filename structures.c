@@ -479,6 +479,24 @@ void print_mgu_compact(mgu_schema *ms) {
     printf("\n");
 }
 
+bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2){
+    if(ms1->n_common != ms2->n_common || ms1->new_a != ms2->new_a || ms1->new_b != ms2->new_b){
+        return false;
+    }
+
+    for(unsigned i = 0; i < ms1->n_common; ++i){
+        bool not_same_i = ms1->common_columns[i] != ms2->common_columns[i] ||
+                      ms1->common_L[i] != ms2->common_L[i] ||
+                      ms1->common_R[i] != ms2->common_R[i];
+        if(not_same_i)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // ===<<< END MGU SCHEMA >>>=== //
 
 // ===<<< BEGIN L2, L3 >>>=== //

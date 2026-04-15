@@ -96,6 +96,7 @@ mgu_schema* deep_copy_mgu_schema(const mgu_schema* ms);
 void free_mgu_schema(mgu_schema* ms);
 void print_mgu_schema(mgu_schema* ms);
 void print_mgu_compact(mgu_schema *ms);
+bool equal_mgu_schemas(mgu_schema *ms1, mgu_schema *ms2);
 
 L2 create_L2_empty();
 L2 create_L2(int ind_in, int count_in, int by_in, L3* head_in, L3* tail_in);

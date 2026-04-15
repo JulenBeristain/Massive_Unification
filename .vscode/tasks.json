@@ -2,6 +2,33 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "build core optimized for debugging (gcc)",
+			"type": "shell",
+			"command": "gcc",
+			"args": [
+				"-o",
+				"c",
+				"core_optimized.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"structures.c",
+				"Schemas/set_variables.c",
+				"Schemas/arena.c",
+				"Schemas/schemas.c",
+				"Schemas/utils.c",
+				"Schemas/cache_mapping.c",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
 			"label": "build tests (gcc)",
 			"type": "shell",
 			"command": "gcc",
@@ -27,6 +54,7 @@
 			],
 			"group": "build"
 		},
+
         {
             "label": "valgrind test schema management",
             "type": "shell",
@@ -91,99 +119,6 @@
             },
             "dependsOn": "build core no perfect hash for debugging (gcc)" 
         },
-		{
-			"label": "build alex COM for debugging (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-g",
-				"-O0",
-				"structures.c",
-				"perf_hash.c",
-				"-DCOM",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "build alex AGT for debugging (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-g",
-				"-O0",
-				"structures.c",
-				"perf_hash.c",
-				"-DAGT",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "build alex COM optimized (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-O3",
-				"structures.c",
-				"perf_hash.c",
-				"-DCOM",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "build alex AGT optimized (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-O3",
-				"structures.c",
-				"perf_hash.c",
-				"-DAGT",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
 
 		{
 			"label": "build core no perfect hash for debugging (gcc)",
@@ -207,7 +142,6 @@
 			],
 			"group": "build"
 		},
-
 		{
 			"label": "build core no perfect hash optimized (gcc)",
 			"type": "shell",

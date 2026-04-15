@@ -56,6 +56,7 @@
             }
         ]
     },
+
     {
         "name": "Debug tests.c common set schema (gdb)",
         "type": "cppdbg",
@@ -108,189 +109,13 @@
             }
         ]
     },
+
     {
-        "name": "Debug core.c AGT006+2 test0002 verbose (gdb)",
+        "name": "Debug core_optimized.c (gdb)",
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/AGT/AGT006+2.p/test0002M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug core.c ITP018+5 test0361 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0361M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0361M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0361M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug core.c ITP018+5 test0458 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0458M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0458M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/ITP/ITP018+5.p/test0458M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug core.c SEV437+1 test0003 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/SEV/SEV437+1.p/test0003M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug core.c CSR118+1 test0051 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/CSR/CSR118+1/test0051M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/CSR/CSR118+1/test0051M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/CSR/CSR118+1/test0051M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug Alex core.c AGT002+1 test0001 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0001M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0001M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0001M3.csv",
-                 "verbose"],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb",
-        "miDebuggerPath": "/usr/bin/gdb",
-        "preLaunchTask": "build tests (gcc)",
-        "setupCommands": [
-            {
-                "description": "Enable pretty-printing for gdb",
-                "text": "-enable-pretty-printing",
-                "ignoreFailures": true
-            },
-            {
-                "description": "Set Disassembly Flavor to Intel",
-                "text": "-gdb-set disassembly-flavor intel",
-                "ignoreFailures": true
-            }
-        ]
-    },
-    {
-        "name": "Debug Alex core.c AGT002+1 test0011 verbose (gdb)",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/c",
-        "args": ["${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M1.csv", 
-                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M2.csv",
-                 "${workspaceFolder}/data/experimentation_matrices/AGT002+1/test0011M3.csv",
-                 "verbose"],
+        "args": [],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
         "environment": [],

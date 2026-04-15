@@ -92,6 +92,7 @@ static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *
     RowToMappingSide *new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
     CHECK_CALLOC(new_buckets, "resize_hash_map_row_to_mapping_side");
 
+
     for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
         assert_row_not_end(hm, row);
         if(*row){
@@ -121,7 +122,8 @@ static inline void resize_hash_map_row_to_mapping_side_arena(HashMapRowToMapping
     RowToMappingSide *new_buckets = allocate(arena, new_num_buckets * sizeof(*new_buckets));
     SET_TO_ZERO(new_buckets, new_num_buckets * sizeof(*new_buckets));
 
-    for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
+    uint32_t num_rows_to_copy = hm->num_rows;
+    for(int **row = &hm->buckets[0].row; num_rows_to_copy; row += 2){
         assert_row_not_end(hm, row);
         if(*row){
             uint32_t bucket_i = hash_row(*row, hm->len_rows) % new_num_buckets;
@@ -137,6 +139,8 @@ static inline void resize_hash_map_row_to_mapping_side_arena(HashMapRowToMapping
 
             new_buckets[bucket_i].row = *row;
             new_buckets[bucket_i].mapping_side = (unsigned*)row[1];
+
+            --num_rows_to_copy;
         }
     }
 
@@ -196,7 +200,8 @@ MapInsertReturnCode insert_to_hash_map_row_to_mapping_side_arena(HashMapRowToMap
         hm->num_rows++;
 
         #define MAX_LOAD_FACTOR 0.75f
-        if(load_factor(*hm) > MAX_LOAD_FACTOR){
+        float lf = load_factor(*hm);
+        if(lf > MAX_LOAD_FACTOR){
             resize_hash_map_row_to_mapping_side_arena(hm, arena);
             return MAP_INSERT_ADDED_RESIZING;
         }
