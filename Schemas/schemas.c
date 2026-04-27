@@ -1708,24 +1708,15 @@ void mapping_column_indexes_side(
                     printf("---\n");
                 }
                 assert(has_next_common && has_next_original);
-
-                if(row[row_pos] > 0){
-                    // NOTE: function symbol --> Take original column number, that is, row_pos+1 (1-based column indexes)
-                    mapping_side[mapping_pos++] = row_pos + 1;
-                    ++row_pos;
-
-                } else {
+                
+                // NOTE: Take original column number, that is, row_pos+1 (1-based column indexes)
+                mapping_side[mapping_pos++] = row_pos + 1;
+                
+                if(row[row_pos] <= 0 && is_empty(original_subschema)){
                     // NOTE: variable
-                    unsigned count_old_cols = original_subschema.size;
-                    unsigned old_col = row_pos + 1;
-                    while(count_old_cols--) {
-                        mapping_side[mapping_pos++] = old_col++;
-                    }
-
-                    unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
-                    // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols 
-                    // NOTE: since row_pos is not incremented before, the first variable, which was already extended in the matrix, 
-                    //  will be mapped to the new virtual cols, not the last original extending variable of the repeated one.
+                    unsigned num_virtual_cols = common_subschema.size - 1 ; // 1 = original_subschema.size;
+                    
+                    // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
                     if(row[row_pos] == 0){
                         // NOTE: first appearence of the row variable
                         // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
@@ -1738,19 +1729,18 @@ void mapping_column_indexes_side(
                             mapping_side[mapping_pos++] = new_virtual_column;
                             *extending_col = new_virtual_column++;
                         }
-
                     } else {
                         // NOTE: repeated appearence of the row variable
-                        unsigned **extending_cols = row_vars_to_extending_cols - row[row_pos] - 1;
+                        unsigned **extending_cols = row_vars_to_extending_cols - (row[row_pos] + 1);
                         for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
                             mapping_side[mapping_pos++] = *extending_col;
                         }
                     }
-
-                    row_pos += original_subschema.size;
+                    
                     schema_iterator_skip(&common_it);
-                    schema_iterator_skip(&original_it);
                 }
+                
+                ++row_pos;
             }
 
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
@@ -1838,30 +1828,9 @@ void mapping_column_indexes_side_lineal(
                 }
                 assert(has_next_common && has_next_original);
 
-                if(row[row_pos] > 0){
-                    // NOTE: function symbol --> Take original column number, that is, row_pos+1 (1-based column indexes)
-                    mapping_side[mapping_pos++] = row_pos + 1;
-                    ++row_pos;
-
-                } else {
-                    // NOTE: variable (first and only appearence)
-                    assert(row[row_pos] == 0);
-                    
-                    unsigned count_old_cols = original_subschema.size;
-                    unsigned old_col = row_pos + 1;
-                    while(count_old_cols--) {
-                        mapping_side[mapping_pos++] = old_col++;
-                    }
-
-                    unsigned num_virtual_cols = common_subschema.size - original_subschema.size;
-                    while(num_virtual_cols--) {
-                        mapping_side[mapping_pos++] = new_virtual_column++;
-                    }
-
-                    row_pos += original_subschema.size;
-                    schema_iterator_skip(&common_it);
-                    schema_iterator_skip(&original_it);
-                }
+                // NOTE: Take original column number, that is, row_pos+1 (1-based column indexes)
+                mapping_side[mapping_pos++] = row_pos + 1;
+                ++row_pos;
             }
 
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;

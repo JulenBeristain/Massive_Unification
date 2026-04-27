@@ -1608,7 +1608,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     ArrayListSchema common_set_schema;
     ArrayListDependencyPair common_dependencies;
     clock_gettime(CLOCK_MONOTONIC, &start_reading);
-    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &debug_arena, &debug_arena);
+    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &arena_result, &debug_arena);
     clock_gettime(CLOCK_MONOTONIC, &end_reading);
     timespec_subtract(&elapsed, &end_reading, &start_reading);
     timespec_add(&read_file_elapsed, &read_file_elapsed, &elapsed);
@@ -1652,8 +1652,6 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                     
                     printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
                     assert(ok_set_schemas);
-                    // TODO(instance): some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
-                    //  not having those empty dependencies is equivalent to having them...
                 }
                 
                 clock_gettime(CLOCK_MONOTONIC, &start_mapping);
@@ -1809,7 +1807,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                 free_result_block(&rb);
 
                 clock_gettime(CLOCK_MONOTONIC, &start_reading);
-                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &debug_arena);
+                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
                 clock_gettime(CLOCK_MONOTONIC, &end_reading);
     
                 timespec_subtract(&elapsed, &end_reading, &start_reading);
@@ -1888,11 +1886,13 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
 
 int main(){
+    // NOTE: instances must respect the format. Among other characteristics, the resulting fragments should be
+    // in the expected order: 1-1, 1-2, ..., 1-n, 2-1, ... (with holes in case a resulting fragment doesn't exist
+    // due to a lack of finite common schema)
     char *folder_path = "data/experimentation_matrices/AGT002+1";
     //char *folder_path = "data/experimentation_matrices/AGT004+2";
     //char *folder_path = "data/experimentation_matrices/AGT/AGT006+2.p";
     //char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
-    //char *folder_path = "data/experimentation_matrices/SEV/SEV437+1.p";
 
     bool verb = true;
 
@@ -1927,7 +1927,7 @@ int main(){
                 //strstr(base, "test0005") || 
                 //strstr(base, "test0009") ||
                 //strstr(base, "test0017") ||
-                strstr(base, "test0011") ||
+                //strstr(base, "test0011") ||
                 
                 // Skip passed tests: AGT004+2
                 //strstr(base, "test0001") || 
@@ -1938,23 +1938,7 @@ int main(){
 
                 // Skip passed tests: ITP018+5.p
                 //strstr(base, "test0361") ||
-                //strstr(base, "test0458") || // TODO(instance): similar problem to SEV. I don't see why the computed is problematic... 
-                //  It seems that the criteria for extending variables already in the file is different than the one I am using (?)
-                //  But not only that, because all the same column indexes are used, but in a different order...
-                //  --> Unification in core_optimized didn't work!?
-                //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,107-6,108-7,109-8,110-9,111-10,112-11,113-12,114-13,115-14,116-15,117-16,118-17,96-18,97-19,119-20,120-21,121-22,122-23,123-24,124-25,125-26,126-27,127-28,128-29,98-30,99-31,100-32,129-33,130-34,131-35,132-36,133-37,134-38,101-39,102-40,103-41,135-42,136-43,137-44,138-45,139-46,140-47,141-48,142-49,143-50,144-51,145-52,146-53,147-54,148-55,149-56,150-57,151-58,152-59,153-60,154-61,155-62,156-63,157-64,158-65,159-66,160-67,161-68,162-69,163-70,104-71,105-72,106-73,164-74,165-75,166-76,167-77,168-78,169-79
-                //1-80,2-81,3-82,4-83,5-1,6-84,7-85,8-86,9-87,10-88,11-89,12-90,13-91,14-92,15-93,16-94,17-95,18-96,19-97,20-98,21-99,22-100,23-101,24-102,25-103,26-104,27-105,28-106,29-107,30-108,31-109,32-110,33-111,34-112,35-113,36-114,37-115,38-116,39-117,40-118,41-119,42-120,43-121,44-122,45-123,46-124,47-125,48-126,49-127,50-128,51-129,52-130,53-131,54-132,55-133,56-134,57-135,58-136,59-137,60-138,61-139,62-140,63-141,64-142,65-143,66-144,67-145,68-146,69-147,70-148,71-149,72-150,73-151,74-152,75-153,76-154,77-155,78-156,79-157,80-158,81-159,82-160,83-161,84-162,85-163,86-164,87-165,88-166,89-167,90-168,91-169,92-2,93-3,94-4,95-5,96-6,97-7,98-8,99-9,100-10,101-11,102-12,103-13,104-14,105-15,106-16,107-17,108-18,109-19,110-20,111-21,112-22,113-23,114-24,115-25,116-26,117-27,118-28,119-29,120-30,121-31,122-32,123-33,124-34,125-35,126-36,127-37,128-38,129-39,130-40,131-41,132-42,133-43,134-44,135-45,136-46,137-47,138-48,139-49,140-50,141-51,142-52,143-53,144-54,145-55,146-56,147-57,148-58,149-59,150-60,151-61,152-62,153-63,154-64,155-65,156-66,157-67,158-68,159-69,160-70,161-71,162-72,163-73,164-74,165-75,166-76,167-77,168-78,169-79
-                //                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ^
-
-                // Skip passed tests: SEV437+1.p
-                // TODO(instance): lineal-lineal (1-1) result block passed. In the first non-lineal block's first pair of rows mismatch found,
-                //  but I think that both mappings might be equivalent (at least I don't see why the computed one is incorrect...)
-                //  Re-test it when it's integrated with core...
-                //  --> Unification in core_optimized worked!
-                //1-1,63-2,64-3,65-4,66-5,67-6,68-7,2-8,3-9,4-10,5-11,6-45,69-46,70-47,71-48,72-49,73-50,74-51,75-52,76-53,77-54,78-55,79-56,7-12,8-13,9-45,80-46,81-47,82-48,83-49,84-50,85-51,86-52,87-53,88-54,89-55,90-56,10-14,11-15,12-57,13-58,14-59,15-60,16-61,17-62,18-63,19-64,20-65,21-66,22-67,23-68,24-16,25-69,26-70,27-71,28-72,29-73,30-74,31-75,32-76,33-77,34-78,35-79,36-80,37-17,38-45,39-46,40-47,41-48,42-49,43-50,44-51,45-52,46-53,47-54,48-55,49-56,50-18,51-19,52-20,53-21,91-22,92-23,93-24,54-25,55-26,94-27,95-28,96-29,97-30,98-31,56-32,57-33,58-34,59-35,99-36,100-37,60-38,61-39,62-40,101-41,102-42,103-43,104-44
-                //1-1,63-2,64-3,65-4,66-5,67-6,68-7,2-8,3-9,4-10,5-11,6-45,7-46,8-47,9-48,10-49,11-50,12-51,13-52,14-53,15-54,16-55,17-56,18-12,19-13,20-45,21-46,22-47,23-48,24-49,25-50,26-51,27-52,28-53,29-54,30-55,31-56,32-14,33-15,34-57,35-58,36-59,69-60,70-61,71-62,72-63,73-64,74-65,75-66,76-67,77-68,78-16,79-69,80-70,81-71,82-72,83-73,84-74,85-75,86-76,87-77,88-78,89-79,90-80,37-17,38-45,39-46,40-47,41-48,42-49,43-50,44-51,45-52,46-53,47-54,48-55,49-56,50-18,51-19,52-20,53-21,91-22,92-23,93-24,54-25,55-26,94-27,95-28,96-29,97-30,98-31,56-32,57-33,58-34,59-35,99-36,100-37,60-38,61-39,62-40,101-41,102-42,103-43,104-44
-                //                                                         ^
-                //strstr(base, "test0003") ||
+                //strstr(base, "test0458") ||
 
                 false)
             {

@@ -38,8 +38,6 @@ static inline MinMax min_max(unsigned a, unsigned b){
 //extern size_t global_line_number;
 extern bool global_print_debugging;
 extern unsigned global_create_memory_block_calls;
-extern unsigned global_starting_t1;
-extern unsigned global_starting_t2;
 
 static inline unsigned num_digits(unsigned n){
     unsigned res = 1;
@@ -47,7 +45,11 @@ static inline unsigned num_digits(unsigned n){
     return res;
 }
 
+void println_array_ints(int *array, size_t len);
 void print_array_ints(int *array, size_t len);
 void print_array_ints_sep(int *array, size_t len, char *separator);
+void println_array_uints(unsigned *array, size_t len);
+void print_array_uints_sep(unsigned *array, size_t len, char *separator);
+void print_array_uints(unsigned *array, size_t len);
 
 #endif

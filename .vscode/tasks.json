@@ -29,6 +29,33 @@
 		},
 
 		{
+			"label": "MAC build core optimized for debugging (clang)",
+			"type": "cppbuild",
+			"command": "/usr/bin/clang",
+			"args": [
+				"-o",
+				"${workspaceFolder}/c",
+				"${workspaceFolder}/core_optimized.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"${workspaceFolder}/structures.c",
+				"${workspaceFolder}/Schemas/set_variables.c",
+				"${workspaceFolder}/Schemas/arena.c",
+				"${workspaceFolder}/Schemas/schemas.c",
+				"${workspaceFolder}/Schemas/utils.c",
+				"${workspaceFolder}/Schemas/cache_mapping.c",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
 			"label": "build tests (gcc)",
 			"type": "shell",
 			"command": "gcc",
@@ -47,6 +74,33 @@
 				"structures.c",
 				"-o",
 				"build/tests"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "MAC build tests (clang)",
+			"type": "cppbuild",
+			"command": "/usr/bin/clang",
+			"args": [
+				"-g",
+				"-O0",
+				"-Wall",
+				"-Wextra",
+				"-Wno-format-truncation",
+				"${workspaceFolder}/Schemas/set_variables.c",
+				"${workspaceFolder}/Schemas/arena.c",
+				"${workspaceFolder}/Schemas/schemas.c",
+				"${workspaceFolder}/Schemas/utils.c",
+				"${workspaceFolder}/Schemas/tests.c",
+				"${workspaceFolder}/Schemas/cache_mapping.c",
+				"${workspaceFolder}/structures.c",
+				"-o",
+				"${workspaceFolder}/build/tests"
 			],
 			"isBackground": false,
 			"problemMatcher": [

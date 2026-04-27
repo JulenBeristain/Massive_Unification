@@ -7,9 +7,6 @@ bool global_print_debugging = false;
 
 unsigned global_create_memory_block_calls = 0;
 
-unsigned global_starting_t1 = 1;
-unsigned global_starting_t2 = 1;
-
 void print_array_ints_sep(int *array, size_t len, char *separator){
     if(len == 0){
         return;
@@ -23,4 +20,29 @@ void print_array_ints_sep(int *array, size_t len, char *separator){
 
 void print_array_ints(int *array, size_t len){
     print_array_ints_sep(array, len, ", ");    
+}
+
+void println_array_ints(int *array, size_t len){
+    print_array_ints(array, len);
+    printf("\n");    
+}
+
+void print_array_uints_sep(unsigned *array, size_t len, char *separator){
+    if(len == 0){
+        return;
+    }
+
+    printf("%u", array[0]);
+    for(size_t i = 1; i < len; ++i){
+        printf("%s%u", separator, array[i]);
+    }
+}
+
+void print_array_uints(unsigned *array, size_t len){
+    print_array_uints_sep(array, len, ", ");    
+}
+
+void println_array_uints(unsigned *array, size_t len){
+    print_array_uints(array, len);
+    printf("\n");    
 }

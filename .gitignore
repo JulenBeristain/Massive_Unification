@@ -2,4 +2,6 @@ data/
 prolog/
 build/
 c
-local_notes.txt
+local_notes.*
+c.dSYM/
+.DS_Store

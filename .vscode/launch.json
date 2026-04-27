@@ -58,6 +58,30 @@
     },
 
     {
+        "name": "MAC Debug tests.c mapping obtention no verbose (lldb)",
+        "type": "lldb",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/tests",
+        "args": ["data/experimentation_matrices/AGT002+1"],
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "MAC build tests (clang)",
+        "stopOnEntry": false,
+        "terminal": "integrated"
+    },
+
+    {
+        "name": "MAC Debug tests.c mapping obtention verbose (lldb)",
+        "type": "lldb",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/tests",
+        "args": ["data/experimentation_matrices/AGT002+1", "verbose"],
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "MAC build tests (clang)",
+        "stopOnEntry": false,
+        "terminal": "integrated"
+    },
+
+    {
         "name": "Debug tests.c common set schema (gdb)",
         "type": "cppdbg",
         "request": "launch",
@@ -135,6 +159,18 @@
                 "ignoreFailures": true
             }
         ]
+    },
+
+    {
+        "name": "MAC Debug core_optimized.c (lldb)",
+        "type": "lldb",
+        "request": "launch",
+        "program": "${workspaceFolder}/c",
+        "args": [],
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "MAC build core optimized for debugging (clang)",
+        "stopOnEntry": false,
+        "terminal": "integrated"
     },
     ]
 }
