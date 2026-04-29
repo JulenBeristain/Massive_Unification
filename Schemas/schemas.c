@@ -144,6 +144,7 @@ DEFINE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
 /// ARRAYLIST UInts /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ARRAYLIST_CREATE(UInt, uint)
 DEFINE_ARRAYLIST_CREATE_ARENA(UInt, uint)
 DEFINE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint, print_uint)
 DEFINE_ARRAYLIST_PRINT(UInt, uint)
@@ -1660,7 +1661,7 @@ void mapping_column_indexes_side(
             }
 
         } else {
-            // NOTE: free_var was originally in M1. We have to compare the normalized common schema with the original 
+            // NOTE: free_var was originally in M. We have to compare the normalized common schema with the original 
             //  normalized schema to see if we need to add new virtual columns.
 
             Schema normalized_original_schema = normalized_set_schema.list.array[pos];
@@ -1672,7 +1673,7 @@ void mapping_column_indexes_side(
             SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
             SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
 
-            // NOTE: row_pos is 0 based, as opposed to starting_col_indices!!!
+            // NOTE: row_pos is 0 based
             unsigned row_pos = starting_col_indices[pos] - 1;
             unsigned end_pos = (pos == (normalized_set_schema.list.size - 1)) ? n_cols_side : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
             
@@ -1780,7 +1781,7 @@ void mapping_column_indexes_side_lineal(
             }
 
         } else {
-            // NOTE: free_var was originally in M1. We have to compare the normalized common schema with the original 
+            // NOTE: free_var was originally in M. We have to compare the normalized common schema with the original 
             //  normalized schema to see if we need to add new virtual columns.
 
             Schema normalized_original_schema = normalized_set_schema.list.array[pos];
@@ -1792,7 +1793,7 @@ void mapping_column_indexes_side_lineal(
             SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
             SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
 
-            // NOTE: row_pos is 0 based, as opposed to starting_col_indices!!!
+            // NOTE: row_pos is 0 based
             unsigned row_pos = starting_col_indices[pos] - 1;
             unsigned end_pos = (pos == (normalized_set_schema.list.size - 1)) ? n_cols_side : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
             
@@ -1845,4 +1846,219 @@ void mapping_column_indexes_side_lineal(
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END OBTAIN COLUMN MAPPING FROM COMMON SET SCHEMA ////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// EXTEND ROWS FROM COMMON SET SCHEMA //////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void extend_row(
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    int *extended_row,
+    Arena *row_vars_to_extending_vars_arena,
+    Arena *schema_iterator_arena)
+{
+    unsigned n_common = normalized_common_set_schema.size;
+    unsigned n_cols_side = normalized_set_schema.size;
+    unsigned num_free_vars = normalized_common_set_schema.list.size;
+
+    unsigned **row_vars_to_extending_vars = allocate(row_vars_to_extending_vars_arena, sizeof(unsigned*) * n_cols_side);
+
+    unsigned extended_pos = 0;
+
+    for(unsigned i = 0; i < num_free_vars; ++i){
+        unsigned pos = free_var_positions.array[i];
+        Schema normalized_common_schema = normalized_common_set_schema.list.array[i];
+
+        bool free_var_contained = pos < num_free_vars;
+        if (!free_var_contained) {
+            // NOTE: free_var wasn't originally in M. Add as many fresh variables as the size of the normalized common schema
+            unsigned num_fresh_vars = normalized_common_schema.size;
+            SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+            extended_pos += num_fresh_vars;
+
+        } else {
+            // NOTE: free_var was originally in M. We have to compare the normalized common schema with the original 
+            //  normalized schema to see if we need to add new virtual columns.
+
+            Schema normalized_original_schema = normalized_set_schema.list.array[pos];
+            if(global_print_debugging){
+                printf("Normalized common   schema: "); println_schema(normalized_common_schema, PRINT_VISUALLY);
+                printf("Normalized original schema: "); println_schema(normalized_original_schema, PRINT_VISUALLY);
+            }
+            clear_arena(schema_iterator_arena);
+            SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
+            SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
+
+            // NOTE: row_pos is 0 based
+            unsigned row_pos = starting_col_indices[pos] - 1;
+            unsigned end_pos = (pos == (normalized_set_schema.list.size - 1)) ? n_cols_side : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
+            
+            for(;;){
+                Schema common_subschema, original_subschema;
+                bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
+                bool has_next_original = schema_iterator_next(&original_it, &original_subschema);
+
+                while(common_it.stack.size > original_it.stack.size){
+                    unsigned num_fresh_vars = common_subschema.size;
+                    SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+                    extended_pos += num_fresh_vars;
+
+                    schema_iterator_skip(&common_it);
+                    // NOTE: here's where the stack size will be decremented when all subschemas of the initial level are iterated.
+                    has_next_common = schema_iterator_next(&common_it, &common_subschema);
+                }
+                assert(common_it.stack.size == original_it.stack.size);
+
+                if(!has_next_common){
+                    break;
+                }
+
+                if(global_print_debugging){
+                    printf("row[row_pos=%d] = %d\n", row_pos, row[row_pos]);
+                    int common_child_num = (common_it.stack.size == 1) ? -1 : (int)(common_it.stack.array[common_it.stack.size-2].next_child-1);
+                    int original_child_num = (original_it.stack.size == 1) ? -1 : (int)(original_it.stack.array[original_it.stack.size-2].next_child-1);
+                    printf("Common   Stack level = %d - Child #%d\n", common_it.stack.size, common_child_num);
+                    printf("Original Stack level = %d - Child #%d\n", original_it.stack.size, original_child_num);
+                    printf("Next common   subschema: "); println_schema(common_subschema, PRINT_VISUALLY);
+                    printf("Next original subschema: "); println_schema(original_subschema, PRINT_VISUALLY);
+                    printf("---\n");
+                }
+                assert(has_next_common && has_next_original);
+                
+                // NOTE: Take original column number, that is, row_pos+1 (1-based column indexes)
+                // TODO(YA): if 0 or positive it's OK, but if negative, we migth need to adjust the back-reference to the first apparition of the variable
+                //  due to a previous extension in the row! I think we will be able to do so by means of a simple counter (unsigned) that accumulates the 
+                //  amount of new columns that have been introduced so far.
+                extended_row[extended_pos++] = row[row_pos];
+                
+                if(row[row_pos] <= 0 && is_empty(original_subschema)){
+                    // NOTE: variable
+                    unsigned num_extending_vars = common_subschema.size - 1 ; // 1 = original_subschema.size;
+                    
+                    // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
+                    if(row[row_pos] == 0){
+                        // NOTE: first appearence of the row variable
+                        // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
+                        //  just a "waste" of memory, but this way we avoid having to precalculate which variables are repeated.
+                        unsigned **extending_vars = row_vars_to_extending_vars + row_pos;
+                        *extending_vars = allocate(row_vars_to_extending_vars_arena, sizeof(**extending_vars) * num_extending_vars);
+                        for (unsigned i = 0, *extending_var = *extending_vars; i < num_extending_vars; ++i, ++extending_var) {
+                            extended_row[extended_pos++] = 0;
+                            *extending_var = -extended_pos; // NOTE: negative 1-based columns of the first appearence of extending vars
+                        }
+                    } else {
+                        // NOTE: repeated appearence of the row variable
+                        unsigned **extending_vars = row_vars_to_extending_vars - (row[row_pos] + 1);
+                        for (unsigned i = 0, *extending_var = *extending_vars; i < num_extending_vars; ++i, ++extending_var) {
+                            extended_row[extended_pos++] = *extending_var;
+                        }
+                    }
+                    
+                    schema_iterator_skip(&common_it);
+                }
+                
+                ++row_pos;
+            }
+
+            // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
+            //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
+            assert(row_pos == end_pos);
+        }
+
+        assert(extended_pos <= n_common);
+    }
+    assert(extended_pos == n_common);
+}
+
+void extend_row_lineal(
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    int *extended_row,
+    Arena *schema_iterator_arena)
+{
+    unsigned n_common = normalized_common_set_schema.size;
+    unsigned n_cols_side = normalized_set_schema.size;
+    unsigned num_free_vars = normalized_common_set_schema.list.size;
+
+    unsigned extended_pos = 0;
+
+    for(unsigned i = 0; i < num_free_vars; ++i){
+        unsigned pos = free_var_positions.array[i];
+        Schema normalized_common_schema = normalized_common_set_schema.list.array[i];
+
+        bool free_var_contained = pos < num_free_vars;
+        if (!free_var_contained) {
+            // NOTE: free_var wasn't originally in M. Add as many fresh variables as the size of the normalized common schema
+            unsigned num_fresh_vars = normalized_common_schema.size;
+            SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+            extended_pos += num_fresh_vars;
+
+        } else {
+            // NOTE: free_var was originally in M. We have to compare the normalized common schema with the original 
+            //  normalized schema to see if we need to add new fresh variables.
+
+            Schema normalized_original_schema = normalized_set_schema.list.array[pos];
+            if(global_print_debugging){
+                printf("Normalized common   schema: "); println_schema(normalized_common_schema, PRINT_VISUALLY);
+                printf("Normalized original schema: "); println_schema(normalized_original_schema, PRINT_VISUALLY);
+            }
+            clear_arena(schema_iterator_arena);
+            SchemaIterator common_it = create_schema_iterator_arena(normalized_common_schema, schema_iterator_arena);
+            SchemaIterator original_it = create_schema_iterator_arena(normalized_original_schema, schema_iterator_arena);
+
+            // NOTE: row_pos is 0 based
+            unsigned row_pos = starting_col_indices[pos] - 1;
+            unsigned end_pos = (pos == (normalized_set_schema.list.size - 1)) ? n_cols_side : starting_col_indices[pos + 1] - 1; // NOTE: exclusive
+            
+            for(;;){
+                Schema common_subschema, original_subschema;
+                bool has_next_common = schema_iterator_next(&common_it, &common_subschema);
+                bool has_next_original = schema_iterator_next(&original_it, &original_subschema);
+
+                while(common_it.stack.size > original_it.stack.size){
+                    unsigned num_fresh_vars = common_subschema.size;
+                    SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+                    extended_pos += num_fresh_vars;
+
+                    schema_iterator_skip(&common_it);
+                    has_next_common = schema_iterator_next(&common_it, &common_subschema);
+                }
+                assert(common_it.stack.size == original_it.stack.size);
+
+                if(!has_next_common){
+                    break;
+                }
+
+                if(global_print_debugging){
+                    printf("row[row_pos=%d] = %d\n", row_pos, row[row_pos]);
+                    int common_child_num = (common_it.stack.size == 1) ? -1 : (int)(common_it.stack.array[common_it.stack.size-2].next_child-1);
+                    int original_child_num = (original_it.stack.size == 1) ? -1 : (int)(original_it.stack.array[original_it.stack.size-2].next_child-1);
+                    printf("Common   Stack level = %d - Child #%d\n", common_it.stack.size, common_child_num);
+                    printf("Original Stack level = %d - Child #%d\n", original_it.stack.size, original_child_num);
+                    printf("Next common   subschema: "); println_schema(common_subschema, PRINT_VISUALLY);
+                    printf("Next original subschema: "); println_schema(original_subschema, PRINT_VISUALLY);
+                    printf("---\n");
+                }
+                assert(has_next_common && has_next_original);
+
+                // NOTE: Take original row content
+                extended_row[extended_pos++] = row[row_pos++];
+            }
+
+            // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;
+            //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
+            assert(row_pos == end_pos);
+        }
+
+        assert(extended_pos <= n_common);
+    }
+    assert(extended_pos == n_common);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END EXTEND ROWS FROM COMMON SET SCHEMA //////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -282,7 +282,10 @@ DECLARE_ARRAYLIST_PRINTLN(CharPtr, char_ptr)
 static inline void print_uint(unsigned i) { printf("%u", i); }
 typedef unsigned UInt;
 DECLARE_ARRAYLIST_TYPE(UInt)
+DECLARE_ARRAYLIST_CREATE(UInt, uint)
 DECLARE_ARRAYLIST_CREATE_ARENA(UInt, uint)
+DEFINE_ARRAYLIST_FREE(UInt, uint)
+DEFINE_ARRAYLIST_CLEAR(UInt, uint)
 DECLARE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint)
 DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
@@ -310,6 +313,21 @@ void mapping_column_indexes_side_lineal(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
+    Arena *schema_iterator_arena);
+
+void extend_row(
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    int *extended_row,
+    Arena *row_vars_to_extending_vars_arena,
+    Arena *schema_iterator_arena);
+
+void extend_row_lineal(
+    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema normalized_common_set_schema,
+    unsigned *starting_col_indices, int *row,
+    int *extended_row,
     Arena *schema_iterator_arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
