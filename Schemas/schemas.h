@@ -305,7 +305,7 @@ void mapping_column_indexes_side(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *row_vars_to_extending_cols_arena,
+    Arena *row_vars_arena,
     Arena *schema_iterator_arena);
 
 void mapping_column_indexes_side_lineal(
@@ -320,7 +320,7 @@ void extend_row(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
-    Arena *row_vars_to_extending_vars_arena,
+    Arena *row_vars_arena,
     Arena *schema_iterator_arena);
 
 void extend_row_lineal(

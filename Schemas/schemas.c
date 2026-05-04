@@ -1637,14 +1637,16 @@ void mapping_column_indexes_side(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *row_vars_to_extending_cols_arena,
+    Arena *row_vars_arena,
     Arena *schema_iterator_arena)
 {
     unsigned n_common = normalized_common_set_schema.size;
     unsigned n_cols_side = normalized_set_schema.size;
     unsigned num_free_vars = normalized_common_set_schema.list.size;
 
-    unsigned **row_vars_to_extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(unsigned*) * n_cols_side);
+    // NOTE: in this case, we don't need an extra row_vars_to_new_columns mapping because the order of the columns of
+    //  the multiple apparitions of the same repeated variable in the mapping doesn't matter.
+    unsigned **row_vars_to_extending_cols = callocate(row_vars_arena, sizeof(unsigned*) * n_cols_side);
 
     unsigned new_virtual_column = n_cols_side + 1;
     unsigned mapping_pos = 0;
@@ -1716,25 +1718,27 @@ void mapping_column_indexes_side(
                 if(row[row_pos] <= 0 && is_empty(original_subschema)){
                     // NOTE: variable
                     unsigned num_virtual_cols = common_subschema.size - 1 ; // 1 = original_subschema.size;
+                    int old_col = row[row_pos] == 0 ? -((int)row_pos + 1) : row[row_pos];
                     
                     // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
-                    if(row[row_pos] == 0){
+                    bool is_var_seen = row_vars_to_extending_cols[-(old_col + 1)] != NULL;
+                    unsigned **extending_cols = row_vars_to_extending_cols - (old_col + 1);
+                    if(is_var_seen){
+                        // NOTE: repeated appearence of the row variable
+                        for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
+                            mapping_side[mapping_pos++] = *extending_col;
+                        }
+                    
+                    } else {
                         // NOTE: first appearence of the row variable
                         // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
                         //  just a "waste" of memory, but this way we avoid having to precalculate which variables are repeated.
                         //  Since new virtual columns of non-repeated variables appear (only) once in the mapping, we won't have 
                         //  "gaps" of unused virtual columns.
-                        unsigned **extending_cols = row_vars_to_extending_cols + row_pos;
-                        *extending_cols = allocate(row_vars_to_extending_cols_arena, sizeof(**extending_cols) * num_virtual_cols);
+                        *extending_cols = allocate(row_vars_arena, sizeof(**extending_cols) * num_virtual_cols);
                         for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
                             mapping_side[mapping_pos++] = new_virtual_column;
                             *extending_col = new_virtual_column++;
-                        }
-                    } else {
-                        // NOTE: repeated appearence of the row variable
-                        unsigned **extending_cols = row_vars_to_extending_cols - (row[row_pos] + 1);
-                        for (unsigned i = 0, *extending_col = *extending_cols; i < num_virtual_cols; ++i, ++extending_col) {
-                            mapping_side[mapping_pos++] = *extending_col;
                         }
                     }
                     
@@ -1857,14 +1861,16 @@ void extend_row(
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
-    Arena *row_vars_to_extending_vars_arena,
+    Arena *row_vars_arena,
     Arena *schema_iterator_arena)
 {
     unsigned n_common = normalized_common_set_schema.size;
     unsigned n_cols_side = normalized_set_schema.size;
     unsigned num_free_vars = normalized_common_set_schema.list.size;
 
-    unsigned **row_vars_to_extending_vars = allocate(row_vars_to_extending_vars_arena, sizeof(unsigned*) * n_cols_side);
+    int **row_vars_to_extending_vars = allocate(row_vars_arena, sizeof(unsigned*) * n_cols_side);
+    // NOTE: we have at most as many row variables in the original row as its length.
+    int *row_vars_to_new_columns = callocate(row_vars_arena, n_cols_side * sizeof(*row_vars_to_new_columns));
 
     unsigned extended_pos = 0;
 
@@ -1928,39 +1934,49 @@ void extend_row(
                 }
                 assert(has_next_common && has_next_original);
                 
-                // NOTE: Take original column number, that is, row_pos+1 (1-based column indexes)
-                // TODO(YA): if 0 or positive it's OK, but if negative, we migth need to adjust the back-reference to the first apparition of the variable
-                //  due to a previous extension in the row! I think we will be able to do so by means of a simple counter (unsigned) that accumulates the 
-                //  amount of new columns that have been introduced so far.
-                extended_row[extended_pos++] = row[row_pos];
-                
-                if(row[row_pos] <= 0 && is_empty(original_subschema)){
+                if (row[row_pos] > 0) {
+                    // NOTE: a function symbol
+                    extended_row[extended_pos++] = row[row_pos];
+                } else {
                     // NOTE: variable
-                    unsigned num_extending_vars = common_subschema.size - 1 ; // 1 = original_subschema.size;
-                    
-                    // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
-                    if(row[row_pos] == 0){
-                        // NOTE: first appearence of the row variable
-                        // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
-                        //  just a "waste" of memory, but this way we avoid having to precalculate which variables are repeated.
-                        unsigned **extending_vars = row_vars_to_extending_vars + row_pos;
-                        *extending_vars = allocate(row_vars_to_extending_vars_arena, sizeof(**extending_vars) * num_extending_vars);
-                        for (unsigned i = 0, *extending_var = *extending_vars; i < num_extending_vars; ++i, ++extending_var) {
-                            extended_row[extended_pos++] = 0;
-                            *extending_var = -extended_pos; // NOTE: negative 1-based columns of the first appearence of extending vars
-                        }
+                    int old_col = row[row_pos] == 0 ? -((int)row_pos + 1) : row[row_pos];
+                    bool is_already_in_extended_row = row_vars_to_new_columns[-(old_col + 1)] != 0;
+                    if (is_already_in_extended_row) {
+                        extended_row[extended_pos++] = row_vars_to_new_columns[-(old_col + 1)];
                     } else {
-                        // NOTE: repeated appearence of the row variable
-                        unsigned **extending_vars = row_vars_to_extending_vars - (row[row_pos] + 1);
-                        for (unsigned i = 0, *extending_var = *extending_vars; i < num_extending_vars; ++i, ++extending_var) {
-                            extended_row[extended_pos++] = *extending_var;
-                        }
+                        extended_row[extended_pos++] = 0;
+                        row_vars_to_new_columns[-(old_col + 1)] = -(int)(extended_pos);
                     }
                     
-                    schema_iterator_skip(&common_it);
-                }
+                    if (is_empty(original_subschema)) {
+                        unsigned num_extending_vars = common_subschema.size - 1 ; // 1 = original_subschema.size;
+                        
+                        // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_vars
+                        int **extending_vars = row_vars_to_extending_vars - (old_col + 1);
+                        if(is_already_in_extended_row){
+                            // NOTE: repeated appearence of the row variable
+                            int *extending_var = *extending_vars;
+                            for (unsigned i = 0; i < num_extending_vars; ++i, ++extending_var) {
+                                extended_row[extended_pos++] = *extending_var;
+                            }
+                            
+                        } else {
+                            // NOTE: first appearence of the row variable
+                            // NOTE: even in the case of a non-repeated variable, storing it's new virtual columns isn't harmful. It's
+                            //  just a "waste" of memory, but this way we avoid having to precalculate which variables are repeated.
+                            *extending_vars = allocate(row_vars_arena, sizeof(**extending_vars) * num_extending_vars);
+                            int *extending_var = *extending_vars;
+                            for (unsigned i = 0; i < num_extending_vars; ++i, ++extending_var) {
+                                extended_row[extended_pos++] = 0;
+                                *extending_var = -(int)(extended_pos); // NOTE: negative 1-based columns of the first appearence of extending vars
+                            }
+                        }
+                        
+                        schema_iterator_skip(&common_it);
+                    }
                 
-                ++row_pos;
+                    ++row_pos;
+                }
             }
 
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;

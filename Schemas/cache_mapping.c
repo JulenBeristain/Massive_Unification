@@ -61,8 +61,7 @@ HashMapRowToMappingSide create_hash_map_row_to_mapping_side_arena(uint32_t num_b
     hm.num_buckets = num_buckets;
     hm.len_rows = len_rows;
     hm.len_mapping_sides = len_mapping_side;
-    hm.buckets = allocate(arena, num_buckets * sizeof(*hm.buckets));
-    SET_TO_ZERO(hm.buckets, num_buckets * sizeof(*hm.buckets));
+    hm.buckets = callocate(arena, num_buckets * sizeof(*hm.buckets));
     return hm;
 }
 
@@ -119,8 +118,7 @@ static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *
 }
 static inline void resize_hash_map_row_to_mapping_side_arena(HashMapRowToMappingSide *hm, Arena *arena){
     uint32_t new_num_buckets = hm->num_buckets * 2;
-    RowToMappingSide *new_buckets = allocate(arena, new_num_buckets * sizeof(*new_buckets));
-    SET_TO_ZERO(new_buckets, new_num_buckets * sizeof(*new_buckets));
+    RowToMappingSide *new_buckets = callocate(arena, new_num_buckets * sizeof(*new_buckets));
 
     uint32_t num_rows_to_copy = hm->num_rows;
     for(int **row = &hm->buckets[0].row; num_rows_to_copy; row += 2){

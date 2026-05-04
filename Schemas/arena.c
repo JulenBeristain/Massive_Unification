@@ -137,3 +137,10 @@ void *allocate(Arena *arena, size_t num_bytes){
     if(num_bytes == 0){ return NULL; }
     return allocate_(arena, num_bytes);
 }
+
+void *callocate(Arena *arena, size_t num_bytes){
+    if(num_bytes == 0){ return NULL; }
+    void *mem = allocate_(arena, num_bytes);
+    SET_TO_ZERO(mem, num_bytes);
+    return mem;
+}

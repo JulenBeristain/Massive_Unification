@@ -56,7 +56,12 @@ static Dictionary *symbols_to_ids;
 static int verbose = 0;
 
 /** Accumulated elapsed time for file I/O, unifier computation, and unification application. */
-static struct timespec read_file_elapsed, unifiers_elapsed, unification_elapsed;
+static struct timespec read_file_elapsed, 
+    unifiers_elapsed, unification_elapsed, 
+    unifiers_elapsed_le, unification_elapsed_le,
+    unifiers_elapsed_lm, unification_elapsed_lm,
+    unifiers_elapsed_nle, unification_elapsed_nle,
+    unifiers_elapsed_nlm, unification_elapsed_nlm;
 
 /** Set to false as soon as any result block comparison fails. */
 static bool global_correct = true;
@@ -1302,6 +1307,34 @@ static void matrix_intersection(operand_block *ob1, operand_block *ob2,
     free_result_block(&my_rb);
 }
 
+/**
+ * Has to return the position of the unifying class in the resulting row that corresponds to var, while at the
+ * same time flattens the unification tree in the class partition implicit in row. Doing it by recursion removes
+ * the need to handle memory manually.
+ * 
+ * The position is returned as a positive 0-based unsigned.
+ */
+static unsigned find_and_flatten(int *row, int var){
+    assert(var < 0);
+    unsigned old_pos = -(var + 1);
+    if(row[old_pos] >= 0){
+        return old_pos;
+    }
+
+    unsigned pos = find_and_flatten(row, -((int)(old_pos) + 1));
+    row[old_pos] = -((int)(pos) + 1);
+
+    return pos;
+}
+
+static unsigned find(int *row, int var) {
+    assert(var < 0);
+    unsigned old_pos = -(var + 1);
+    if(row[old_pos] >= 0){
+        return old_pos;
+    }
+    return find(row, -((int)(old_pos) + 1));
+}
 
 static void matrix_intersection_with_extended_rows(
     operand_block *ob1, operand_block *ob2,
@@ -1327,10 +1360,8 @@ static void matrix_intersection_with_extended_rows(
     CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
 
     // NOTE: with each pair of rows we calculate the resulting unified row using a partition-like data structure with path compression.
-    //  Thanks to that, we obtain the result in a single pass.
-    
+
     // TODO(ORG): move arraylist of uints to another file, not in schemas.c/h
-    ArrayListUInt flattening_arraylist = create_array_list_uint(len_extended_row);
 
     int *extended_rows2 = extended_rows + (num_rows1 * len_extended_row);
     int *row_a = extended_rows;
@@ -1346,7 +1377,8 @@ static void matrix_intersection_with_extended_rows(
             my_rb.valid[index_mt] = 0;
 
             // NOTE: unification
-            for(unsigned k = 0; k < len_extended_row; ++k){
+            unsigned k = 0;
+            for(; k < len_extended_row; ++k){
                 int a = row_a[k];
                 int b = row_b[k];
 
@@ -1354,9 +1386,9 @@ static void matrix_intersection_with_extended_rows(
                     if (a == b) {
                         resulting_row[k] = a;
                     } else {
-                        my_rb.valid[index_mt] = 2;
                         break;
                     }
+
                 } else if (a > 0 || b > 0) {
                     int sym, var;
                     if (a > 0) {
@@ -1370,108 +1402,73 @@ static void matrix_intersection_with_extended_rows(
                     if (var == 0) {
                         resulting_row[k] = sym;
                     } else {
-                        int pos = -(var + 1);
-                        // NOTE: we introduce the last position because, if class is a variable, it unifies with sym too!
-                        for(;;){
-                            unsafe_add_to_array_list(flattening_arraylist, pos);
-                            if(resulting_row[pos] >= 0){
-                                break;
-                            }
-                            pos = -(resulting_row[pos] + 1);
-                        }
-                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -(pos + 1);
+                        unsigned pos = find_and_flatten(resulting_row, var);
+                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
 
                         if (class > 0 && sym != class) {
-                            my_rb.valid[index_mt] = 2;
                             break;
                         }
 
                         resulting_row[k] = sym;
-                        
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = sym;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
                     }
                     
                 } else {
                     // NOTE: both are variables
                     if (a == 0 && b == 0) {
                         resulting_row[k] = 0;
+
                     } else if (a == 0 || b == 0) {
                         int repeated = a != 0 ? a : b;
-                        int pos = -(repeated + 1);
-                        // NOTE: in this case, we don't introduce the last position, because the new variable unifies with it (as it has a lower column index)!
-                        while(resulting_row[pos] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos);
-                            pos = -(resulting_row[pos] + 1);
-                        }
-                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -(pos + 1);
-
-                        resulting_row[k] = class;
-
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = class;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
+                        unsigned pos = find_and_flatten(resulting_row, repeated);
+                        
+                        resulting_row[k] = -((int)(pos) + 1);
                     
                     } else {
-                        int pos_a = -(a + 1);
-                        while(resulting_row[pos_a] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos_a);
-                            pos_a = -(resulting_row[pos_a] + 1);
-                        }
-                        int class_a = resulting_row[pos_a] > 0 ? resulting_row[pos_a] : -(pos_a + 1);
+                        unsigned pos_a = find_and_flatten(resulting_row, a);
+                        int class_a = resulting_row[pos_a] > 0 ? resulting_row[pos_a] : -((int)(pos_a) + 1);
 
-                        int pos_b = -(b + 1);
-                        while(resulting_row[pos_b] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos_b);
-                            pos_b = -(resulting_row[pos_b] + 1);
-                        }
-                        int class_b = resulting_row[pos_b] > 0 ? resulting_row[pos_b] : -(pos_b + 1);
+                        unsigned pos_b = find_and_flatten(resulting_row, b);
+                        int class_b = resulting_row[pos_b] > 0 ? resulting_row[pos_b] : -((int)(pos_b) + 1);
 
-                        int unify_value;
                         if (class_a > 0 && class_b > 0) {
                             if (class_a == class_b) {
-                                unify_value = class_a;
+                                // NOTE: no need to change references, because both partitions' root is already a function symbol
+                                resulting_row[k] = class_a;
                             } else {
-                                my_rb.valid[index_mt] = 2;
                                 break;
                             }
-                        } else if (class_a > 0 || class_b > 0) {
-                            // NOTE: we must add to flattening_arraylist the position of the class that is a variable, because it unifies with the symbol class!
-                            if (class_a > 0) {
-                                unify_value = class_a;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_b + 1));
-                            } else {
-                                unify_value = class_b;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_a + 1));
-                            }
+
                         } else {
                             // NOTE: the variable that appears first --> lowest column in absolute value --> greatest number
-                            // NOTE: we must add to flattening_arraylist the position of the class that is the variable with rightest column, because it unifies with the other variable which appears first!
-                            unify_value = class_a;
+                            // NOTE: the case where one of the two classes is a function symbol is treated in the same way too.
                             if (class_a > class_b) {
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_b + 1));
-                            } else if (class_a < class_b) {
-                                unify_value = class_b;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_a + 1));
+                                resulting_row[k] = class_a;
+                                resulting_row[pos_b] = class_a;
+                            } else {
+                                resulting_row[k] = class_b;
+                                resulting_row[pos_a] = class_b;
                             }
                         }
-
-                        resulting_row[k] = unify_value;
-
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = unify_value;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
                     }
+                }
+            }
+
+            // NOTE: if some clash was detected, continue with the next pair of rows
+            if (k < len_extended_row) {
+                my_rb.valid[index_mt] = 2;
+                continue;
+            }
+
+            // NOTE: there might remain some backreferences to constants, which have to be resolved, as well as
+            //  some references to be flattened yet.
+            for (k = 1; k < len_extended_row; ++k) {
+                if (resulting_row[k] < 0) {
+                    unsigned pos = find(resulting_row, resulting_row[k]);
+                    resulting_row[k] = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
                 }
             }
         }
     }
-
-    free_array_list_uint(flattening_arraylist);
 
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
     if (verbose) printf("\tUnifiers applied\n");
@@ -1486,7 +1483,7 @@ static void matrix_intersection_with_extended_rows(
     /* --- Accumulate timings --- */
 
     timespec_subtract(&elapsed, &end_unification, &start_unification);
-    timespec_add(&unification_elapsed, &unification_elapsed, &elapsed);
+    timespec_add(&unification_elapsed_nle, &unification_elapsed_nle, &elapsed);
 
     free_result_block(&my_rb);
 }
@@ -1558,17 +1555,20 @@ static void matrix_intersection_with_extended_rows_lineal(
     /* --- Accumulate timings --- */
 
     timespec_subtract(&elapsed, &end_unification, &start_unification);
-    timespec_add(&unification_elapsed, &unification_elapsed, &elapsed);
+    timespec_add(&unification_elapsed_le, &unification_elapsed_le, &elapsed);
 
     free_result_block(&my_rb);
 }
 
-
+#if 0
 static void matrix_intersection_with_mappings(
     operand_block *ob1, operand_block *ob2,
     mgu_schema *mappings,
     result_block *rb
 ){
+    // TODO(YA): it might be possible to do it with a unification array of 2*len_extended_row + 1, with interpretation 
+    //  1..c1 (original vars 1), c1+1..n (virtual vars 1), n+1..n+c2 (original vars 2), n+c2+1..2n (virtual vars 2)
+    
     struct timespec start_unification, end_unification, elapsed;
 
     /* --- Compute unifiers --- */
@@ -1578,7 +1578,6 @@ static void matrix_intersection_with_mappings(
     if (verbose) printf("\tNo unifier to apply…\n");
     clock_gettime(CLOCK_MONOTONIC, &start_unification);
 
-    unsigned len_extended_row = mappings[0].n_common;
     unsigned num_rows1 = ob1->r;
     unsigned num_rows2 = ob2->r;
     unsigned num_rows3 = num_rows1 * num_rows2;
@@ -1589,17 +1588,14 @@ static void matrix_intersection_with_mappings(
     CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
 
     // NOTE: with each pair of rows we calculate the resulting unified row using a partition-like data structure with path compression.
-    //  Thanks to that, we obtain the result in a single pass.
-    
-    // TODO(ORG): move arraylist of uints to another file, not in schemas.c/h
-    ArrayListUInt flattening_arraylist = create_array_list_uint(len_extended_row);
 
-    main_term *mt_a = ob1->terms;
-    for(unsigned i = 0; i < num_rows1; ++i, ++mt_a){
-        int *row_a = mt_a->row;
-        main_term *mt_b = ob2->terms;
-        for(unsigned j = 0; j < num_rows2; ++j, ++mt_b){
-            int *row_b = mt_b->row;
+    // TODO(ORG): move arraylist of uints to another file, not in schemas.c/h
+
+    int *extended_rows2 = extended_rows + (num_rows1 * len_extended_row);
+    int *row_a = extended_rows;
+    for(unsigned i = 0; i < num_rows1; ++i, row_a += len_extended_row){
+        int *row_b = extended_rows2;
+        for(unsigned j = 0; j < num_rows2; ++j, row_b += len_extended_row){
             
             int *resulting_row = malloc(sizeof(*resulting_row) * len_extended_row);
             CHECK_MALLOC(resulting_row, "matrix_intersection_with_extended_rows_lineal");
@@ -1607,30 +1603,20 @@ static void matrix_intersection_with_mappings(
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = len_extended_row, .row = resulting_row };
             my_rb.valid[index_mt] = 0;
-            
-            mgu_schema *mapping = mappings++;
 
             // NOTE: unification
-            for(unsigned k = 0; k < len_extended_row; ++k){
-                // TODO(YA): is this more complicated in this case? Virtual columns might be repeated + the back-references of 
-                //  repeated variables don't point to the right places + rows aren't reordered according to free-vars + ...
-                //  - For repeated virtual columns, we need to store a mapping from them to the negative 1-based index where the first instances have been introduced
-                //  - For repeated original columns, we would need some kind of adjustment to know where was introduced that variable or a previous variable that unified with it in the resulting row
-                // OR we might need to use a unification array of length 2*len_extended_row and a second pass in this case...
-                unsigned col_a = mapping->common_L[k];
-                unsigned col_b = mapping->common_R[k];
-                
-                // NOTE: we have to see if it is a virtual column or not.
-                int a = col_a < ob1->c ? row_a[col_a] : 0;
-                int b = col_b < ob2->c ? row_b[col_b] : 0;
+            unsigned k = 0;
+            for(; k < len_extended_row; ++k){
+                int a = row_a[k];
+                int b = row_b[k];
 
                 if (a > 0 && b > 0) {
                     if (a == b) {
                         resulting_row[k] = a;
                     } else {
-                        my_rb.valid[index_mt] = 2;
                         break;
                     }
+
                 } else if (a > 0 || b > 0) {
                     int sym, var;
                     if (a > 0) {
@@ -1644,108 +1630,73 @@ static void matrix_intersection_with_mappings(
                     if (var == 0) {
                         resulting_row[k] = sym;
                     } else {
-                        int pos = -(var + 1);
-                        // NOTE: we introduce the last position because, if class is a variable, it unifies with sym too!
-                        for(;;){
-                            unsafe_add_to_array_list(flattening_arraylist, pos);
-                            if(resulting_row[pos] >= 0){
-                                break;
-                            }
-                            pos = -(resulting_row[pos] + 1);
-                        }
-                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -(pos + 1);
+                        unsigned pos = find_and_flatten(resulting_row, var);
+                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
 
                         if (class > 0 && sym != class) {
-                            my_rb.valid[index_mt] = 2;
                             break;
                         }
 
                         resulting_row[k] = sym;
-                        
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = sym;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
                     }
                     
                 } else {
                     // NOTE: both are variables
                     if (a == 0 && b == 0) {
                         resulting_row[k] = 0;
+
                     } else if (a == 0 || b == 0) {
                         int repeated = a != 0 ? a : b;
-                        int pos = -(repeated + 1);
-                        // NOTE: in this case, we don't introduce the last position, because the new variable unifies with it (as it has a lower column index)!
-                        while(resulting_row[pos] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos);
-                            pos = -(resulting_row[pos] + 1);
-                        }
-                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -(pos + 1);
-
-                        resulting_row[k] = class;
-
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = class;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
+                        unsigned pos = find_and_flatten(resulting_row, repeated);
+                        
+                        resulting_row[k] = -((int)(pos) + 1);
                     
                     } else {
-                        int pos_a = -(a + 1);
-                        while(resulting_row[pos_a] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos_a);
-                            pos_a = -(resulting_row[pos_a] + 1);
-                        }
-                        int class_a = resulting_row[pos_a] > 0 ? resulting_row[pos_a] : -(pos_a + 1);
+                        unsigned pos_a = find_and_flatten(resulting_row, a);
+                        int class_a = resulting_row[pos_a] > 0 ? resulting_row[pos_a] : -((int)(pos_a) + 1);
 
-                        int pos_b = -(b + 1);
-                        while(resulting_row[pos_b] >= 0){
-                            unsafe_add_to_array_list(flattening_arraylist, pos_b);
-                            pos_b = -(resulting_row[pos_b] + 1);
-                        }
-                        int class_b = resulting_row[pos_b] > 0 ? resulting_row[pos_b] : -(pos_b + 1);
+                        unsigned pos_b = find_and_flatten(resulting_row, b);
+                        int class_b = resulting_row[pos_b] > 0 ? resulting_row[pos_b] : -((int)(pos_b) + 1);
 
-                        int unify_value;
                         if (class_a > 0 && class_b > 0) {
                             if (class_a == class_b) {
-                                unify_value = class_a;
+                                // NOTE: no need to change references, because both partitions' root is already a function symbol
+                                resulting_row[k] = class_a;
                             } else {
-                                my_rb.valid[index_mt] = 2;
                                 break;
                             }
-                        } else if (class_a > 0 || class_b > 0) {
-                            // NOTE: we must add to flattening_arraylist the position of the class that is a variable, because it unifies with the symbol class!
-                            if (class_a > 0) {
-                                unify_value = class_a;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_b + 1));
-                            } else {
-                                unify_value = class_b;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_a + 1));
-                            }
+
                         } else {
                             // NOTE: the variable that appears first --> lowest column in absolute value --> greatest number
-                            // NOTE: we must add to flattening_arraylist the position of the class that is the variable with rightest column, because it unifies with the other variable which appears first!
-                            unify_value = class_a;
+                            // NOTE: the case where one of the two classes is a function symbol is treated in the same way too.
                             if (class_a > class_b) {
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_b + 1));
-                            } else if (class_a < class_b) {
-                                unify_value = class_b;
-                                unsafe_add_to_array_list(flattening_arraylist, -(class_a + 1));
+                                resulting_row[k] = class_a;
+                                resulting_row[pos_b] = class_a;
+                            } else {
+                                resulting_row[k] = class_b;
+                                resulting_row[pos_a] = class_b;
                             }
                         }
-
-                        resulting_row[k] = unify_value;
-
-                        foreach_in_arraylist(UInt, pos, flattening_arraylist){
-                            resulting_row[*pos] = unify_value;
-                        }
-                        clear_array_list_uint(&flattening_arraylist);
                     }
+                }
+            }
+
+            // NOTE: if some clash was detected, continue with the next pair of rows
+            if (k < len_extended_row) {
+                my_rb.valid[index_mt] = 2;
+                continue;
+            }
+
+            // NOTE: there might remain some backreferences to constants, which have to be resolved, as well as
+            //  some references to be flattened yet.
+            for (k = 1; k < len_extended_row; ++k) {
+                if (resulting_row[k] < 0) {
+                    unsigned pos = find(resulting_row, resulting_row[k]);
+                    resulting_row[k] = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
                 }
             }
         }
     }
-
-    free_array_list_uint(flattening_arraylist);
 
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
     if (verbose) printf("\tUnifiers applied\n");
@@ -1760,11 +1711,11 @@ static void matrix_intersection_with_mappings(
     /* --- Accumulate timings --- */
 
     timespec_subtract(&elapsed, &end_unification, &start_unification);
-    timespec_add(&unification_elapsed, &unification_elapsed, &elapsed);
+    timespec_add(&unification_elapsed_nlm, &unification_elapsed_nlm, &elapsed);
 
     free_result_block(&my_rb);
 }
-
+#endif
 
 static void matrix_intersection_with_mapping_lineal(
     operand_block *ob1, operand_block *ob2,
@@ -1838,7 +1789,7 @@ static void matrix_intersection_with_mapping_lineal(
     /* --- Accumulate timings --- */
 
     timespec_subtract(&elapsed, &end_unification, &start_unification);
-    timespec_add(&unification_elapsed, &unification_elapsed, &elapsed);
+    timespec_add(&unification_elapsed_lm, &unification_elapsed_lm, &elapsed);
 
     free_result_block(&my_rb);
 }
@@ -2128,7 +2079,8 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         (max_rows1 + max_rows2) * (max_normalized_common_set_size*sizeof(unsigned)) +
         (num_buckets_hms_rows_to_mapping_sides) * (sizeof(RowToMappingSide)) +
         (max_normalized_common_set_size) * sizeof(unsigned) +
-        (max_rows1 * max_rows2) * sizeof(mgu_schema);
+        (max_rows1 * max_rows2) * sizeof(mgu_schema) +
+        (s1 + s2) * max_normalized_common_set_size * sizeof(int);
     init_arena(&arena_result, arena_result_bytes);
 
     Arena debug_arena; init_arena(&debug_arena, 10000*sizeof(Schema));
@@ -2138,12 +2090,15 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
     // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
     //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-    Arena row_vars_to_extending_cols_arena;
+    Arena row_vars_arena;
     unsigned num_bytes_pointers1 = sizeof(unsigned*) * max_normalized_operand_set_size1;
     unsigned num_bytes_pointers2 = sizeof(unsigned*) * max_normalized_operand_set_size2;
     unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size1);
     unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size2);
-    init_arena(&row_vars_to_extending_cols_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1, num_bytes_pointers2 + num_bytes_virtual_columns2));
+    unsigned num_bytes_column_mappings1 = sizeof(int)*(max_normalized_operand_set_size1);
+    unsigned num_bytes_column_mappings2 = sizeof(int)*(max_normalized_operand_set_size2);
+    init_arena(&row_vars_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1 + num_bytes_column_mappings1,
+        num_bytes_pointers2 + num_bytes_virtual_columns2 + num_bytes_column_mappings2));
 
 
     /* --- Process result blocks one at a time --- */
@@ -2166,6 +2121,9 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
     struct timespec start_mapping, end_mapping;
     struct timespec mapping_elapsed = {};
+
+    struct timespec start_row_extension, end_row_extension;
+    struct timespec row_extention_elapsed = {};
 
     for(unsigned t1 = 1; t1 <= s1; ++t1){
         for(unsigned t2 = 1; t2 <= s2; ++t2) {
@@ -2229,7 +2187,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                 for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
                 unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
-                mgu_schema *schemas;// = NULL;
+                mgu_schema *schemas; // = NULL;
 
                 if(rb.lineal_lineal){
                     unsigned *mapping_sides = allocate(&arena_result, 2 * mapping_side_size);
@@ -2279,10 +2237,10 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                         } else {
                             mapping_column_indexes_side(
                                 normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                                starting_col_indices1, row, mapping_side, &row_vars_to_extending_cols_arena,
+                                starting_col_indices1, row, mapping_side, &row_vars_arena,
                                 &schema_iterator_arena
                             );
-                            clear_arena(&row_vars_to_extending_cols_arena);
+                            clear_arena(&row_vars_arena);
                             insert_to_map_row_to_mapping_side_arena(&map1, row, mapping_side, &arena_result);
                         }
                     }
@@ -2299,10 +2257,10 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                         } else {
                             mapping_column_indexes_side(
                                 normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                                starting_col_indices2, row, mapping_side, &row_vars_to_extending_cols_arena,
+                                starting_col_indices2, row, mapping_side, &row_vars_arena,
                                 &schema_iterator_arena
                             );
-                            clear_arena(&row_vars_to_extending_cols_arena);
+                            clear_arena(&row_vars_arena);
                             insert_to_map_row_to_mapping_side_arena(&map2, row, mapping_side, &arena_result);
                         }
                     }
@@ -2343,8 +2301,52 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                 timespec_subtract(&elapsed, &end_mapping, &start_mapping);
                 timespec_add(&mapping_elapsed, &mapping_elapsed, &elapsed);
 
+                // TODO(YA): test row extension and new matrix_intersection functions...
+                clock_gettime(CLOCK_MONOTONIC, &start_row_extension);
+
+                unsigned len_extended_row = normalized_common_set_schema.size;
+                int *extended_rows = allocate(&arena_result, (ob1->r + ob2->r) * len_extended_row * sizeof(*extended_rows));
+                int *extended_row = extended_rows;
+                if (rb.lineal_lineal) {
+                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
+                        extend_row_lineal(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
+                            starting_col_indices1, ob1->terms[i].row, extended_row, &schema_iterator_arena);
+                    }
+                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
+                        extend_row_lineal(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
+                            starting_col_indices2, ob2->terms[i].row, extended_row, &schema_iterator_arena);
+                    }
+
+                } else {
+                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
+                        extend_row(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
+                            starting_col_indices1, ob1->terms[i].row, extended_row, &row_vars_arena,
+                            &schema_iterator_arena);
+                    }
+                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
+                        extend_row(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
+                            starting_col_indices2, ob2->terms[i].row, extended_row, &row_vars_arena,
+                            &schema_iterator_arena);
+                    }
+                }
+
+                clock_gettime(CLOCK_MONOTONIC, &end_row_extension);
+                timespec_subtract(&elapsed, &end_row_extension, &start_row_extension);
+                timespec_add(&row_extention_elapsed, &row_extention_elapsed, &elapsed);
+
+                
                 // The rb's mgu_schema/s has/have been modified to use the calculated ones.
                 matrix_intersection(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], &rb, schemas);
+                if (rb.lineal_lineal) {
+                    matrix_intersection_with_mapping_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
+
+                    matrix_intersection_with_extended_rows_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+
+                } else {
+                    //matrix_intersection_with_mapping();
+
+                    //matrix_intersection_with_extended_rows(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+                }
 
                 clear_arena(&arena_result);
                 clear_arena(&debug_arena);
@@ -2374,16 +2376,26 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     /* --- Print timing breakdown --- */
     if (verbose) {
         printf("-------- TIME MEASUREMENTS --------\n");
-        printf("File I/O:            %ld.%09ld s\n",
-               read_file_elapsed.tv_sec,    read_file_elapsed.tv_nsec);
-        printf("Schema management:   %ld.%09ld s\n",
-               schemas_elapsed.tv_sec,      schemas_elapsed.tv_nsec);
-        printf("Mapping obtention:   %ld.%09ld s\n",
-               mapping_elapsed.tv_sec,      mapping_elapsed.tv_nsec);
-        printf("Unifier computation: %ld.%09ld s\n",
-               unifiers_elapsed.tv_sec,     unifiers_elapsed.tv_nsec);
-        printf("Unifier application: %ld.%09ld s\n",
-               unification_elapsed.tv_sec,  unification_elapsed.tv_nsec);
+        printf("File I/O:            %ld.%09ld s\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
+        
+        printf("Schema management:   %ld.%09ld s\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
+        printf("Mapping obtention:   %ld.%09ld s\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
+        printf("Row extention:       %ld.%09ld s\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
+        
+        printf("Unifier computation original: %ld.%09ld s\n", unifiers_elapsed.tv_sec, unifiers_elapsed.tv_nsec);
+        printf("Unifier application original: %ld.%09ld s\n", unification_elapsed.tv_sec, unification_elapsed.tv_nsec);
+        
+        printf("Unifier computation lin-map: %ld.%09ld s\n", unifiers_elapsed_lm.tv_sec, unifiers_elapsed_lm.tv_nsec);
+        printf("Unifier application lin-map: %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        
+        printf("Unifier computation lin-ext: %ld.%09ld s\n", unifiers_elapsed_le.tv_sec, unifiers_elapsed_le.tv_nsec);
+        printf("Unifier application lin-ext: %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        
+        printf("Unifier computation nonlin-map: %ld.%09ld s\n", unifiers_elapsed_nlm.tv_sec, unifiers_elapsed_nlm.tv_nsec);
+        printf("Unifier application nonlin-map: %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        
+        printf("Unifier computation nonlin-ext: %ld.%09ld s\n", unifiers_elapsed_nle.tv_sec, unifiers_elapsed_nle.tv_nsec);
+        printf("Unifier application nonlin-ext: %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
     }
 
     /* --- Print one-line CSV summary --- */
@@ -2402,8 +2414,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     printf("%ld.%09ld, ", unifiers_elapsed.tv_sec, unifiers_elapsed.tv_nsec);
 
     timespec_subtract(&elapsed, &end_total, &start_total);
-    if (verbose) printf("Total:             %ld.%09ld s\n",
-                        elapsed.tv_sec, elapsed.tv_nsec);
+    if (verbose) printf("Total:             %ld.%09ld s\n", elapsed.tv_sec, elapsed.tv_nsec);
     printf("%ld.%09ld\n", elapsed.tv_sec, elapsed.tv_nsec);
 
     /* --- Cleanup --- */
@@ -2414,7 +2425,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     free_arena(&arena_result);
     free_arena(&debug_arena);
     free_arena(&schema_iterator_arena);
-    free_arena(&row_vars_to_extending_cols_arena);
+    free_arena(&row_vars_arena);
 
     free_dictionary(var_dict);
     free_dictionary(unif_dict);

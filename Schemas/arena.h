@@ -32,5 +32,6 @@ void init_arena(Arena *arena, size_t size_in_bytes);
 void free_arena(Arena *arena);
 void clear_arena(Arena *arena);
 void *allocate(Arena *arena, size_t num_bytes);
+void *callocate(Arena *arena, size_t num_bytes);
 
 #endif
