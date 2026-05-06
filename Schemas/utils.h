@@ -21,17 +21,17 @@ static inline MinMax min_max(unsigned a, unsigned b){
 
 #define SET_TO_ZERO(AllocatedPtr, NumBytes) memset((AllocatedPtr), 0, (NumBytes))
 
-#define ERROR_MESSAGE(function, message) fprintf(stderr, "%s(Line %u): %s\n", function, __LINE__, message)
-#define MALLOC_ERROR_MESSAGE(function) ERROR_MESSAGE(function, "malloc failed to allocate memory")
-#define CHECK_MALLOC(pointer, function) \
+#define ERROR_MESSAGE(message) fprintf(stderr, "%s(Line %u): %s\n", __func__, __LINE__, message)
+#define MALLOC_ERROR_MESSAGE ERROR_MESSAGE("malloc failed to allocate memory")
+#define CHECK_MALLOC(pointer) \
     if(pointer == NULL) {               \
-        MALLOC_ERROR_MESSAGE(function); \
+        MALLOC_ERROR_MESSAGE;           \
         exit(EXIT_FAILURE);             \
     }
-#define CALLOC_ERROR_MESSAGE(function) ERROR_MESSAGE(function, "calloc failed to allocate memory")
-#define CHECK_CALLOC(pointer, function) \
+#define CALLOC_ERROR_MESSAGE ERROR_MESSAGE("calloc failed to allocate memory")
+#define CHECK_CALLOC(pointer) \
     if(pointer == NULL) {               \
-        CALLOC_ERROR_MESSAGE(function); \
+        CALLOC_ERROR_MESSAGE;           \
         exit(EXIT_FAILURE);             \
     }
 

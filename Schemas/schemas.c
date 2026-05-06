@@ -1974,9 +1974,8 @@ void extend_row(
                         
                         schema_iterator_skip(&common_it);
                     }
-                
-                    ++row_pos;
                 }
+                ++row_pos;
             }
 
             // NOTE: after summing the sizes of the original subschemas we should arrive exactly to the end position in the row portion;

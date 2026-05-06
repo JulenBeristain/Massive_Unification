@@ -57,11 +57,24 @@ static int verbose = 0;
 
 /** Accumulated elapsed time for file I/O, unifier computation, and unification application. */
 static struct timespec read_file_elapsed, 
-    unifiers_elapsed, unification_elapsed, 
-    unifiers_elapsed_le, unification_elapsed_le,
-    unifiers_elapsed_lm, unification_elapsed_lm,
-    unifiers_elapsed_nle, unification_elapsed_nle,
-    unifiers_elapsed_nlm, unification_elapsed_nlm;
+    unifiers_elapsed_l, unification_elapsed_l, 
+    unifiers_elapsed_nl, unification_elapsed_nl, 
+    unification_elapsed_le,
+    unification_elapsed_lm,
+    unification_elapsed_nle,
+    unification_elapsed_nlm;
+
+static inline void reset_global_timers(){
+    read_file_elapsed = (struct timespec){}; 
+    unifiers_elapsed_l = (struct timespec){};
+    unification_elapsed_l = (struct timespec){};
+    unifiers_elapsed_nl = (struct timespec){};
+    unification_elapsed_nl = (struct timespec){};
+    unification_elapsed_le = (struct timespec){};
+    unification_elapsed_lm = (struct timespec){};
+    unification_elapsed_nle = (struct timespec){};
+    unification_elapsed_nlm = (struct timespec){};
+}
 
 /** Set to false as soon as any result block comparison fails. */
 static bool global_correct = true;
@@ -310,8 +323,8 @@ static int compare_results(result_block *rb1, result_block *rb2,
                     printf("mt2:\t"); print_main_term(&ob2->terms[i % rb1->r2], 2, 1);
                     printf("computed:\t"); print_main_term(&rb1->terms[i], 3, 0);
                     printf("expected:\t"); print_main_term(&rb2->terms[i], 3, 0);
-                    print_mgu_schema(rb2->ms);
-                    print_mgu_compact(rb2->ms);
+                    if (rb2->ms) print_mgu_schema(rb2->ms);
+                    if (rb2->ms) print_mgu_compact(rb2->ms);
                 }
                 return 0;
             }
@@ -1297,11 +1310,15 @@ static void matrix_intersection(operand_block *ob1, operand_block *ob2,
     if (verbose) printf("Unification is %scorrect\n", correct ? "" : "NOT ");
 
     /* --- Accumulate timings --- */
-    timespec_subtract(&elapsed,  &end_unifiers,    &start_unifiers);
-    timespec_add(&unifiers_elapsed, &unifiers_elapsed, &elapsed);
-
+    timespec_subtract(&elapsed, &end_unifiers, &start_unifiers);
     timespec_subtract(&elapsed2, &end_unification, &start_unification);
-    timespec_add(&unification_elapsed, &unification_elapsed, &elapsed2);
+    if (rb->lineal_lineal) {
+        timespec_add(&unifiers_elapsed_l, &unifiers_elapsed_l, &elapsed);
+        timespec_add(&unification_elapsed_l, &unification_elapsed_l, &elapsed2);
+    } else {
+        timespec_add(&unifiers_elapsed_nl, &unifiers_elapsed_nl, &elapsed);
+        timespec_add(&unification_elapsed_nl, &unification_elapsed_nl, &elapsed2);
+    }
 
     free(unifiers);
     free_result_block(&my_rb);
@@ -1321,19 +1338,19 @@ static unsigned find_and_flatten(int *row, int var){
         return old_pos;
     }
 
-    unsigned pos = find_and_flatten(row, -((int)(old_pos) + 1));
+    unsigned pos = find_and_flatten(row, row[old_pos]);
     row[old_pos] = -((int)(pos) + 1);
 
     return pos;
 }
 
-static unsigned find(int *row, int var) {
+static inline unsigned find(int *row, int var) {
     assert(var < 0);
-    unsigned old_pos = -(var + 1);
-    if(row[old_pos] >= 0){
-        return old_pos;
+    unsigned pos = -(var + 1);
+    while (row[pos] < 0) {
+        pos = -(row[pos] + 1);
     }
-    return find(row, -((int)(old_pos) + 1));
+    return pos;
 }
 
 static void matrix_intersection_with_extended_rows(
@@ -1347,7 +1364,7 @@ static void matrix_intersection_with_extended_rows(
     // NOTE: no need to compute unifiers (column mappings)
 
     /* --- Apply unifiers --- */
-    if (verbose) printf("\tNo unifier to apply…\n");
+    if (verbose) printf("\tmatrix intersection with extended rows\n");
     clock_gettime(CLOCK_MONOTONIC, &start_unification);
 
     unsigned num_rows1 = ob1->r;
@@ -1355,9 +1372,9 @@ static void matrix_intersection_with_extended_rows(
     unsigned num_rows3 = num_rows1 * num_rows2;
     result_block my_rb = { .r1 = num_rows1, .r2 = num_rows2, .r = num_rows3, .c1 = ob1->c, .c2 = ob2->c, .c = len_extended_row };
     my_rb.terms = malloc(num_rows3 * sizeof(*my_rb.terms));
-    CHECK_MALLOC(my_rb.terms, "matrix_intersection_with_extended_rows");
-    my_rb.valid = malloc(num_rows3 * sizeof(*my_rb.valid));
-    CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
+    CHECK_MALLOC(my_rb.terms);
+    my_rb.valid = calloc(num_rows3, sizeof(*my_rb.valid)); // NOTE: 0 - unified
+    CHECK_CALLOC(my_rb.valid);
 
     // NOTE: with each pair of rows we calculate the resulting unified row using a partition-like data structure with path compression.
 
@@ -1370,11 +1387,10 @@ static void matrix_intersection_with_extended_rows(
         for(unsigned j = 0; j < num_rows2; ++j, row_b += len_extended_row){
             
             int *resulting_row = malloc(sizeof(*resulting_row) * len_extended_row);
-            CHECK_MALLOC(resulting_row, "matrix_intersection_with_extended_rows_lineal");
+            CHECK_MALLOC(resulting_row);
             
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = len_extended_row, .row = resulting_row };
-            my_rb.valid[index_mt] = 0;
 
             // NOTE: unification
             unsigned k = 0;
@@ -1405,8 +1421,12 @@ static void matrix_intersection_with_extended_rows(
                         unsigned pos = find_and_flatten(resulting_row, var);
                         int class = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
 
-                        if (class > 0 && sym != class) {
-                            break;
+                        if (class > 0) {
+                            if (sym != class) {
+                                break;
+                            }
+                        } else {
+                            resulting_row[-(class + 1)] = sym;
                         }
 
                         resulting_row[k] = sym;
@@ -1471,7 +1491,6 @@ static void matrix_intersection_with_extended_rows(
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
-    if (verbose) printf("\tUnifiers applied\n");
 
     /* --- Verify correctness --- */
     if (verbose) printf("\tComparing against reference…\n");
@@ -1499,7 +1518,7 @@ static void matrix_intersection_with_extended_rows_lineal(
     // NOTE: no need to compute unifiers (column mappings)
 
     /* --- Apply unifiers --- */
-    if (verbose) printf("\tNo unifier to apply…\n");
+    if (verbose) printf("\tmatrix intersection with extended rows lineal\n");
     clock_gettime(CLOCK_MONOTONIC, &start_unification);
 
     unsigned num_rows1 = ob1->r;
@@ -1507,9 +1526,9 @@ static void matrix_intersection_with_extended_rows_lineal(
     unsigned num_rows3 = num_rows1 * num_rows2;
     result_block my_rb = { .r1 = num_rows1, .r2 = num_rows2, .r = num_rows3, .c1 = ob1->c, .c2 = ob2->c, .c = len_extended_row };
     my_rb.terms = malloc(num_rows3 * sizeof(*my_rb.terms));
-    CHECK_MALLOC(my_rb.terms, "matrix_intersection_with_extended_rows");
-    my_rb.valid = malloc(num_rows3 * sizeof(*my_rb.valid));
-    CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
+    CHECK_MALLOC(my_rb.terms);
+    my_rb.valid = calloc(num_rows3, sizeof(*my_rb.valid)); // NOTE: 0 - unified
+    CHECK_CALLOC(my_rb.valid);
 
     int *extended_rows2 = extended_rows + (num_rows1 * len_extended_row);
     int *row_a = extended_rows;
@@ -1518,11 +1537,10 @@ static void matrix_intersection_with_extended_rows_lineal(
         for(unsigned j = 0; j < num_rows2; ++j, row_b += len_extended_row){
             
             int *resulting_row = malloc(sizeof(*resulting_row) * len_extended_row);
-            CHECK_MALLOC(resulting_row, "matrix_intersection_with_extended_rows_lineal");
+            CHECK_MALLOC(resulting_row);
             
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = len_extended_row, .row = resulting_row };
-            my_rb.valid[index_mt] = 0;
 
             // NOTE: unification
             for(unsigned k = 0; k < len_extended_row; ++k){
@@ -1543,7 +1561,6 @@ static void matrix_intersection_with_extended_rows_lineal(
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
-    if (verbose) printf("\tUnifiers applied\n");
 
     /* --- Verify correctness --- */
     if (verbose) printf("\tComparing against reference…\n");
@@ -1560,146 +1577,220 @@ static void matrix_intersection_with_extended_rows_lineal(
     free_result_block(&my_rb);
 }
 
-#if 0
+static unsigned find_and_flatten_unif(int *unification_array, unsigned var_pos){
+    if(unification_array[var_pos] >= 0){
+        return var_pos;
+    }
+
+    unsigned pos = find_and_flatten_unif(unification_array, -unification_array[var_pos]);
+    unification_array[var_pos] = -(int)(pos);
+
+    return pos;
+}
+
 static void matrix_intersection_with_mappings(
     operand_block *ob1, operand_block *ob2,
     mgu_schema *mappings,
     result_block *rb
 ){
-    // TODO(YA): it might be possible to do it with a unification array of 2*len_extended_row + 1, with interpretation 
-    //  1..c1 (original vars 1), c1+1..n (virtual vars 1), n+1..n+c2 (original vars 2), n+c2+1..2n (virtual vars 2)
     
     struct timespec start_unification, end_unification, elapsed;
-
+    
     /* --- Compute unifiers --- */
     // NOTE: no need to compute unifiers (column mappings)
-
+    
     /* --- Apply unifiers --- */
-    if (verbose) printf("\tNo unifier to apply…\n");
+    if (verbose) printf("\tmatrix intersection with mappings\n");
     clock_gettime(CLOCK_MONOTONIC, &start_unification);
-
+    
+    unsigned len_extended_row = mappings->n_common;
     unsigned num_rows1 = ob1->r;
     unsigned num_rows2 = ob2->r;
     unsigned num_rows3 = num_rows1 * num_rows2;
     result_block my_rb = { .r1 = num_rows1, .r2 = num_rows2, .r = num_rows3, .c1 = ob1->c, .c2 = ob2->c, .c = len_extended_row };
     my_rb.terms = malloc(num_rows3 * sizeof(*my_rb.terms));
-    CHECK_MALLOC(my_rb.terms, "matrix_intersection_with_extended_rows");
-    my_rb.valid = malloc(num_rows3 * sizeof(*my_rb.valid));
-    CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
+    CHECK_MALLOC(my_rb.terms);
+    my_rb.valid = calloc(num_rows3, sizeof(*my_rb.valid)); // NOTE: 0 - unified
+    CHECK_CALLOC(my_rb.valid);
+    
+    // TODO(ORG): move arraylist of uints/ints to another file, not in schemas.c/h
+    // NOTE: unification array of 2*len_extended_row + 1, with interpretation 
+    //  1..c1 (original vars 1), c1+1..n (virtual vars 1), n+1..n+c2 (original vars 2), n+c2+1..2n (virtual vars 2)
+    // - Values in the unification array:
+    //  Everyone starts with 0 --> Each index in a separate group, 0 is the value for roots
+    //  If positive --> They are in the partition of that constant (another kind of root)
+    //  If negative --> They point to the root or to an intermediate node, all of a same partition of variables unified among them
+    unsigned num_classes = (2 * len_extended_row + 1);
+    unsigned num_bytes_unification_buffer = 2 * num_classes * sizeof(int);
+    int *unification_buffer = malloc(num_bytes_unification_buffer);
+    CHECK_MALLOC(unification_buffer);
+    int *unification_array = unification_buffer;
+    int *unification0s_to_resulting_cols = unification_buffer + num_classes;
 
-    // NOTE: with each pair of rows we calculate the resulting unified row using a partition-like data structure with path compression.
+    mgu_schema *mapping = mappings - 1;
+    main_term *mt_a = ob1->terms;
+    for(unsigned i = 0; i < num_rows1; ++i, ++mt_a){
+        int *row_a = mt_a->row;
+        main_term *mt_b = ob2->terms;
+        for(unsigned j = 0; j < num_rows2; ++j, ++mt_b){
+            int *row_b = mt_b->row;
+            ++mapping;
 
-    // TODO(ORG): move arraylist of uints to another file, not in schemas.c/h
+            SET_TO_ZERO(unification_buffer, num_bytes_unification_buffer);
 
-    int *extended_rows2 = extended_rows + (num_rows1 * len_extended_row);
-    int *row_a = extended_rows;
-    for(unsigned i = 0; i < num_rows1; ++i, row_a += len_extended_row){
-        int *row_b = extended_rows2;
-        for(unsigned j = 0; j < num_rows2; ++j, row_b += len_extended_row){
-            
             int *resulting_row = malloc(sizeof(*resulting_row) * len_extended_row);
-            CHECK_MALLOC(resulting_row, "matrix_intersection_with_extended_rows_lineal");
+            CHECK_MALLOC(resulting_row);
             
+            // NOTE: we could initialize it outside the loop to simply increment it as we do with mapping. But
+            //  to parallelize it in a GPU in the future, this approach is better (for mapping too).
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = len_extended_row, .row = resulting_row };
-            my_rb.valid[index_mt] = 0;
 
-            // NOTE: unification
+#if 0
+            if (index_mt == 43520){
+                printf("Row A: "); println_array_ints(row_a, ob1->c);
+                printf("Row B: "); println_array_ints(row_b, ob2->c);
+                printf("Mapping: "); print_mgu_compact(mapping);
+            }
+#endif
+
+            // NOTE: unification. First loop to decide unification classes (or partitions of variables).
+            for(unsigned k = 0; k < len_extended_row; ++k){
+                unsigned col_a = mapping->common_L[k];
+                unsigned col_b = mapping->common_R[k];
+                
+                // NOTE: if we have a repeated appearence of an original variable (negative index in row), 
+                //  we have to "unify" its position in unification_array with the class of the first appearence of that variable
+                if (col_a <= ob1->c && row_a[col_a - 1] < 0) {
+                    unification_array[col_a] = row_a[col_a - 1];
+                }
+                if (col_b <= ob2->c && row_b[col_b - 1] < 0) {
+                    unification_array[col_b + len_extended_row] = row_b[col_b - 1] - len_extended_row;
+                }
+
+                bool is_var_a = (col_a > ob1->c) || (row_a[col_a - 1] <= 0);
+                bool is_var_b = (col_b > ob2->c) || (row_b[col_b - 1] <= 0);
+                if (is_var_a && is_var_b) {
+                    // NOTE: Unite both classes with the greatest class as root (first variable or function symbol)
+                    unsigned pos_a = find_and_flatten_unif(unification_array, col_a);
+                    unsigned pos_b = find_and_flatten_unif(unification_array, col_b + len_extended_row);
+                    
+                    if (pos_a < pos_b) {
+                        int class_a = -(int)(pos_a);
+                        unification_array[pos_b] = class_a;
+                    } else {
+                        int class_b = -(int)(pos_b);
+                        unification_array[pos_a] = class_b;
+                    }
+                    
+#if 0
+                    if (index_mt == 43520) {
+                        println_array_ints(unification_array, 2*len_extended_row + 1);
+                    }
+#endif
+                }
+            }
+
+            // NOTE: Second loop to perform the unification, checking clashes. We have to adjust the classes in 
+            //  unification_array in case a variable of a class unifies with a constant. In the case a class 
+            //  remains simply as a unification among variables (and therefore it will be reflected by a single
+            //  variable in the resulting_row, if it appears there), we have to store in unification0s_to_resulting_cols
+            //  the first apparition of that variable in the resulting_row.
             unsigned k = 0;
-            for(; k < len_extended_row; ++k){
-                int a = row_a[k];
-                int b = row_b[k];
-
+            for (; k < len_extended_row; ++k) {
+                unsigned col_a = mapping->common_L[k];
+                unsigned col_b = mapping->common_R[k];
+                
+                // NOTE: in the case of a function symbol in the original row, a and b will have that value. In the case of a 
+                //  virtual or original row variable, they will have the class (negative 1-based int pointing to the root in unification_array),
+                //  unless that class has been unified with a symbol in this loop.
+                int a;
+                if ((col_a <= ob1->c) && (row_a[col_a - 1] > 0)) {
+                    a = row_a[col_a - 1];
+                } else {
+                    unsigned pos = find_and_flatten_unif(unification_array, col_a);
+                    a = (unification_array[pos] > 0) ? unification_array[pos] : -(int)(pos);
+                }
+                int b;
+                if ((col_b <= ob2->c) && (row_b[col_b - 1] > 0)) {
+                    b = row_b[col_b - 1];
+                } else {
+                    unsigned pos = find_and_flatten_unif(unification_array, col_b + len_extended_row);
+                    b = (unification_array[pos] > 0) ? unification_array[pos] : -(int)(pos);
+                }
+                
                 if (a > 0 && b > 0) {
                     if (a == b) {
                         resulting_row[k] = a;
                     } else {
                         break;
                     }
-
                 } else if (a > 0 || b > 0) {
-                    int sym, var;
+                    int sym, var_class;
                     if (a > 0) {
                         sym = a;
-                        var = b;
+                        var_class = b;
                     } else {
                         sym = b;
-                        var = a;
+                        var_class = a;
                     }
 
-                    if (var == 0) {
-                        resulting_row[k] = sym;
-                    } else {
-                        unsigned pos = find_and_flatten(resulting_row, var);
-                        int class = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
-
-                        if (class > 0 && sym != class) {
-                            break;
-                        }
-
-                        resulting_row[k] = sym;
+                    resulting_row[k] = sym;
+                    unification_array[-var_class] = sym;
+                    // NOTE: in case a corresponding variable was already introduced in the resulting row, we set its
+                    //  first appearence to the symbol the class of the variable has unified with. The other apparitions
+                    //  of that variable in the resulting row, the negative 1-based backreferences, are resolved in a 
+                    //  posterior loop.
+                    if (unification0s_to_resulting_cols[-var_class] < 0) {
+                        unsigned pos0based = -(unification0s_to_resulting_cols[-var_class] + 1);
+                        resulting_row[pos0based] = sym;
+                        unification0s_to_resulting_cols[-var_class] = sym;
                     }
-                    
+
                 } else {
-                    // NOTE: both are variables
-                    if (a == 0 && b == 0) {
-                        resulting_row[k] = 0;
+                    // NOTE: if both are variables, they should be in the same unification class
+                    assert(a < 0 && b < 0 && a == b);
 
-                    } else if (a == 0 || b == 0) {
-                        int repeated = a != 0 ? a : b;
-                        unsigned pos = find_and_flatten(resulting_row, repeated);
-                        
-                        resulting_row[k] = -((int)(pos) + 1);
-                    
+                    // NOTE: check if a corresponding resulting variable was introduced in the resulting row
+                    bool corresponding_var_in_result = unification0s_to_resulting_cols[-a] != 0;
+                    if (corresponding_var_in_result) {
+                        resulting_row[k] = unification0s_to_resulting_cols[-a];
                     } else {
-                        unsigned pos_a = find_and_flatten(resulting_row, a);
-                        int class_a = resulting_row[pos_a] > 0 ? resulting_row[pos_a] : -((int)(pos_a) + 1);
-
-                        unsigned pos_b = find_and_flatten(resulting_row, b);
-                        int class_b = resulting_row[pos_b] > 0 ? resulting_row[pos_b] : -((int)(pos_b) + 1);
-
-                        if (class_a > 0 && class_b > 0) {
-                            if (class_a == class_b) {
-                                // NOTE: no need to change references, because both partitions' root is already a function symbol
-                                resulting_row[k] = class_a;
-                            } else {
-                                break;
-                            }
-
-                        } else {
-                            // NOTE: the variable that appears first --> lowest column in absolute value --> greatest number
-                            // NOTE: the case where one of the two classes is a function symbol is treated in the same way too.
-                            if (class_a > class_b) {
-                                resulting_row[k] = class_a;
-                                resulting_row[pos_b] = class_a;
-                            } else {
-                                resulting_row[k] = class_b;
-                                resulting_row[pos_a] = class_b;
-                            }
-                        }
+                        resulting_row[k] = 0;
+                        unification0s_to_resulting_cols[-a] = -(k + 1);
                     }
                 }
+
+#if 0
+                if (index_mt == 43520) {
+                    println_array_ints(resulting_row, len_extended_row);
+                    int _ = 0;
+                }
+#endif
+
             }
 
-            // NOTE: if some clash was detected, continue with the next pair of rows
             if (k < len_extended_row) {
                 my_rb.valid[index_mt] = 2;
                 continue;
             }
-
-            // NOTE: there might remain some backreferences to constants, which have to be resolved, as well as
-            //  some references to be flattened yet.
+            
+            // NOTE: we need a third pass to resolve backreferences to symbols.
             for (k = 1; k < len_extended_row; ++k) {
                 if (resulting_row[k] < 0) {
-                    unsigned pos = find(resulting_row, resulting_row[k]);
-                    resulting_row[k] = resulting_row[pos] > 0 ? resulting_row[pos] : -((int)(pos) + 1);
+                    unsigned pos = -(resulting_row[k] + 1);
+                    int sym = resulting_row[pos];
+                    if (sym > 0) {
+                        resulting_row[k] = sym;
+                    }
                 }
             }
         }
     }
 
+    free(unification_buffer);
+
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
-    if (verbose) printf("\tUnifiers applied\n");
 
     /* --- Verify correctness --- */
     if (verbose) printf("\tComparing against reference…\n");
@@ -1715,7 +1806,6 @@ static void matrix_intersection_with_mappings(
 
     free_result_block(&my_rb);
 }
-#endif
 
 static void matrix_intersection_with_mapping_lineal(
     operand_block *ob1, operand_block *ob2,
@@ -1728,7 +1818,7 @@ static void matrix_intersection_with_mapping_lineal(
     // NOTE: no need to compute unifiers (column mappings)
 
     /* --- Apply unifiers --- */
-    if (verbose) printf("\tNo unifier to apply…\n");
+    if (verbose) printf("\tmatrix intersection with mapping lineal\n");
     clock_gettime(CLOCK_MONOTONIC, &start_unification);
 
     unsigned num_rows1 = ob1->r;
@@ -1736,9 +1826,9 @@ static void matrix_intersection_with_mapping_lineal(
     unsigned num_rows3 = num_rows1 * num_rows2;
     result_block my_rb = { .r1 = num_rows1, .r2 = num_rows2, .r = num_rows3, .c1 = ob1->c, .c2 = ob2->c, .c = mapping->n_common };
     my_rb.terms = malloc(num_rows3 * sizeof(*my_rb.terms));
-    CHECK_MALLOC(my_rb.terms, "matrix_intersection_with_extended_rows");
-    my_rb.valid = malloc(num_rows3 * sizeof(*my_rb.valid));
-    CHECK_MALLOC(my_rb.valid, "matrix_intersection_with_extended_rows");
+    CHECK_MALLOC(my_rb.terms);
+    my_rb.valid = calloc(num_rows3, sizeof(*my_rb.valid)); // NOTE: 0 - unified
+    CHECK_CALLOC(my_rb.valid);
 
     main_term *mt_a = ob1->terms;
     for(unsigned i = 0; i < num_rows1; ++i, ++mt_a){
@@ -1748,16 +1838,21 @@ static void matrix_intersection_with_mapping_lineal(
             int *row_b = mt_b->row;
             
             int *resulting_row = malloc(sizeof(*resulting_row) * mapping->n_common);
-            CHECK_MALLOC(resulting_row, "matrix_intersection_with_extended_rows_lineal");
+            CHECK_MALLOC(resulting_row);
             
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = mapping->n_common, .row = resulting_row };
-            my_rb.valid[index_mt] = 0;
+
+#if 0
+            printf("Mapping: "); print_mgu_compact(mapping);
+            printf("Row A: "); print_main_term(mt_a, 0, 0);
+            printf("Row B: "); print_main_term(mt_b, 0, 0);
+#endif
 
             // NOTE: unification
             for(unsigned k = 0; k < mapping->n_common; ++k){
-                unsigned col_a = mapping->common_L[k];
-                unsigned col_b = mapping->common_R[k];
+                unsigned col_a = mapping->common_L[k] - 1;
+                unsigned col_b = mapping->common_R[k] - 1;
                 
                 // NOTE: we have to see if it is a virtual column or not.
                 int a = col_a < ob1->c ? row_a[col_a] : 0;
@@ -1777,7 +1872,6 @@ static void matrix_intersection_with_mapping_lineal(
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end_unification);
-    if (verbose) printf("\tUnifiers applied\n");
 
     /* --- Verify correctness --- */
     if (verbose) printf("\tComparing against reference…\n");
@@ -2120,10 +2214,10 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     if (verbose) print_result_block(&rb, 0);
 
     struct timespec start_mapping, end_mapping;
-    struct timespec mapping_elapsed = {};
+    struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {};
 
     struct timespec start_row_extension, end_row_extension;
-    struct timespec row_extention_elapsed = {};
+    struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
 
     for(unsigned t1 = 1; t1 <= s1; ++t1){
         for(unsigned t2 = 1; t2 <= s2; ++t2) {
@@ -2299,9 +2393,14 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
                 clock_gettime(CLOCK_MONOTONIC, &end_mapping);
                 timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                timespec_add(&mapping_elapsed, &mapping_elapsed, &elapsed);
+                if(rb.lineal_lineal) {
+                    timespec_add(&mapping_elapsed_l, &mapping_elapsed_l, &elapsed);
+                } else {
+                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
+                }
 
-                // TODO(YA): test row extension and new matrix_intersection functions...
+                // TODO(YA): Clean superfluos code
+                // TODO(YA): measure the alternative for mapping calculation that doesn't use the HashMap for row structure
                 clock_gettime(CLOCK_MONOTONIC, &start_row_extension);
 
                 unsigned len_extended_row = normalized_common_set_schema.size;
@@ -2322,30 +2421,34 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                         extend_row(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
                             starting_col_indices1, ob1->terms[i].row, extended_row, &row_vars_arena,
                             &schema_iterator_arena);
+                        clear_arena(&row_vars_arena);
                     }
                     for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
                         extend_row(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
                             starting_col_indices2, ob2->terms[i].row, extended_row, &row_vars_arena,
                             &schema_iterator_arena);
+                        clear_arena(&row_vars_arena);
                     }
                 }
 
                 clock_gettime(CLOCK_MONOTONIC, &end_row_extension);
                 timespec_subtract(&elapsed, &end_row_extension, &start_row_extension);
-                timespec_add(&row_extention_elapsed, &row_extention_elapsed, &elapsed);
+                if (rb.lineal_lineal) {
+                    timespec_add(&row_extention_elapsed_l, &row_extention_elapsed_l, &elapsed);
+                } else {
+                    timespec_add(&row_extention_elapsed_nl, &row_extention_elapsed_nl, &elapsed);
+                }
 
                 
                 // The rb's mgu_schema/s has/have been modified to use the calculated ones.
                 matrix_intersection(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], &rb, schemas);
                 if (rb.lineal_lineal) {
                     matrix_intersection_with_mapping_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
-
                     matrix_intersection_with_extended_rows_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
 
                 } else {
-                    //matrix_intersection_with_mapping();
-
-                    //matrix_intersection_with_extended_rows(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+                    matrix_intersection_with_extended_rows(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+                    matrix_intersection_with_mappings(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
                 }
 
                 clear_arena(&arena_result);
@@ -2376,46 +2479,68 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     /* --- Print timing breakdown --- */
     if (verbose) {
         printf("-------- TIME MEASUREMENTS --------\n");
-        printf("File I/O:            %ld.%09ld s\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
+        printf("File I/O: %ld.%09ld s\n\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
         
-        printf("Schema management:   %ld.%09ld s\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
-        printf("Mapping obtention:   %ld.%09ld s\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
-        printf("Row extention:       %ld.%09ld s\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
+        printf("----------------\n");
+        printf("Schema management: %ld.%09ld s\n\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
         
-        printf("Unifier computation original: %ld.%09ld s\n", unifiers_elapsed.tv_sec, unifiers_elapsed.tv_nsec);
-        printf("Unifier application original: %ld.%09ld s\n", unification_elapsed.tv_sec, unification_elapsed.tv_nsec);
+        printf("----------------\n");
+        printf("Mapping obtention linear:     %ld.%09ld s\n", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
+        printf("Mapping obtention non-linear: %ld.%09ld s\n", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
+        struct timespec mapping_elapsed; timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
+        printf("Mapping obtention total:      %ld.%09ld s\n\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
+
+        printf("----------------\n");
+        printf("Row extention linear:     %ld.%09ld s\n", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
+        printf("Row extention non-linear: %ld.%09ld s\n", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
+        struct timespec row_extention_elapsed; timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
+        printf("Row extention total:      %ld.%09ld s\n\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
         
-        printf("Unifier computation lin-map: %ld.%09ld s\n", unifiers_elapsed_lm.tv_sec, unifiers_elapsed_lm.tv_nsec);
-        printf("Unifier application lin-map: %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        printf("----------------\n");
+        printf("Original core algorithm:\n");
+        printf("Linear:\n");
+        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_l.tv_sec, unifiers_elapsed_l.tv_nsec);
+        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_l.tv_sec, unification_elapsed_l.tv_nsec);
+        struct timespec unification_elapsed_l_total; timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
+        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
+        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
+        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
         
-        printf("Unifier computation lin-ext: %ld.%09ld s\n", unifiers_elapsed_le.tv_sec, unifiers_elapsed_le.tv_nsec);
-        printf("Unifier application lin-ext: %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        printf("Non-linear:\n");
+        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_nl.tv_sec, unifiers_elapsed_nl.tv_nsec);
+        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_nl.tv_sec, unification_elapsed_nl.tv_nsec);
+        struct timespec unification_elapsed_nl_total; timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
+        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
+        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
+        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
         
-        printf("Unifier computation nonlin-map: %ld.%09ld s\n", unifiers_elapsed_nlm.tv_sec, unifiers_elapsed_nlm.tv_nsec);
-        printf("Unifier application nonlin-map: %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        printf("----------------\n");
+        printf("Alternative with mappings:\n");
+        printf("Linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        struct timespec unification_lm_total; timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
+        printf("Total: %ld.%09ld s\n\n", unification_lm_total.tv_sec, unification_lm_total.tv_nsec);
         
-        printf("Unifier computation nonlin-ext: %ld.%09ld s\n", unifiers_elapsed_nle.tv_sec, unifiers_elapsed_nle.tv_nsec);
-        printf("Unifier application nonlin-ext: %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
+        printf("Non-linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        struct timespec unification_nlm_total; timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
+        printf("Total: %ld.%09ld s\n\n", unification_nlm_total.tv_sec, unification_nlm_total.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Alternative with extended rows:\n");
+        printf("Linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        struct timespec unification_le_total; timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
+        printf("Total: %ld.%09ld s\n\n", unification_le_total.tv_sec, unification_le_total.tv_nsec);
+        
+        printf("Non-linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
+        struct timespec unification_nle_total; timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
+        printf("Total: %ld.%09ld s\n\n", unification_nle_total.tv_sec, unification_nle_total.tv_nsec);
     }
 
     /* --- Print one-line CSV summary --- */
-    printf("%s, ", global_correct ? "OK" : "Not OK");
-    printf("%u/%u, ", global_incorrect, global_count);
-    printf("%ld.%09ld, %ld.%09ld, %ld.%09ld, %ld.%09ld, %ld.%09ld, ",
-           read_file_elapsed.tv_sec,   read_file_elapsed.tv_nsec,
-           schemas_elapsed.tv_sec,     schemas_elapsed.tv_nsec,
-           mapping_elapsed.tv_sec,     mapping_elapsed.tv_nsec,
-           unifiers_elapsed.tv_sec,    unifiers_elapsed.tv_nsec,
-           unification_elapsed.tv_sec, unification_elapsed.tv_nsec);
-
-    timespec_add(&unifiers_elapsed, &unifiers_elapsed, &unification_elapsed);
-    if (verbose) printf("Total unification: %ld.%09ld s\n",
-                        unifiers_elapsed.tv_sec, unifiers_elapsed.tv_nsec);
-    printf("%ld.%09ld, ", unifiers_elapsed.tv_sec, unifiers_elapsed.tv_nsec);
-
-    timespec_subtract(&elapsed, &end_total, &start_total);
-    if (verbose) printf("Total:             %ld.%09ld s\n", elapsed.tv_sec, elapsed.tv_nsec);
-    printf("%ld.%09ld\n", elapsed.tv_sec, elapsed.tv_nsec);
+    // TODO(YA): one CSV line
 
     /* --- Cleanup --- */
     for (unsigned i = 0; i < s1; i++) free_operand_block(&obs1[i]);
@@ -2515,6 +2640,7 @@ int main(){
                 global_correct = true;
                 global_count = 0;
                 global_incorrect = 0;
+                reset_global_timers();
 
             } else {
                 printf("Skipping %s: M2 or M3 missing\n", base);

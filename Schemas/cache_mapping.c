@@ -51,7 +51,7 @@ HashMapRowToMappingSide create_hash_map_row_to_mapping_side(uint32_t num_buckets
     hm.len_rows = len_rows;
     hm.len_mapping_sides = len_mapping_side;
     hm.buckets = calloc(num_buckets, sizeof(*hm.buckets));
-    CHECK_CALLOC(hm.buckets, "create_hash_map_row_to_mapping_side");
+    CHECK_CALLOC(hm.buckets);
     return hm;
 }
 
@@ -89,7 +89,7 @@ static inline float load_factor(HashMapRowToMappingSide hm) {
 static inline void resize_hash_map_row_to_mapping_side(HashMapRowToMappingSide *hm){
     uint32_t new_num_buckets = hm->num_buckets * 2;
     RowToMappingSide *new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
-    CHECK_CALLOC(new_buckets, "resize_hash_map_row_to_mapping_side");
+    CHECK_CALLOC(new_buckets);
 
 
     for(int **row = &hm->buckets[0].row; hm->num_rows; row += 2){
