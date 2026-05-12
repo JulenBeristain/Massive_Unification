@@ -1752,7 +1752,6 @@ void mapping_column_indexes_side(
             //  i.e., the (normalized) original subschema's size has to correspond to the length of the row portion.
             assert(row_pos == end_pos);
         }
-
         assert(mapping_pos <= n_common);
     }
     assert(mapping_pos == n_common);

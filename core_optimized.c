@@ -56,7 +56,8 @@ static Dictionary *symbols_to_ids;
 static int verbose = 0;
 
 /** Accumulated elapsed time for file I/O, unifier computation, and unification application. */
-static struct timespec read_file_elapsed, 
+static struct timespec 
+    read_file_elapsed, 
     unifiers_elapsed_l, unification_elapsed_l, 
     unifiers_elapsed_nl, unification_elapsed_nl, 
     unification_elapsed_le,
@@ -1530,12 +1531,18 @@ static void matrix_intersection_with_extended_rows_lineal(
     my_rb.valid = calloc(num_rows3, sizeof(*my_rb.valid)); // NOTE: 0 - unified
     CHECK_CALLOC(my_rb.valid);
 
+    // NOTE: this might be a better alternative for future parallelization
+    //for(unsigned i = 0; i < num_rows1; ++i){
+    //    int *row_a = extended_rows + i * len_extended_row;
+    //    for(unsigned j = 0; j < num_rows2; ++j){
+    //        int *row_b = extended_rows + (num_rows1 + j) * len_extended_row;
+    
     int *extended_rows2 = extended_rows + (num_rows1 * len_extended_row);
     int *row_a = extended_rows;
     for(unsigned i = 0; i < num_rows1; ++i, row_a += len_extended_row){
         int *row_b = extended_rows2;
         for(unsigned j = 0; j < num_rows2; ++j, row_b += len_extended_row){
-            
+
             int *resulting_row = malloc(sizeof(*resulting_row) * len_extended_row);
             CHECK_MALLOC(resulting_row);
             
@@ -1546,7 +1553,7 @@ static void matrix_intersection_with_extended_rows_lineal(
             for(unsigned k = 0; k < len_extended_row; ++k){
                 int a = row_a[k];
                 int b = row_b[k];
-                assert(a >= 0 && b >= 0);
+                //assert(a >= 0 && b >= 0);
 
                 if (a == 0 || b == 0) {
                     resulting_row[k] = a + b;
@@ -1646,14 +1653,6 @@ static void matrix_intersection_with_mappings(
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = len_extended_row, .row = resulting_row };
 
-#if 0
-            if (index_mt == 43520){
-                printf("Row A: "); println_array_ints(row_a, ob1->c);
-                printf("Row B: "); println_array_ints(row_b, ob2->c);
-                printf("Mapping: "); print_mgu_compact(mapping);
-            }
-#endif
-
             // NOTE: unification. First loop to decide unification classes (or partitions of variables).
             for(unsigned k = 0; k < len_extended_row; ++k){
                 unsigned col_a = mapping->common_L[k];
@@ -1682,12 +1681,6 @@ static void matrix_intersection_with_mappings(
                         int class_b = -(int)(pos_b);
                         unification_array[pos_a] = class_b;
                     }
-                    
-#if 0
-                    if (index_mt == 43520) {
-                        println_array_ints(unification_array, 2*len_extended_row + 1);
-                    }
-#endif
                 }
             }
 
@@ -1760,14 +1753,6 @@ static void matrix_intersection_with_mappings(
                         unification0s_to_resulting_cols[-a] = -(k + 1);
                     }
                 }
-
-#if 0
-                if (index_mt == 43520) {
-                    println_array_ints(resulting_row, len_extended_row);
-                    int _ = 0;
-                }
-#endif
-
             }
 
             if (k < len_extended_row) {
@@ -1843,12 +1828,6 @@ static void matrix_intersection_with_mapping_lineal(
             unsigned index_mt = i * my_rb.r2 + j;
             my_rb.terms[index_mt] = (main_term){ .c = mapping->n_common, .row = resulting_row };
 
-#if 0
-            printf("Mapping: "); print_mgu_compact(mapping);
-            printf("Row A: "); print_main_term(mt_a, 0, 0);
-            printf("Row B: "); print_main_term(mt_b, 0, 0);
-#endif
-
             // NOTE: unification
             for(unsigned k = 0; k < mapping->n_common; ++k){
                 unsigned col_a = mapping->common_L[k] - 1;
@@ -1911,11 +1890,8 @@ static void matrix_intersection_with_mapping_lineal(
  * @return 0 on success; exits with EXIT_FAILURE on file or parse errors.
  */
 int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
-    struct timespec start_total, end_total;
     struct timespec start_reading, end_reading;
     struct timespec elapsed;
-
-    clock_gettime(CLOCK_MONOTONIC, &start_total);
 
     var_dict  = create_dictionary(501);
     unif_dict = create_dictionary(501);
@@ -1941,7 +1917,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         fprintf(stderr, "Warning: could not read block count from %s\n", M1_file);
     if (read_num_blocks(stream_M2, &s2))
         fprintf(stderr, "Warning: could not read block count from %s\n", M2_file);
-    printf("M1 blocks %u, M2 blocks %u\n", s1, s2);
+    if (verbose) printf("M1 blocks %u, M2 blocks %u\n", s1, s2);
 
 
     // Read the row identifying the columns' free variables
@@ -2208,21 +2184,22 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
     // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
     bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
-    printf("ok_free_vars = %u\n", ok_free_vars);
+    if (verbose) printf("ok_free_vars = %u\n", ok_free_vars);
     assert(ok_free_vars);
 
     if (verbose) print_result_block(&rb, 0);
 
-    struct timespec start_mapping, end_mapping;
-    struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {};
+    struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {}, mapping_elapsed_nl_hashopt = {};
 
     struct timespec start_row_extension, end_row_extension;
     struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
 
+    // NOTE: the amount of calls to mapping side calculation thanks to the HasMap of Row structure optimization in the case of non-linear blocks
+    unsigned saved_calls1 = 0, saved_calls2 = 0;
+
     for(unsigned t1 = 1; t1 <= s1; ++t1){
         for(unsigned t2 = 1; t2 <= s2; ++t2) {
 
-            
             ArrayListSchema computed_common_set_schema = common_set_schemas[(t1-1)*s2 + (t2-1)];
             ArrayListDependencyPair computed_common_dependencies = common_dependencies_array[(t1-1)*s2 + (t2-1)];
             bool exists_common_schema = exists_common_schema_array[(t1-1)*s2 + (t2-1)];
@@ -2246,10 +2223,11 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                     bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
                     bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
                     
-                    printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+                    if (verbose) printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
                     assert(ok_set_schemas);
                 }
                 
+                struct timespec start_mapping, end_mapping;
                 clock_gettime(CLOCK_MONOTONIC, &start_mapping);
                 
                 // Take arguments to calculate the mappings of column indexes
@@ -2303,23 +2281,85 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                     computed_mapping.common_L = mappingL;
                     computed_mapping.common_R = mappingR;
                     bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
-                    printf("ok_mappings = %u\n\n", ok_mappings);
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
                     //assert(ok_mappings);
                 
                     // We only use a schema for lineal blocks
                     schemas = allocate(&arena_result, 1 * sizeof(*schemas));
                     *schemas = computed_mapping;
 
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_l, &mapping_elapsed_l, &elapsed);
+
                 } else {
                     // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
                     unsigned *mapping_sides = allocate(&arena_result, (ob1->r + ob2->r) * mapping_side_size);
+                    schemas = allocate(&arena_result, (ob1->r)*(ob2->r) * sizeof(*schemas));
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
+                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
+                
+                    // NOTE: measure the alternative for mapping calculation that doesn't use the HashMap for row structure
+                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
+
                     unsigned *mapping_side = mapping_sides;
+                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                            starting_col_indices1, ob1->terms[i].row, mapping_side, &row_vars_arena,
+                            &schema_iterator_arena
+                        );
+                        clear_arena(&row_vars_arena);    
+                    }
+                    
+                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                            starting_col_indices2, ob2->terms[i].row, mapping_side, &row_vars_arena,
+                            &schema_iterator_arena
+                        );
+                        clear_arena(&row_vars_arena);
+                    }
+
+                    // TODO(CLEAN): instead of copying computed_mapping's header information per mapping_sideL/R combination,
+                    //  we could pass the header only once per block to the matrix_intersection functions + the mapping sides information
+                    //  (the cleanest way would be to modify the struct mgu_schema, taking into account that it can have more than one mapping
+                    //  side depending on the linearity of the block).
+                    mgu_schema *schema = schemas;
+
+                    bool ok_mappings = true;
+                    for(unsigned i = 0; i < ob1->r; ++i){
+                        computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                        for(unsigned j = 0; j < ob2->r; ++j){
+                            computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
+                            
+                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
+                            ok_mappings &= equal_mgu_schemas(mapping, &computed_mapping);
+
+                            // NOTE: We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
+                            *schema = computed_mapping;
+                            ++schema;
+                        }
+                    }
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
+
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
+
+                    // NOTE: measure the alternative for mapping calculation that uses the HashMap for row structure
+                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
 
                     // NOTE: function symbol differences don't affect to the resulting mapping, the mapping is determined by the placement of variables (0s and negatives),
                     //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
                     //  for an equivalent row was already computed.
-                    unsigned saved_calls1 = 0; // NOTE: for debugging
                     // NOTE: no resizing risk with a load_factor of 75%
+                    mapping_side = mapping_sides;
+
                     float load_factor = 0.75f;
                     unsigned num_buckets = (unsigned)((float)(ob1->r) / load_factor) + 1;
                     MapRowToMappingSide map1 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema1.size, normalized_common_set_schema.size, &arena_result);
@@ -2339,7 +2379,6 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                         }
                     }
                     
-                    unsigned saved_calls2 = 0;
                     // NOTE: no resizing risk with a load_factor of 75%
                     num_buckets = (unsigned)((float)(ob2->r) / load_factor) + 1;
                     MapRowToMappingSide map2 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema2.size, normalized_common_set_schema.size, &arena_result);
@@ -2361,10 +2400,10 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
                     // Change the mgu_schemas sides and compare
                     // One mapping per row pairs in non-linear result block
-                    schemas = allocate(&arena_result, (ob1->r)*(ob2->r) * sizeof(*schemas));
-                    mgu_schema *schema = schemas;
+                    // NOTE: we use the same memory as before.
+                    schema = schemas;
 
-                    bool ok_mappings = true;
+                    ok_mappings = true;
                     for(unsigned i = 0; i < ob1->r; ++i){
                         RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map1, ob1->terms[i].row);
                         assert(row_to_ms);
@@ -2388,19 +2427,14 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                             ++schema;
                         }
                     }
-                    printf("ok_mappings = %u\n\n", ok_mappings);
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
+                    
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
                 }
 
-                clock_gettime(CLOCK_MONOTONIC, &end_mapping);
-                timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                if(rb.lineal_lineal) {
-                    timespec_add(&mapping_elapsed_l, &mapping_elapsed_l, &elapsed);
-                } else {
-                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
-                }
-
-                // TODO(YA): Clean superfluos code
-                // TODO(YA): measure the alternative for mapping calculation that doesn't use the HashMap for row structure
                 clock_gettime(CLOCK_MONOTONIC, &start_row_extension);
 
                 unsigned len_extended_row = normalized_common_set_schema.size;
@@ -2440,7 +2474,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
                 }
 
                 
-                // The rb's mgu_schema/s has/have been modified to use the calculated ones.
+                // Matrix intersection: all variants, original core and alternative versions for lineal or nonlinear with mappings or extended rows
                 matrix_intersection(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], &rb, schemas);
                 if (rb.lineal_lineal) {
                     matrix_intersection_with_mapping_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
@@ -2474,9 +2508,8 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         }
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &end_total);
-
     /* --- Print timing breakdown --- */
+    struct timespec mapping_elapsed, mapping_elapsed_hashopt, row_extention_elapsed, unification_elapsed_l_total, unification_lm_total, unification_elapsed_nl_total, unification_nlm_total, unification_le_total, unification_nle_total;
     if (verbose) {
         printf("-------- TIME MEASUREMENTS --------\n");
         printf("File I/O: %ld.%09ld s\n\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
@@ -2485,15 +2518,19 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         printf("Schema management: %ld.%09ld s\n\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
         
         printf("----------------\n");
-        printf("Mapping obtention linear:     %ld.%09ld s\n", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
-        printf("Mapping obtention non-linear: %ld.%09ld s\n", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
-        struct timespec mapping_elapsed; timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
-        printf("Mapping obtention total:      %ld.%09ld s\n\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
+        printf("Mapping obtention linear:             %ld.%09ld s\n", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
+        printf("Mapping obtention non-linear:         %ld.%09ld s\n", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
+        printf("Mapping obtention non-linear hashopt: %ld.%09ld s\n", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
+        printf("\tSaved calls 1=%u - Saved calls 2=%u - Total=%u\n", saved_calls1, saved_calls2, saved_calls1 + saved_calls2);
+        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
+        printf("Mapping obtention total:              %ld.%09ld s\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
+        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
+        printf("Mapping obtention total hashopt:      %ld.%09ld s\n\n", mapping_elapsed_hashopt.tv_sec, mapping_elapsed_hashopt.tv_nsec);
 
         printf("----------------\n");
         printf("Row extention linear:     %ld.%09ld s\n", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
         printf("Row extention non-linear: %ld.%09ld s\n", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
-        struct timespec row_extention_elapsed; timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
+        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
         printf("Row extention total:      %ld.%09ld s\n\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
         
         printf("----------------\n");
@@ -2501,7 +2538,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         printf("Linear:\n");
         printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_l.tv_sec, unifiers_elapsed_l.tv_nsec);
         printf("Unifier application: %ld.%09ld s\n", unification_elapsed_l.tv_sec, unification_elapsed_l.tv_nsec);
-        struct timespec unification_elapsed_l_total; timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
+        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
         printf("Total unification:   %ld.%09ld s\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
         timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
         printf("Total:               %ld.%09ld s\n\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
@@ -2509,7 +2546,7 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         printf("Non-linear:\n");
         printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_nl.tv_sec, unifiers_elapsed_nl.tv_nsec);
         printf("Unifier application: %ld.%09ld s\n", unification_elapsed_nl.tv_sec, unification_elapsed_nl.tv_nsec);
-        struct timespec unification_elapsed_nl_total; timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
+        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
         printf("Total unification:   %ld.%09ld s\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
         timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
         printf("Total:               %ld.%09ld s\n\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
@@ -2518,29 +2555,102 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
         printf("Alternative with mappings:\n");
         printf("Linear:\n");
         printf("Core:  %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
-        struct timespec unification_lm_total; timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
+        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
         printf("Total: %ld.%09ld s\n\n", unification_lm_total.tv_sec, unification_lm_total.tv_nsec);
         
         printf("Non-linear:\n");
         printf("Core:  %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
-        struct timespec unification_nlm_total; timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
+        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
         printf("Total: %ld.%09ld s\n\n", unification_nlm_total.tv_sec, unification_nlm_total.tv_nsec);
         
         printf("----------------\n");
         printf("Alternative with extended rows:\n");
         printf("Linear:\n");
         printf("Core:  %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
-        struct timespec unification_le_total; timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
+        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
         printf("Total: %ld.%09ld s\n\n", unification_le_total.tv_sec, unification_le_total.tv_nsec);
         
         printf("Non-linear:\n");
         printf("Core:  %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
-        struct timespec unification_nle_total; timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
+        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
         printf("Total: %ld.%09ld s\n\n", unification_nle_total.tv_sec, unification_nle_total.tv_nsec);
+    } else {
+        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
+        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
+        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
+        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
+        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
+        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
+        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
+        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
+        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
+        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
+        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
     }
 
     /* --- Print one-line CSV summary --- */
-    // TODO(YA): one CSV line
+    if (!verbose) {
+        char *FILE = M3_file;
+        
+        unsigned F1 = s1;
+        unsigned L1 = 0;
+        unsigned N1 = 0;
+        double C1 = 0.0;
+        for (unsigned i = 0; i < s1; ++i) {
+            operand_block *ob = obs1 + i;
+            
+            ArrayListSchema set_schema = set_schemas1[i];
+            SetVariables vars = create_set_variables_defsize();
+            variables_in_set_schema(set_schema, &vars);
+            bool is_linear = vars.num_variables == 0;
+            free_set_variables(vars);
+    
+            if (is_linear) {
+                L1 += ob->r;
+            } else {
+                N1 += ob->r;
+            }
+    
+            C1 = incremental_mean(C1, ob->c, i + 1);
+        }
+    
+        unsigned F2 = s2;
+        unsigned L2 = 0;
+        unsigned N2 = 0;
+        double C2 = 0.0;
+        for (unsigned i = 0; i < s2; ++i) {
+            operand_block *ob = obs2 + i;
+            
+            ArrayListSchema set_schema = set_schemas2[i];
+            SetVariables vars = create_set_variables_defsize();
+            variables_in_set_schema(set_schema, &vars);
+            bool is_linear = vars.num_variables == 0;
+            free_set_variables(vars);
+    
+            if (is_linear) {
+                L2 += ob->r;
+            } else {
+                N2 += ob->r;
+            }
+    
+            C2 = incremental_mean(C2, ob->c, i + 1);
+        }
+        
+        printf("%s,%u,%u,%u,%f,%u,%u,%u,%f,", FILE, F1, L1, N1, C1, F2, L2, N2, C2);
+        printf("%ld.%09ld,", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
+        printf("%ld.%09ld,", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
+        printf("%ld.%09ld,", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
+        printf("%ld.%09ld,", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        printf("%ld.%09ld\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
+    }
 
     /* --- Cleanup --- */
     for (unsigned i = 0; i < s1; i++) free_operand_block(&obs1[i]);
@@ -2565,16 +2675,10 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 }
 
 
-int main(){
+int main_dir(char *folder_path, bool verb){
     // NOTE: instances must respect the format. Among other characteristics, the resulting fragments should be
     // in the expected order: 1-1, 1-2, ..., 1-n, 2-1, ... (with holes in case a resulting fragment doesn't exist
     // due to a lack of finite common schema)
-    char *folder_path = "data/experimentation_matrices/AGT002+1";
-    //char *folder_path = "data/experimentation_matrices/AGT004+2";
-    //char *folder_path = "data/experimentation_matrices/AGT/AGT006+2.p";
-    //char *folder_path = "data/experimentation_matrices/ITP/ITP018+5.p";
-
-    bool verb = true;
 
     DIR *dir = opendir(folder_path);
     if (!dir) {
@@ -2584,7 +2688,7 @@ int main(){
     
     struct dirent *entry;
     char path_m1[PATH_MAX], path_m2[PATH_MAX], path_m3[PATH_MAX], base[PATH_MAX];
-    
+
     // 2. Iterate through files (similar to find -type f)
     while ((entry = readdir(dir)) != NULL) {
         size_t len = strlen(entry->d_name);
@@ -2617,7 +2721,7 @@ int main(){
                 //strstr(base, "test0002") ||
 
                 // Skip passed tests: ITP018+5.p
-                //strstr(base, "test0361") ||
+                strstr(base, "test0361") ||
                 //strstr(base, "test0458") ||
 
                 false)
@@ -2631,10 +2735,9 @@ int main(){
 
             // 5. Check if M2 and M3 exist (access F_OK is like [[ -f ]])
             if (access(path_m2, F_OK) == 0 && access(path_m3, F_OK) == 0) {
-                printf("%s\n", base);
+                if (verb) printf("%s\n", base);
                 int code = main_(path_m1, path_m2, path_m3, verb);
-                printf("\nMain's return code = %d\n\n", code);
-                printf("##########################################################\n");
+                if (verb) printf("\nMain's return code = %d\n\n##########################################################\n", code);
 
                 next_symbol_id = 1;
                 global_correct = true;
@@ -2651,4 +2754,27 @@ int main(){
     closedir(dir);
 
     return 0;
+}
+
+int main(){
+    // NOTE: instances must respect the format. Among other characteristics, the resulting fragments should be
+    // in the expected order: 1-1, 1-2, ..., 1-n, 2-1, ... (with holes in case a resulting fragment doesn't exist
+    // due to a lack of finite common schema)
+    CharPtr folder_paths[] = {
+        //"data/experimentation_matrices/AGT002+1",
+        //"data/experimentation_matrices/AGT004+2",
+        //"data/experimentation_matrices/AGT/AGT006+2.p",
+        "data/experimentation_matrices/ITP/ITP018+5.p",
+    };
+    unsigned n = sizeof(folder_paths) / sizeof(folder_paths[0]);
+
+    // If not verbose, print CSV header line
+    bool verb = true;
+    if (!verb) {
+        printf("FILE,F1,L1,N1,C1,F2,L2,N2,C2,File_IO,Schema_Management,Mapping_Linear,Mapping_Nonlinear,Mapping_Nonlinear_Hashopt,Row_Ext_Linear,Row_Ext_Nonlinear,Original_Linear,Original_Nonlinear,Alt_Maps_Lin,Alt_Maps_Nonlin, Alt_Ext_Lin,Alt_Ext_Nonlin\n");
+    }
+
+    for (unsigned i = 0; i < n; ++i) {
+        main_dir(folder_paths[i], verb);
+    }
 }

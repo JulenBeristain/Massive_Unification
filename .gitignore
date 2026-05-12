@@ -5,3 +5,4 @@ c
 local_notes.*
 c.dSYM/
 .DS_Store
+results/

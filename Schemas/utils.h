@@ -52,4 +52,9 @@ void println_array_uints(unsigned *array, size_t len);
 void print_array_uints_sep(unsigned *array, size_t len, char *separator);
 void print_array_uints(unsigned *array, size_t len);
 
+
+static inline double incremental_mean(double mean, double new, unsigned n){
+    return mean + ((new - mean) / n);
+}
+
 #endif

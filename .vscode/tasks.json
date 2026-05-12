@@ -56,6 +56,32 @@
 		},
 
 		{
+			"label": "MAC build core optimized O2 (clang)",
+			"type": "cppbuild",
+			"command": "/usr/bin/clang",
+			"args": [
+				"-o",
+				"${workspaceFolder}/c",
+				"${workspaceFolder}/core_optimized.c",
+				"-Wall",
+				"-Wextra",
+				"-O2",
+				"${workspaceFolder}/structures.c",
+				"${workspaceFolder}/Schemas/set_variables.c",
+				"${workspaceFolder}/Schemas/arena.c",
+				"${workspaceFolder}/Schemas/schemas.c",
+				"${workspaceFolder}/Schemas/utils.c",
+				"${workspaceFolder}/Schemas/cache_mapping.c",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
 			"label": "build tests (gcc)",
 			"type": "shell",
 			"command": "gcc",
