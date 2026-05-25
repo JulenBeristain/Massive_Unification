@@ -8,7 +8,8 @@
 //      particularization of the operand rows.
 //      - Check if the fragment's schema and the row's schema cumply the strict conditions. If they do, the row is
 //      well placed. If not, it has to be moved to another fragment. If there is no more rows in the fragment, 
-//      remove it from the matrix too.
+//      remove it from the matrix too (or change the fragments schema to this row's one, no need to delete a 
+//      one row fragment to create another one).
 //
 // - Check if there is a fragment that cumplies the strict conditions with the row's schema.
 //      - If it exists, introduce the row to that fragment.
@@ -20,16 +21,6 @@
 //      - instantiate_schema(row, fragment_schema) -> row_schema [What about the sets of dependencies?]
 //      - check_corresponding_fragment(row_schema, fragment_schema) -> bool [Use first_check, unique_dependency_between_vars, and remove_variables_not_in_set_schema_from_dependencies in case of true!]
 //      - postprocess(matrix) -> void [matrix to MNF]
-//      - remove_main_term(main_term) -> void [With intrusive lists main_term should be enough]
-//      - introduce_main_term(fragment, main_term) -> void [Have to decide to introduce it at the beginning or the end]
-//      - create_fragment(main_term, row_schema) -> fragment
-//      - introduce_fragment(matrix, fragment) -> void
-//      - remove_fragment(fragment) -> void [With intrusive lists main_term should be enough]
-//
-// - Structures to define or modify:
-//      - main_term (row): we are going to add a Linux Kernel style intrusive list to them to iterate over them, remove in O(1) while we iterate and introduce in O(1) too (either to the beginning or the end)
-//      - fragment: based on operand_block and result_block + intrusive lists -> matrix_block
-//      - matrix: we can have a header with metadata + a pointer to the first element in the intrusive list of fragments
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// CONTAINER OF ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -52,9 +43,9 @@
 /// INTRUSIVE LIST (Doubly linked) /////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct IntrusiveList IntrusiveList, *IntrusiveListPtr;
-struct IntrusiveList {
-    IntrusiveList *prev, *next;  
+typedef struct IntrusiveListDouble IntrusiveListDouble, *IntrusiveListDoublePtr;
+struct IntrusiveListDouble {
+    IntrusiveListDouble *prev, *next;  
 };
 
 
@@ -64,33 +55,33 @@ struct IntrusiveList {
 #define INTRUSIVE_LIST(list_var_name) \
     IntrusiveList list_var_name = INTRUSIVE_LIST_INIT(list_var_name)
 
-static inline void init_intrusive_list(IntrusiveList *list) {
+static inline void init_intrusive_list_double(IntrusiveListDouble *list) {
 	list->next = list;
 	list->prev = list;
 }
 
 
-static inline void __list_add(IntrusiveList *new_elem, IntrusiveList *prev, IntrusiveList *next) {
+static inline void __list_add(IntrusiveListDouble *new_elem, IntrusiveListDouble *prev, IntrusiveListDouble *next) {
     next->prev = new_elem;
 	new_elem->next = next;
 	new_elem->prev = prev;
 	prev->next = new_elem;
 }
 // NOTE: add after the specified head, as the new first element (stacks)
-static inline void intrusive_list_add(IntrusiveList *head, IntrusiveList *new_elem) {
+static inline void intrusive_list_double_add(IntrusiveListDouble *head, IntrusiveListDouble *new_elem) {
 	__list_add(new_elem, head, head->next);
 }
 // NOTE: add before the specified head, as the new last element (queues)
-static inline void intrusive_list_add_tail(IntrusiveList *head, IntrusiveList *new_elem) {
+static inline void intrusive_list_double_add_tail(IntrusiveListDouble *head, IntrusiveListDouble *new_elem) {
 	__list_add(new_elem, head->prev, head);
 }
 
 
-static inline void __list_del(IntrusiveList *prev, IntrusiveList *next) {
+static inline void __list_del(IntrusiveListDouble *prev, IntrusiveListDouble *next) {
 	next->prev = prev;
 	prev->next = next;
 }
-static inline void intrusive_list_del(IntrusiveList *entry_list) {
+static inline void intrusive_list_double_del(IntrusiveListDouble *entry_list) {
 	__list_del(entry_list->prev, entry_list->next);
 	// TODO(YA): decide if in our case it would be helpful to init_intrusive_list(entry_list), or put it to NULL, or a POISON address
     //  I think not, because every time a row is removed from a fragment, it has to be moved to another fragment (see
@@ -99,32 +90,18 @@ static inline void intrusive_list_del(IntrusiveList *entry_list) {
 }
 
 
-static inline void intrusive_list_move(IntrusiveList *entry_list, IntrusiveList *head) {
+static inline void intrusive_list_double_move(IntrusiveListDouble *entry_list, IntrusiveListDouble *head) {
 	__list_del(entry_list->prev, entry_list->next);
-	intrusive_list_add(head, entry_list);
+	intrusive_list_double_add(head, entry_list);
 }
 
-static inline void intrusive_list_move_tail(IntrusiveList *entry_list, IntrusiveList *head) {
+static inline void intrusive_list_double_move_tail(IntrusiveListDouble *entry_list, IntrusiveListDouble *head) {
 	__list_del(entry_list->prev, entry_list->next);
-	intrusive_list_add_tail(head, entry_list);
+	intrusive_list_double_add_tail(head, entry_list);
 }
 
 
-// Renaming of container_of_const for intrusive lists
-#define intrusive_list_entry(list_member_ptr, type_container, list_member_name) \
-    container_of_const(list_member_ptr, type_container, list_member_name)
-
-#define intrusive_list_first_entry(head_ptr, type_container, list_member_name) \
-    intrusive_list_entry((head_ptr)->next, type_container, list_member_name)
-
-#define intrusive_list_last_entry(head_ptr, type_container, list_member_name) \
-    intrusive_list_entry((head_ptr)->prev, type_container, list_member_name)
-
-#define intrusive_list_next_entry(current_container_ptr, list_member_name) \
-    intrusive_list_entry((current_container_ptr)->list_member_name.next, typeof(*(current_container_ptr)), list_member_name)
-
-
-static inline int intrusive_list_is_first(const IntrusiveList *list, const IntrusiveList *head) {
+static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list, const IntrusiveListDouble *head) {
 	return list->prev == head;
 }
 //#define intrusive_list_is_first(intrusive_list_ptr, head_ptr) \
@@ -141,6 +118,20 @@ static inline int intrusive_list_is_first(const IntrusiveList *list, const Intru
 
 #define list_entry_is_head(container_ptr, headptr, list_member_name)				\
     intrusive_list_is_head(&container_ptr->list_member_name, (headptr))
+
+
+// Renaming of container_of_const for intrusive lists
+#define intrusive_list_entry(list_member_ptr, type_container, list_member_name) \
+    container_of_const(list_member_ptr, type_container, list_member_name)
+
+#define intrusive_list_first_entry(head_ptr, type_container, list_member_name) \
+    intrusive_list_entry((head_ptr)->next, type_container, list_member_name)
+
+#define intrusive_list_double_last_entry(head_ptr, type_container, list_member_name) \
+    intrusive_list_entry((head_ptr)->prev, type_container, list_member_name)
+
+#define intrusive_list_next_entry(current_container_ptr, list_member_name) \
+    intrusive_list_entry((current_container_ptr)->list_member_name.next, typeof(*(current_container_ptr)), list_member_name)
 
 
 // NOTE: if intrusive_list_del doesn't modify the removed entry_list itself, so its next member keeps pointing to the next intrusive list
@@ -229,27 +220,148 @@ static inline int intrusive_list_single_is_first(const IntrusiveListSingle *prev
 //  only when the current entry hasn't been removed. Therefore, we can't define a simple for macro. We can use the previous intrusive list
 //  for each macros with extra logic to handle a prev_ptr for deletions.
 
+// NOTE: generic macros and typedef to toggle which IntrusiveList to use
+typedef IntrusiveListDouble IntrusiveList, *IntrusiveListPtr;
+
+#define init_intrusive_list(list) _Generic((list),          \
+    IntrusiveListDoublePtr: init_intrusive_list_double,     \
+    IntrusiveListSinglePtr: init_intrusive_list_single      \
+)(list)
+
+#define intrusive_list_add(head, new_elem) _Generic((head), \
+    IntrusiveListDoublePtr: intrusive_list_double_add,      \
+    IntrusiveListSinglePtr: init_intrusive_list_single      \
+)(head, new_elem)
+
+// NOTE: if single list pass prev as a second argument
+#define intrusive_list_del(entry_list, ...) _Generic((entry_list), \
+    IntrusiveListDoublePtr: intrusive_list_double_del,       \
+    IntrusiveListSinglePtr: intrusive_list_single_del        \
+)(entry_list, ##__VA_ARGS__)
+
+// NOTE: if double, second param head; if single, second param prev, third param head
+#define intrusive_list_move(entry_list, ...) _Generic((entry_list), \
+    IntrusiveListDoublePtr: intrusive_list_double_move,       \
+    IntrusiveListSinglePtr: intrusive_list_single_move        \
+)(entry_list, ##__VA_ARGS__)
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// STRUCTURES /////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO(YA): define these types properly
-
 typedef struct BlockRow BlockRow, *BlockRowPtr;
 struct BlockRow {
-    int *data;
-    IntrusiveList fragment_pos;
+    unsigned c;                  // Number of columns in the main term
+//    unsigned e;                  // Number of exception blocks for the main term
+    int *row;                    // 1D array containing the values of the main term
+    IntrusiveList block_pos;     // The intrusive list that stablishes the position of this main term in its block.
+//    exception_block *exceptions; // Array with e exception blocks for the main term (TODO(FUT): we may need to modify to not have the array, but intrusive lists of exception blocks)
 };
+
+#include "Schemas/schemas.h"
 
 typedef struct Block Block, *BlockPtr;
 struct Block {
-    int *data;
-    IntrusiveList matrix_pos;
+    unsigned r;                     // Number of main terms
+    unsigned c;                     // Number of columns for all main terms within the block
+    IntrusiveList head_for_rows;    // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
+    IntrusiveList matrix_pos;       // The intrusive list that stablishes the position of this block in its matrix.
+    SetSchema *schema;              // The common schema of the rows in the block. NOTE: we can deduce the block is lineal if the schema contains any variable.
+    SetDependencies *dependencies;  // The set of dependencies associated to the schema.
 };
 
 typedef struct Matrix Matrix, *MatrixPtr;
 struct Matrix {
-    int *data;
+    unsigned b;                     // Number of blocks in the matrix
+    IntrusiveList head_for_blocks;  // Anchor point for the blocks of this matrix.
 };
+
+
+
+static inline void remove_block_row(BlockRow *row) {
+    intrusive_list_del(&row->block_pos);
+}
+static inline void remove_block_row_from_block(Block *block, BlockRow *row) {
+    intrusive_list_del(&row->block_pos);
+    block->r--;
+}
+
+// NOTE: we introduce at the beginning because we don't care about the order, and it is possible with both kinds of IntrusiveLists.
+static inline void add_row_to_block(Block *block, BlockRow *row) {
+    intrusive_list_add(&block->head_for_rows, &row->block_pos);
+    block->r++;
+}
+
+static inline void move_row_to_block(Block *block, BlockRow *row) {
+    intrusive_list_move(&row->block_pos, &block->head_for_rows);
+    block->r++;
+}
+
+static inline void remove_block(Block *block) {
+    intrusive_list_del(&block->matrix_pos);
+}
+static inline void remove_block_from_matrix(Matrix *matrix, Block *block) {
+    intrusive_list_del(&block->matrix_pos);
+    matrix->b--;
+}
+
+// NOTE: we introduce at the beginning because we don't care about the order, and it is possible with both kinds of IntrusiveLists.
+static inline void add_block_to_matrix(Matrix *matrix, Block *block) {
+    intrusive_list_add(&matrix->head_for_blocks, &block->matrix_pos);
+    matrix->b++;
+}
+
+// TODO(YA): decide how to handle the memory of the new structs when adapting the core main function to add post-processing and its testing.
+//  Depending on that, we could implement some more functions to return directly the Block as a value.
+//  Plus, some of these functions might be completely unnecessary. See in the adapted core in which order are
+//  matrices, blocks and rows created...
+static inline void init_empty_block_row(BlockRow *block_row, unsigned c, int *row, Block *block) {
+    block_row->c = c;
+    block_row->row = row;
+    add_row_to_block(block, block_row);
+}
+
+static inline void init_empty_block(
+    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, Matrix *matrix)
+{
+    block->r = 0;
+    block->c = c;
+    block->schema = schema;
+    block->dependencies = dependencies;
+    
+    init_intrusive_list(&block->head_for_rows);
+    add_block_to_matrix(matrix, block);
+}
+
+// NOTE: row shouldn't have been removed from its previous block (it should still work, but we will have an unnecessary del operation).
+static inline void init_block_with_row(
+    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
+{
+    block->r = 1;
+    block->c = c;
+    block->schema = schema;
+    block->dependencies = dependencies;
+    
+    move_row_to_block(block, row);
+    add_block_to_matrix(matrix, block);
+}
+
+// NOTE: row must have been removed from its previous block.
+static inline void init_block_with_deleted_row(
+    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
+{
+    block->r = 1;
+    block->c = c;
+    block->schema = schema;
+    block->dependencies = dependencies;
+    
+    add_row_to_block(block, row);
+    add_block_to_matrix(matrix, block);
+}
+
+static inline void init_empty_matrix(Matrix *matrix) {
+    matrix->b = 0;
+    init_intrusive_list(&matrix->head_for_blocks);
+}
 
 #endif
