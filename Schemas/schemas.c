@@ -1715,10 +1715,10 @@ void mapping_column_indexes_side(
                 // NOTE: Take original column number, that is, row_pos+1 (1-based column indexes)
                 mapping_side[mapping_pos++] = row_pos + 1;
                 
-                if(row[row_pos] <= 0 && is_empty(original_subschema)){
+                if(is_variable(row[row_pos]) && is_empty(original_subschema)){
                     // NOTE: variable
                     unsigned num_virtual_cols = common_subschema.size - 1 ; // 1 = original_subschema.size;
-                    int old_col = row[row_pos] == 0 ? -((int)row_pos + 1) : row[row_pos];
+                    int old_col = is_var_first_appearence(row[row_pos]) ? -((int)row_pos + 1) : row[row_pos];
                     
                     // NOTE: remember that row vars are identified with 0-BASED column numbers in row_vars_to_extending_cols
                     bool is_var_seen = row_vars_to_extending_cols[-(old_col + 1)] != NULL;
@@ -1757,7 +1757,7 @@ void mapping_column_indexes_side(
     assert(mapping_pos == n_common);
 }
 
-
+// TODO(CLEAN): actually, row is not used to calculate mapping_side, only for debugging (and to have the same interface as the non-linear version)
 void mapping_column_indexes_side_lineal(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
@@ -1881,7 +1881,7 @@ void extend_row(
         if (!free_var_contained) {
             // NOTE: free_var wasn't originally in M. Add as many fresh variables as the size of the normalized common schema
             unsigned num_fresh_vars = normalized_common_schema.size;
-            SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+            SET_TO_ONE(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
             extended_pos += num_fresh_vars;
 
         } else {
@@ -1908,7 +1908,7 @@ void extend_row(
 
                 while(common_it.stack.size > original_it.stack.size){
                     unsigned num_fresh_vars = common_subschema.size;
-                    SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+                    SET_TO_ONE(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
                     extended_pos += num_fresh_vars;
 
                     schema_iterator_skip(&common_it);
@@ -1933,12 +1933,12 @@ void extend_row(
                 }
                 assert(has_next_common && has_next_original);
                 
-                if (row[row_pos] > 0) {
+                if (is_symbol(row[row_pos])) {
                     // NOTE: a function symbol
                     extended_row[extended_pos++] = row[row_pos];
                 } else {
                     // NOTE: variable
-                    int old_col = row[row_pos] == 0 ? -((int)row_pos + 1) : row[row_pos];
+                    int old_col = is_var_first_appearence(row[row_pos]) ? -((int)row_pos + 1) : row[row_pos];
                     bool is_already_in_extended_row = row_vars_to_new_columns[-(old_col + 1)] != 0;
                     if (is_already_in_extended_row) {
                         extended_row[extended_pos++] = row_vars_to_new_columns[-(old_col + 1)];
@@ -1966,7 +1966,7 @@ void extend_row(
                             *extending_vars = allocate(row_vars_arena, sizeof(**extending_vars) * num_extending_vars);
                             int *extending_var = *extending_vars;
                             for (unsigned i = 0; i < num_extending_vars; ++i, ++extending_var) {
-                                extended_row[extended_pos++] = 0;
+                                extended_row[extended_pos++] = 1;
                                 *extending_var = -(int)(extended_pos); // NOTE: negative 1-based columns of the first appearence of extending vars
                             }
                         }
@@ -2008,7 +2008,7 @@ void extend_row_lineal(
         if (!free_var_contained) {
             // NOTE: free_var wasn't originally in M. Add as many fresh variables as the size of the normalized common schema
             unsigned num_fresh_vars = normalized_common_schema.size;
-            SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+            SET_TO_ONE(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
             extended_pos += num_fresh_vars;
 
         } else {
@@ -2035,7 +2035,7 @@ void extend_row_lineal(
 
                 while(common_it.stack.size > original_it.stack.size){
                     unsigned num_fresh_vars = common_subschema.size;
-                    SET_TO_ZERO(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
+                    SET_TO_ONE(extended_row + extended_pos, sizeof(*extended_row) * num_fresh_vars);
                     extended_pos += num_fresh_vars;
 
                     schema_iterator_skip(&common_it);

@@ -330,6 +330,30 @@ void extend_row_lineal(
     int *extended_row,
     Arena *schema_iterator_arena);
 
+static inline int is_original_var_first_appearence(int row_value) {
+    return row_value == 0;
+}
+static inline int is_extending_var_first_appearence(int row_value) {
+    return row_value == 1;
+}
+static inline int is_var_first_appearence(int row_value) {
+    return is_extending_var_first_appearence(row_value) || is_original_var_first_appearence(row_value);
+}
+static inline int is_var_repeated_appearence(int row_value) {
+    return row_value < 0;
+}
+static inline int is_variable(int row_value) {
+    return row_value < 2;
+}
+static inline int is_symbol(int row_value) {
+    return !is_variable(row_value);
+}
+enum { 
+    FIRST_ORIGINAL_VAR_APPEARENCE = 0,
+    FIRST_EXTENDING_VAR_APPEARENCE = 1,
+    FIRST_FUNCTION_SYMBOL_POSITIVE = 2,
+};
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END GET COLUMN INDEX MAPPING ////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

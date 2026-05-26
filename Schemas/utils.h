@@ -20,6 +20,7 @@ static inline MinMax min_max(unsigned a, unsigned b){
 #define MOST_SIGNIFICANT_BIT(Type) (sizeof(Type) * 8 - 1)
 
 #define SET_TO_ZERO(AllocatedPtr, NumBytes) memset((AllocatedPtr), 0, (NumBytes))
+#define SET_TO_ONE(AllocatedPtr, NumBytes) memset((AllocatedPtr), 1, (NumBytes))
 
 #define ERROR_MESSAGE(message) fprintf(stderr, "%s(Line %u): %s\n", __func__, __LINE__, message)
 #define MALLOC_ERROR_MESSAGE ERROR_MESSAGE("malloc failed to allocate memory")
