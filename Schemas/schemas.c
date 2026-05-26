@@ -2076,3 +2076,122 @@ void extend_row_lineal(
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END EXTEND ROWS FROM COMMON SET SCHEMA //////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// POSTPROCESSING OF MATRICES: OBTAIN SET SCHEMA OF ROW DENORMALIZING NORMALIZED FRAGMENT SET SCHEMA BASED ON THE RESULTING ROW  ///
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO(YA2-OPT): taking advantage of the fact that schemas are immutable, we can save memory generating only the branches where a
+//  denormalization happens. Note that the same idea could be applied to normalization, but it is much more critical for 
+//  denormalization since we execute it once per resulting row.
+
+
+// TODO(YA2-CLEAN): see if we can implement this iteratively with Schema iterators. I think it would be strange, because
+//  we would need to partially construct the row_schema at the same time we advance in the iterator carefully. Furthermore,
+//  we don't know the depth of the final row_schema (although we know that the depth of the normalized one is a valid
+//  upper bound ==> would need a version that receives the upperbound for the iterator's stack)...
+static void denormalized_schema(
+    Schema normalized_schema, int *modified_row, unsigned *index,
+    Schema *row_schema, SetDependencies *row_dependencies, 
+    Arena *arena)
+{
+    if (modified_row[*index] == 0) {
+        init_general_schema_arena(row_schema, normalized_schema.arity, arena); // NOTE: .size == 0
+        foreach_in_schemas(*row_schema, normalized_schema, sub_row, sub_normalized){
+            (*index)++;
+            denormalized_schema(*sub_normalized, modified_row, index, sub_row, row_dependencies, arena);
+        }
+    } else if (modified_row[*index] > 0) {
+        unsigned v = modified_row[*index];
+        init_variable_schema(row_schema, v);
+        bool first_time_is_inserted = insert_to_dependencies_baseline(row_dependencies, v, normalized_schema, arena);
+        assert(first_time_is_inserted);
+    } else {
+        // TODO(YA2): this case could be completely eliminated if backreferences are finally removed
+        unsigned pos = -(modified_row[*index] + 1);
+        unsigned v = modified_row[pos];
+        init_variable_schema(row_schema, v);
+        bool should_have_a_single_dependency = !insert_to_dependencies_baseline(row_dependencies, v, normalized_schema, arena);
+        assert(should_have_a_single_dependency);
+    }
+}
+
+// NOTE: copy is made for the denormalized one, not in-memory modification. Specially important, because the normalized_set_schema
+//  is the same for all rows in a resulting Matrix Block.
+void denormalized_set_schema(
+    SetSchema normalized_set_schema, int *row, 
+    ArrayListSchema *row_set_schema, SetDependencies *row_dependencies,
+    Arena* arena)
+{
+    // TODO(YA2): I think we could pass an offset parameter to start with the new variables for later schema comparisons?
+    //  Yes, we could count the maximum number of variables in the resulting common schemas of all the calculated fragments,
+    //  but maybe is more simple to rename before the common checking each time...
+    
+    // TODO(YA2): This helper modified row array could be malloced and freed once in the caller.
+    unsigned len_row = normalized_set_schema.size;
+    int *modified_row = malloc(sizeof(*row) * len_row);
+    CHECK_MALLOC(modified_row);
+    memcpy(modified_row, row, sizeof(*row) * len_row);
+    
+    // TODO(YA2-OPT): in modified_row, change to 0 everything but the first apparition of original repeated variables, and 
+    //  for the latter, insert the current incremented value of num_original_repeated_vars_in_row. That way the initialization of
+    //  row_dependencies can be more specific, checks in denormalized_schema get easier and in that function we won't need to 
+    //  call to find inside add_no_repeated, only direct RAM access with the variable value + we know that there won't be several
+    //  different dependencies per schema variable...
+
+    // NOTE: we are only interested on original variables that remain repeated. We use the modified_row to change from 0 to 1
+    //  the original non-repeated variables. Furthermore, counting the number of original repeated vars in the row helps us
+    //  to know the number of Schema variables that will appear in the denormalized set schema. Knowing that every original
+    //  variable has a unique corresponding normalized subschema in the normalized set schema, that is enough information to
+    //  prepare the memory of row_dependencies.
+    unsigned num_original_repeated_vars_in_row = 0;
+    for (unsigned i = len_row - 1; i >= 0; --i) {
+        if (modified_row[i] < 0) {
+            unsigned referenced_pos1based = -modified_row[i];
+            if (referenced_pos1based == (i + 1)){
+                // NOTE: the initial 0 value for the repeated original variable was modified to a negative reference to itself.
+                //  Change back to a valid variable name.
+                modified_row[i] = ++num_original_repeated_vars_in_row;
+            } else {
+                assert(referenced_pos1based < (i + 1));
+                modified_row[referenced_pos1based - 1] = -(int)(referenced_pos1based);
+            }
+        } //else if (modified_row[i] == 0) {
+            // NOTE: the case of a non-repeated original variable. Change to 1 (like a extending variable, these variables are
+            //  not considered when denormalizing).
+            //modified_row[i] = 1;
+        //}
+        // NOTE: extending variables and symbols are nullified.
+        else {
+            modified_row[i] = 0;
+        }
+    }
+    *row_dependencies = create_array_list_dependency_pair_arena(num_original_repeated_vars_in_row, arena);
+    //row_dependencies->size = num_original_repeated_vars_in_row;
+    //for (unsigned v = 1; v <= num_original_repeated_vars_in_row; ++v) {
+    //    DependencyPair dp = { .v = v, .schemas = create_array_list_schema_arena(1, arena) };
+    //    row_dependencies->array[v - 1] = dp;
+    //}
+
+    // NOTE: no resizing risk.
+    *row_set_schema = create_array_list_schema_arena(normalized_set_schema.list.size, arena);
+    row_set_schema->size = normalized_set_schema.list.size;
+    unsigned index = 0;
+    foreach_in_arraylists(Schema, row_schema, normalized_schema, *row_set_schema, normalized_set_schema.list){
+        denormalized_schema(*normalized_schema, modified_row, &index, row_schema, row_dependencies, arena);
+    }
+
+    free(modified_row);
+
+    // TODO(YA2): see if these computations are necessary, or can be postponed...
+    // NOTE: as to the schemas in the set of dependencies, since they come from the normalized set schema, their
+    //  sizes and depths are already calculated.
+    foreach_in_arraylistptr(Schema, s, row_set_schema){
+        calculate_schema_size(s);
+        calculate_schema_depth(s);
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END POSTPROCESSING OF MATRICES: OBTAIN SET SCHEMA OF ROW DENORMALIZING NORMALIZED FRAGMENT SET SCHEMA BASED ON THE RESULTING ROW  ///
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
