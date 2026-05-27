@@ -1,26 +1,5 @@
-#ifndef INTRUSIVE_LIST_H
-#define INTRUSIVE_LIST_H
-
-// TODO(YA): postprocessing to recover MNF
-// - Check if a row is not well placed in a fragment
-//      - Calculate the rows corresponding schema using the schema of the resulting fragment and the row itself.
-//      It should be an instantiation (particularization) of fragment's schema, as well as the resulting row is a
-//      particularization of the operand rows.
-//      - Check if the fragment's schema and the row's schema cumply the strict conditions. If they do, the row is
-//      well placed. If not, it has to be moved to another fragment. If there is no more rows in the fragment, 
-//      remove it from the matrix too (or change the fragments schema to this row's one, no need to delete a 
-//      one row fragment to create another one).
-//
-// - Check if there is a fragment that cumplies the strict conditions with the row's schema.
-//      - If it exists, introduce the row to that fragment.
-//      - If it doesn't, create a new_elem fragment with the row and the row's schema as the new_elem fragment's schema too.
-//
-// - We have to perform the previous operations for all rows in every fragment in the resulting matrix.
-//
-// - Operations to be implemented:
-//      - instantiate_schema(row, fragment_schema) -> row_schema [What about the sets of dependencies?]
-//      - check_corresponding_fragment(row_schema, fragment_schema) -> bool [Use first_check, unique_dependency_between_vars, and remove_variables_not_in_set_schema_from_dependencies in case of true!]
-//      - postprocess(matrix) -> void [matrix to MNF]
+#ifndef POSTPROCESSING_TO_MNF_H
+#define POSTPROCESSING_TO_MNF_H
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// CONTAINER OF ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -35,8 +14,8 @@
 
 #define container_of_const(member_ptr, type_struct, member_name)				\
 	_Generic(member_ptr,							\
-		const typeof(*(member_ptr)) *: ((const type *)container_of(member_ptr, type_struct, member_name)),\
-		default: ((type *)container_of(member_ptr, type_struct, member_name))	\
+		const typeof(*(member_ptr)) *: ((const type_struct *)container_of(member_ptr, type_struct, member_name)),\
+		default: ((type_struct *)container_of(member_ptr, type_struct, member_name))	\
 	)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -139,14 +118,32 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 #define intrusive_list_for_each(intrusive_list_ptr, head_ptr) \
 	for (intrusive_list_ptr = (head_ptr)->next; !intrusive_list_is_head(intrusive_list_ptr, (head_ptr)); intrusive_list_ptr = intrusive_list_ptr->next)
 
+#define intrusive_list_for_each_since(intrusive_list_started_ptr, head_ptr) \
+	for (; !intrusive_list_is_head(intrusive_list_started_ptr, (head_ptr)); intrusive_list_started_ptr = intrusive_list_started_ptr->next)
+
+// NOTE: exclusive end, until_ptr entry is not included.
+#define intrusive_list_for_each_until(intrusive_list_ptr, head_ptr, until_ptr) \
+	for (intrusive_list_ptr = (head_ptr)->next; intrusive_list_ptr != (until_ptr); intrusive_list_ptr = intrusive_list_ptr->next)
+
 #define intrusive_list_for_each_safe(intrusive_list_ptr, next_buffer_ptr, head_ptr) \
 	for (intrusive_list_ptr = (head_ptr)->next, next_buffer_ptr = intrusive_list_ptr->next; \
 	     !intrusive_list_is_head(intrusive_list_ptr, (head_ptr)); \
 	     intrusive_list_ptr = next_buffer_ptr, next_buffer_ptr = intrusive_list_ptr->next)
 
+
 #define intrusive_list_for_each_entry(container_ptr, head_ptr, list_member_name)				\
     for (container_ptr = intrusive_list_first_entry(head_ptr, typeof(*container_ptr), list_member_name);	\
          !list_entry_is_head(container_ptr, head_ptr, list_member_name);			\
+         container_ptr = intrusive_list_next_entry(container_ptr, list_member_name))
+
+#define intrusive_list_for_each_entry_since(container_started_ptr, head_ptr, list_member_name)				\
+    for (; !list_entry_is_head(container_started_ptr, head_ptr, list_member_name);			\
+         container_started_ptr = intrusive_list_next_entry(container_started_ptr, list_member_name))
+
+// NOTE: exclusive end, until_ptr entry is not included.
+#define intrusive_list_for_each_entry_until(container_ptr, head_ptr, list_member_name, until_ptr)				\
+    for (container_ptr = intrusive_list_first_entry(head_ptr, typeof(*container_ptr), list_member_name);	\
+         &container_ptr->list_member_name != (until_ptr);			\
          container_ptr = intrusive_list_next_entry(container_ptr, list_member_name))
 
 #define intrusive_list_for_each_entry_safe(container_ptr, next_buffer_ptr, head_ptr, list_member_name)			\
@@ -266,8 +263,9 @@ struct Block {
     unsigned c;                     // Number of columns for all main terms within the block
     IntrusiveList head_for_rows;    // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
     IntrusiveList matrix_pos;       // The intrusive list that stablishes the position of this block in its matrix.
-    SetSchema *schema;              // The common schema of the rows in the block. NOTE: we can deduce the block is lineal if the schema contains any variable.
+    ArrayListSchema *schema;        // The common schema of the rows in the block. NOTE: we can deduce the block is lineal if the schema contains any variable.
     SetDependencies *dependencies;  // The set of dependencies associated to the schema.
+    SetSchema *normalized_schema;   // The normalized common schema of the rows in the block. NOTE: its size equals c.
 };
 
 typedef struct Matrix Matrix, *MatrixPtr;
@@ -322,7 +320,7 @@ static inline void init_empty_block_row(BlockRow *block_row, unsigned c, int *ro
 }
 
 static inline void init_empty_block(
-    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, Matrix *matrix)
+    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, Matrix *matrix)
 {
     block->r = 0;
     block->c = c;
@@ -335,7 +333,7 @@ static inline void init_empty_block(
 
 // NOTE: row shouldn't have been removed from its previous block (it should still work, but we will have an unnecessary del operation).
 static inline void init_block_with_row(
-    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
+    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
 {
     block->r = 1;
     block->c = c;
@@ -348,7 +346,7 @@ static inline void init_block_with_row(
 
 // NOTE: row must have been removed from its previous block.
 static inline void init_block_with_deleted_row(
-    Block *block, unsigned c, SetSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
+    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
 {
     block->r = 1;
     block->c = c;
@@ -363,5 +361,7 @@ static inline void init_empty_matrix(Matrix *matrix) {
     matrix->b = 0;
     init_intrusive_list(&matrix->head_for_blocks);
 }
+
+void postprocess_to_mnf(Matrix *matrix);
 
 #endif
