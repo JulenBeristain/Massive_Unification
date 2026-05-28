@@ -246,6 +246,16 @@ typedef IntrusiveListDouble IntrusiveList, *IntrusiveListPtr;
 /// STRUCTURES /////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// TODO(YA2): to manage the memory of the schemas and dependencies I think that we will need a separate Arena for them,
+//  since I believe that we can have the same subschemas present in schemas of several matrices... When the size of that
+//  arena (we could make a new Arena type...) reaches a certain point, we can create a new arena, traverse all the
+//  matrices in the program and deepcopy only the schema nodes we are using right now. If the size is still greater than
+//  the threshold, then we definitely need more memory.
+// On the other hand, for the memory of the rest of the data in matrices (primarily BlockRow's rows), their lifetime
+//  is consustantial to the Matrix itself. Therefore, the allocations should be done in a more standard way, following the
+//  structure of matrices (diminishing the number of calls to malloc as much as possible).
+// A operation shouldn't delete an operand matrix, because we might need to use an operand matrix several times.
+
 typedef struct BlockRow BlockRow, *BlockRowPtr;
 struct BlockRow {
     unsigned c;                  // Number of columns in the main term
@@ -362,6 +372,14 @@ static inline void init_empty_matrix(Matrix *matrix) {
     init_intrusive_list(&matrix->head_for_blocks);
 }
 
-void postprocess_to_mnf(Matrix *matrix);
+void postprocess_to_mnf(Matrix *matrix, Arena *arena);
+
+typedef struct {
+    EqualMatricesResultType type;
+    unsigned solitary_block;
+} EqualMatricesResult;
+#define EQUAL_MATRICES_RESULT(Type, Index) (EqualMatricesResult){ .type = (Type), .solitary_block = (Index) }
+
+EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2);
 
 #endif

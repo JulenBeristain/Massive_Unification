@@ -790,6 +790,98 @@ bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayLis
     return true;
 }
 
+// TODO(CLEAN): we could avoid logic repetition with several function versions with no boolean parameters and a unique function with the bulk of the logic
+//  and boolean parameters, although in theory that would introduce some runtime cost (in the other hand, less code in the binary...).
+
+// NOTE: having the <> schema as a dependency of a variable is not important for normalization, so in most cases we consider
+//  equivalent sets of dependencies whose only difference is having empty schemas as extra dependencies.
+bool equivalent_set_dependencies_ignoring_empties(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable* mapping)
+{
+    if (dependencies1.size != dependencies2.size) {
+        return false;
+    }
+    unsigned num_vars_with_dependencies = dependencies1.size;
+
+    for (unsigned index1 = 0; index1 < num_vars_with_dependencies; ++index1) {
+        DependencyPair pair1 = dependencies1.array[index1];
+        Variable v = pair1.v;
+        ArrayListSchema schemas1 = pair1.schemas; // Taking by value is not problematic because we're not modifying
+
+        // Find v's match in dependencies2
+        Variable v_match = mapping[v];
+        unsigned index2 = find_v_in_array_list_dependency_pair(dependencies2, v_match);
+        if (index2 == num_vars_with_dependencies) {
+            return false; // v_match wasn't found in dependencies2
+        }
+
+        ArrayListSchema schemas2 = dependencies2.array[index2].schemas; // Taking by value is not problematic because we're not modifying
+
+        if (schemas1.size != schemas2.size) {
+            return false;
+        }
+        unsigned num_dependencies_of_v = schemas1.size;
+
+        // Unordered equivalence between schemas1 and schemas2
+        for (unsigned i = 0; i < num_dependencies_of_v; ++i) {
+            Schema s1 = schemas1.array[i];
+            if (is_empty(s1)) {
+                continue;
+            }
+            if (!contains_equivalent_array_list_schema(schemas2, s1, mapping)) {
+                return false; // There is a dependency for v in dependencies1 that is not found in dependencies2
+            }
+        }
+    }
+    return true;
+}
+
+unsigned num_distinct_schema_variables(ArrayListSchema set_schema) {
+    SetVariables vars = create_set_variables_defsize(); 
+    variables_in_set_schema(set_schema, &vars);
+    unsigned result = vars.num_variables;
+    free_set_variables(vars);
+    return result;
+}
+
+// NOTE: check schema and dependency equivalence encapsulating the calculation of variable mapping.
+bool equivalent_set_schemas_and_dependencies(
+    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
+    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2)
+{
+    // NOTE: variables are identified from 1 to n in the resulting common schema in the file, so we can use
+    //  an array to save the variable mapping using indexes as keys.
+    unsigned num_vars1 = num_distinct_schema_variables(set_schema1);
+    
+    Variable *mapping = calloc(1 + num_vars1, sizeof(*mapping));
+    CHECK_CALLOC(mapping);
+    
+    bool ok_set_schemas = equivalent_set_schemas(set_schema1, set_schema2, mapping);
+    bool ok_dependendencies = equivalent_set_dependencies(dependencies1, dependencies2, mapping);
+    
+    if (global_print_debugging) printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+    free(mapping);
+    return ok_set_schemas && ok_dependendencies;
+}
+
+bool equivalent_set_schemas_and_dependencies_ignoring_empties(
+    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
+    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2)
+{
+    // NOTE: variables are identified from 1 to n in the resulting common schema in the file, so we can use
+    //  an array to save the variable mapping using indexes as keys.
+    unsigned num_vars1 = num_distinct_schema_variables(set_schema1);
+    
+    Variable *mapping = calloc(1 + num_vars1, sizeof(*mapping));
+    CHECK_CALLOC(mapping);
+    
+    bool ok_set_schemas = equivalent_set_schemas(set_schema1, set_schema2, mapping);
+    bool ok_dependendencies = equivalent_set_dependencies_ignoring_empties(dependencies1, dependencies2, mapping);
+    
+    if (global_print_debugging) printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+    free(mapping);
+    return ok_set_schemas && ok_dependendencies;
+}
+
 void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment)
 {
     foreach_in_arraylist(DependencyPair, pair, dependencies)

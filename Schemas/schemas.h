@@ -206,6 +206,7 @@ static inline bool contains_equivalent_array_list_schema(ArrayListSchema list, S
 
 bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
 bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
+bool equivalent_set_dependencies_ignoring_empties(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable* mapping);
 void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
 ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
 int read_set_schema_with_dependencies(FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena);
@@ -224,6 +225,22 @@ static inline unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyP
     }
     return list.size;
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// JOINED EQUIVALENCE TESTS OF SCHEMAS AND DEPENDENCIES ///////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+unsigned num_distinct_schema_variables(ArrayListSchema set_schema);
+
+// NOTE: check schema and dependency equivalence encapsulating the calculation of variable mapping.
+bool equivalent_set_schemas_and_dependencies(
+    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
+    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
+
+bool equivalent_set_schemas_and_dependencies_ignoring_empties(
+    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
+    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// COMMON SET SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,4 +1,5 @@
 #include "postprocessing_to_mnf.h"
+#include "Schemas/utils.h"
 
 // TODO(YA): add this module to the building task
 
@@ -114,7 +115,12 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
                     // TODO(YA2): should look at the common schema to see if it is lineal, to determine which version of extend_row has to be called
                     // TODO(YA!!!): have to see how to manage free_var_positions, starting_col_indices, free_vars... At least free_vars should be stored
                     //      in the matrix...
-                    
+                    // TODO(YA): see how to manage the resulting extended_row to avoid using one extended row per row in the block + avoid also
+                    //  multiple copies of rows back to the actual arrays in the block's rows...
+                    // TODO(YA): think about efficient ways of managing single lifetimes per matrix. Would be great to have a method similar to Arenas to 
+                    //  avoid allocating each little data in the matrix... One Arena per Matrix enough? --> How would we disard old data... I think Arenas
+                    //  are not appropriate for long-run persistent data in applications, more used in games to store per-frame data...
+
                     if (old_c == current_block->c) {
                         
                         if (the moved row has different size too)
@@ -164,3 +170,148 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
         }
     }
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// DEBUGGING AND TESTING ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// NOTE: these equal functions are only used for testing and debugging, they are not (at least right now) inherently interesting operations that will
+//  be used with other operations.
+
+typedef enum { 
+    DIMENSION_MISMATCH, 
+    ELEMENT_MISMATCH, 
+    EQUAL,
+    NOT_EQUIVALENT_SCHEMAS_AND_DEPENDENCIES,
+    NOT_EQUAL_NORMALIZED_SCHEMAS,
+    NOT_CORRESPONDING_ROW,
+    NOT_CORRESPONDING_BLOCK
+} EqualMatricesResultType;
+
+typedef struct {
+    EqualMatricesResultType type;
+    unsigned mismatch_index;
+} EqualBlockRowsResult;
+#define EQUAL_BLOCK_ROWS_RESULT(Type, Index) (EqualBlockRowsResult){ .type = (Type), .mismatch_index = (Index) }
+
+EqualBlockRowsResult equal_block_rows(BlockRow *block_row1, BlockRow *block_row2) {
+    if (block_row1->c != block_row2->c) {
+        return EQUAL_BLOCK_ROWS_RESULT(DIMENSION_MISMATCH, 0);
+    }
+    unsigned c = block_row1->c;
+
+    for (unsigned i = 0; i < c; ++i) {
+        if (block_row1->row[i] != block_row2->row[i]) {
+            return EQUAL_BLOCK_ROWS_RESULT(ELEMENT_MISMATCH, i);
+        }
+    }
+    return EQUAL_BLOCK_ROWS_RESULT(EQUAL, 0);
+}
+
+
+// TODO(YA2): as well as we have encapsulated the Variable *mapping when comparing Schemas and Dependencies, we should encapsulate the renaming of 
+//  schema variables in its own operation too (for example, in common schema, where it's necessary to distinguish variables of the operand schemas
+//  since they are ontologically different and if their values are the same, they are considered the same variable!). I.e., we could have a mapping
+//  when a renaming happens, and after the operation is performed, we can rename the variables again to the prior values (or simply rename using
+//  1,2,3... with a mapping constructed in that final phase...).
+
+
+typedef struct {
+    EqualMatricesResultType type;
+    unsigned solitary_block_row;
+} EqualBlocksResult;
+#define EQUAL_BLOCKS_RESULT(Type, Index) (EqualBlocksResult){ .type = (Type), .solitary_block_row = (Index) }
+
+// NOTE: block comparison doesn't take into account the order of the rows.
+EqualBlocksResult equal_blocks(Block *b1, Block *b2) {
+    
+    if (!equivalent_set_schemas_and_dependencies_ignoring_empties(*b1->schema, *b2->schema, *b1->dependencies, *b2->dependencies)) {
+        return EQUAL_BLOCKS_RESULT(NOT_EQUIVALENT_SCHEMAS_AND_DEPENDENCIES, 0);
+    }
+    if ((b1->normalized_schema->size != b2->normalized_schema->size) || !equal_set_schemas(b1->normalized_schema->list, b2->normalized_schema->list)){
+        return EQUAL_BLOCKS_RESULT(NOT_EQUAL_NORMALIZED_SCHEMAS, 0);
+    }
+    if (b1->c != b2->c) {
+        return EQUAL_BLOCKS_RESULT(DIMENSION_MISMATCH, 0);
+    }
+    if (b1->r != b2->r) {
+        return EQUAL_BLOCKS_RESULT(DIMENSION_MISMATCH, 0);
+    }
+    unsigned r = b1->r;
+
+    // NOTE: each row in b2 has to match a single row in b1!
+    bool *considered_rows_in_b2 = calloc(r, sizeof(*considered_rows_in_b2));
+    CHECK_CALLOC(considered_rows_in_b2);
+
+    BlockRow *block_row1;
+    unsigned index1 = 0;
+    intrusive_list_for_each_entry(block_row1, &b1->head_for_rows, block_pos) {
+        unsigned index2 = 0;
+        
+        BlockRow *block_row2;
+        intrusive_list_for_each_entry(block_row2, &b2->head_for_rows, block_pos) {
+            if (!considered_rows_in_b2[index2]) {
+                EqualBlockRowsResult result = equal_block_rows(block_row1, block_row2);
+                if (result.type == EQUAL) {
+                    considered_rows_in_b2[index2] = true;
+                    break;
+                }
+                ++index2;
+            }
+        }
+
+        bool not_found_corresponding_block = index2 == r;
+        if (not_found_corresponding_block) {
+            free(considered_rows_in_b2);
+            return EQUAL_BLOCKS_RESULT(NOT_CORRESPONDING_ROW, index1);
+        }
+
+        ++index1;
+    }
+
+    free(considered_rows_in_b2);
+    return EQUAL_BLOCKS_RESULT(EQUAL, 0);
+}
+
+// NOTE: matrix comparison doesn't take into account the order of the blocks and the rows within blocks.
+EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
+    if (m1->b != m2->b) {
+        return EQUAL_MATRICES_RESULT(DIMENSION_MISMATCH, 0);
+    }
+    unsigned b = m1->b;
+
+    // NOTE: each block in m2 has to match a single block in m1!
+    bool *considered_blocks_in_m2 = calloc(b, sizeof(*considered_blocks_in_m2));
+    CHECK_CALLOC(considered_blocks_in_m2);
+
+    Block *block1;
+    unsigned index1 = 0;
+    intrusive_list_for_each_entry(block1, &m1->head_for_blocks, matrix_pos) {
+        unsigned index2 = 0;
+        
+        Block *block2;
+        intrusive_list_for_each_entry(block2, &m2->head_for_blocks, matrix_pos) {
+            if (!considered_blocks_in_m2[index2]) {
+                EqualBlocksResult result = equal_blocks(block1, block2);
+                if (result.type == EQUAL) {
+                    considered_blocks_in_m2[index2] = true;
+                    break;
+                }
+                ++index2;
+            }
+        }
+
+        bool not_found_corresponding_block = index2 == b;
+        if (not_found_corresponding_block) {
+            free(considered_blocks_in_m2);
+            return EQUAL_MATRICES_RESULT(NOT_CORRESPONDING_BLOCK, index1);
+        }
+
+        ++index1;
+    }
+
+    free(considered_blocks_in_m2);
+    return EQUAL_MATRICES_RESULT(EQUAL, 0);
+}
+
+// TODO(YA-FUT): would be great if we had loading and writing functions for some format of matrix_files (the ones of the last tests?)
