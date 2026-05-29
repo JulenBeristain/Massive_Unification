@@ -93,6 +93,7 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
                 //  Have to set the new block schema and dependencies to the common ones (watch out the normalized!)
                 if (is_valid_block_found) {
                     // Insert the row into the valid block, updating the row counts of both blocks
+                    // TODO(YA): be careful! Moving might invalidate the standard non-safe way of iterating over Intrusive Lists!
                     move_row_to_block(current_block, block_row);
                     block->c--;
                     

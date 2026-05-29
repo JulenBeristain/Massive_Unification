@@ -2721,6 +2721,859 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
     return 0;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// POSTPROCESSED MAIN ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * @brief Program entry point.
+ *
+ * Usage: ./c <M1.csv> <M2.csv> <M3.csv> [verbose]
+ *
+ * Reads three CSV matrix files, performs all pairwise block intersections,
+ * checks results against M3, and prints a one-line CSV summary:
+ *
+ *   <base_path>, M1 blocks N, M2 blocks N, OK|Not OK, wrong/total,
+ *   read_time, unif_time, apply_time, total_unif_time, total_time
+ *
+ * All times are in seconds with nanosecond precision.
+ *
+ * @return 0 on success; exits with EXIT_FAILURE on file or parse errors.
+ */
+// TODO(YA): check how is the memory organized per each big collection of data...
+//  - operand/result_blocks --> Matrix, these are stored in a traditional way. Since each Matrix has its own lifetime, and once calculated their data is not
+//      modified and it is perfectly valid until the matrix is discarded, we could have an Arena per Matrix. We could allocate an arbitrarily big chunk of 
+//      memory and let our Arena's capacity to grow with chained blocks handle it. If we could calculate the necessary memory for a matrix based on the 
+//      operand matrices (or in a header information when parsing files), allocating that amount of memory would be helpful to avoid wasting/non-consecutive
+//      blocks of memory. But note that due to alignment this is not as simple as summing all the strictly necessary memory, but we would need to take
+//      into account the free paddings too! (TODO(YA): add alignment support to addresses multiple of 16 to the Arena).
+//
+//  - Free_vars should be stored per Matrix, and the information for these should be kept in the Memory of the Matrix' arena.
+//
+//  - For Schemas and Dependencies, I would use a special Arena only for them, since we can have certain subschemas shared among several Matrix Blocks.
+//      I would allocate a big chunk of memory upfront, and when the Arena is about to get filled, I would create another Arena (if possible, with
+//      2x, 1.5x memory), and fill it traversing all the Matrices and Blocks in the program deep-copying the schemas and dependencies. To mitigate
+//      the cost of deep-copying, which deletes the benefits obtained by previous shallow copies, we could keep a hash-set of schema addresses to
+//      keep track of the nodes that have already been passed to the new Arena. We can take further advantage of the immutability of schemas by
+//      adding an extra level of indirection to save memory by allocating only differing branches when operating with them. Note that the pointers to schemas
+//      and dependencies of Blocks have to be updated to point to the address in the new Arena. Then, we could savely free the old Arena.
+//
+//  - The renaming of schema variables to make correct the interpretation that they are distinct when calculated the common schemas should be done
+//      (and reversed) when combining them. But not when combining each pair of set schemas, but when combining matrices the way we do now, calculating
+//      the max_v1 accross all set schemas in matrix1, and summing it to every schema variable in matrix 2. When reversing, they should go back to 1..max
+//
+//  - The normalization of the schemas should be done while parsing or combining the matrix blocks.
+//
+//  - The calculation of schemas depth and sizes should not be done upfront. We could make calculate_ functions to return the value, and always use them
+//      instead of accesing the fields directly (private would come handy :( --> We can separate the struct to hide that data...). We should swap the names:
+//      calculate_ to traverse the trees and _size/depth to return the already calculated value or calculate it. On the other hand, going from union to a 
+//      simple struct could be simplifying too...
+//
+//  - We can store starting_col_indices as (private) data in each block.
+//
+//  - Schema iterator arena? Not sure... It's a pain (as well as other "operations" that require the max/min_depth/size accross all [normalized] schemas) ... 
+//      As an additional point to discard this, if we don't precalculate the depths and sizes of schemas, we can not calculate those max/min values ...
+//
+//  - We are going to read the result Matrix to its own struct. Then, we are going to call to the matrix intersection version that takes Matrices as inputs.
+//      Next, we are going to call to postprocess_to_mnf with the computed matrix. Finally, we are going to test if the read result and the postprocessed matrix
+//      are equivalent. (We will see if the intermediate non-postprocessed result is generated too. In that case, we would test the equivalence of those versions
+//      of the matrices too, but it wouldn't be necessary).
+//
+//  - Remove suboptimal approximations: hashmap row structure to mapping side; matrix intersection original version (or the best with the new format)
+
+int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
+    struct timespec start_reading, end_reading;
+    struct timespec elapsed;
+
+    var_dict  = create_dictionary(501);
+    unif_dict = create_dictionary(501);
+    symbols_to_ids = create_dictionary(501);
+
+    verbose = verb;
+
+    FILE *stream_M1 = fopen(M1_file, "r");
+    FILE *stream_M2 = fopen(M2_file, "r");
+    FILE *stream_M3 = fopen(M3_file, "r");
+
+    if (!stream_M1 || !stream_M2 || !stream_M3) {
+        fprintf(stderr, "Error opening files: %s, %s, %s\n", M1_file, M2_file, M3_file);
+        if (stream_M1) fclose(stream_M1);
+        if (stream_M2) fclose(stream_M2);
+        if (stream_M3) fclose(stream_M3);
+        return EXIT_FAILURE;
+    }
+
+    // TODO(YA): we should be reading the input matrices to Matrix structures directly! (Including info about free vars...)
+
+    /* Read block counts from M1 and M2 headers. */
+    unsigned s1, s2;
+    if (read_num_blocks(stream_M1, &s1))
+        fprintf(stderr, "Warning: could not read block count from %s\n", M1_file);
+    if (read_num_blocks(stream_M2, &s2))
+        fprintf(stderr, "Warning: could not read block count from %s\n", M2_file);
+    if (verbose) printf("M1 blocks %u, M2 blocks %u\n", s1, s2);
+
+
+    // Read the row identifying the columns' free variables
+    char *line1 = NULL, *line2 = NULL;
+    size_t len1 = 0, len2 = 0;
+    if (getline(&line1, &len1, stream_M1) == -1) { free(line1); exit(1); } // Failed to read the line
+    if (getline(&line2, &len2, stream_M2) == -1) { free(line2); exit(1); } // Failed to read the line
+    
+    unsigned num_free_vars1 = scan_num_free_vars(line1);
+    unsigned num_free_vars2 = scan_num_free_vars(line2);
+
+    Arena arena_operands;
+    size_t arena_operands_bytes = 
+        (s1 + s2)*(sizeof(operand_block) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
+        2*(num_free_vars1 + num_free_vars2)*(sizeof(char*)) + strlen(line1) + strlen(line2) +
+        2*(num_free_vars1 + num_free_vars2)*(sizeof(unsigned)) +
+        (num_free_vars1*s1 + num_free_vars2*s2)*(sizeof(unsigned)) +
+        s1*s2 * (sizeof(bool) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
+        500000*(sizeof(Schema));
+    init_arena(&arena_operands, arena_operands_bytes);
+
+    ArrayListCharPtr free_vars1 = scan_free_vars(line1, num_free_vars1, &arena_operands);
+    ArrayListCharPtr free_vars2 = scan_free_vars(line2, num_free_vars2, &arena_operands);
+    free(line1);
+    free(line2);
+    ArrayListCharPtr computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, &arena_operands);
+
+    // TODO(YA): free var positions shouldn't be stored inside the Matrix structure, since it relates data about free_vars in one matrix
+    //  with data about resultant free_vars in the result Matrix. That said, their calculation should be enclosed in matrix operation functions.
+
+    // NOTE: compute free_var_positions1/2
+    // NOTE: no resizing risk with these ArrayLists
+    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
+    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
+    foreach_in_arraylist(CharPtr, free_v, computed_free_vars3){
+        // NOTE: special value for not found = free_vars3.size
+        unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
+        if(pos == free_vars1.size){
+            pos = computed_free_vars3.size;
+        }
+        unsafe_add_to_array_list(free_var_positions1, pos);
+
+        pos = find_in_array_list_char_ptr(free_vars2, *free_v);
+        if(pos == free_vars2.size){
+            pos = computed_free_vars3.size;
+        }
+        unsafe_add_to_array_list(free_var_positions2, pos);
+    }
+
+
+    operand_block *obs1 = allocate(&arena_operands, s1 * sizeof(operand_block));
+    operand_block *obs2 = allocate(&arena_operands, s2 * sizeof(operand_block));
+    ArrayListSchema *set_schemas1 = allocate(&arena_operands, s1 * sizeof(*set_schemas1));
+    ArrayListSchema *set_schemas2 = allocate(&arena_operands, s2 * sizeof(*set_schemas2));
+    ArrayListDependencyPair *dependencies_array1 = allocate(&arena_operands, s1 * sizeof(*dependencies_array1));
+    ArrayListDependencyPair *dependencies_array2 = allocate(&arena_operands, s2 * sizeof(*dependencies_array2));
+
+
+    /* --- Read operand blocks --- */
+    clock_gettime(CLOCK_MONOTONIC, &start_reading);
+    // NOTE: arena_operands is used only for Schemas and DependencyPairs, not OperandBlocks
+    unsigned max_rows1 = 0;
+    for (size_t i = 0; i < s1; i++) {
+        read_operand_block(stream_M1, obs1 + i, set_schemas1 + i, dependencies_array1 + i, &arena_operands);
+        max_rows1 = MAX(max_rows1, obs1[i].r);
+    }
+
+    unsigned max_rows2 = 0;
+    for (size_t i = 0; i < s2; i++) {
+        read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, &arena_operands);
+        max_rows2 = MAX(max_rows2, obs2[i].r);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end_reading);
+    timespec_subtract(&read_file_elapsed, &end_reading, &start_reading);
+
+    /* --- Set Schemas: variables' independence, normalization and commmon --- */
+    struct timespec start_schemas, end_schemas, schemas_elapsed;    
+    
+    clock_gettime(CLOCK_MONOTONIC, &start_schemas);
+
+    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
+    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2. More optimal,
+    //  less operations to perform.
+    //  Another option would be to calculate the max_v1 for every set_schema pair inside the loop, to avoid "wasting" unused vars.
+    Variable max_v1 = 0;
+    for(size_t i = 0; i < s1; ++i){
+        max_v1 = MAX(max_v1, max_v_in_set_schema(set_schemas1[i]));
+    }
+    for(size_t i = 0; i < s2; ++i){
+        increment_variables_in_set_schema(set_schemas2[i], max_v1);
+        increment_variables_in_set_dependencies(dependencies_array2[i], max_v1);
+    }
+
+    // NOTE: we normalize the operand blocks' schemas outside the loop, not once per resultant fragment (block combination)
+    SetSchema *normalized_set_schemas1 = allocate(&arena_operands, s1 * sizeof(*normalized_set_schemas1));
+    SetSchema *normalized_set_schemas2 = allocate(&arena_operands, s2 * sizeof(*normalized_set_schemas2));
+    // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
+    // NOTE: we also calculate the depths of the normalized schemas because we will instantiate iterators over them when calculating 
+    //  column index mappings.
+    // NOTE: we wrap the arraylist of schemas to calculate the entire size of all the schemas.
+    // NOTE: max_operand_depth to calculate the size of the Arena for Schema iterators, and the other for the row to mapping side mapping Arena.
+    unsigned max_normalized_operand_depth = 0;
+    unsigned max_normalized_operand_set_size1 = 0;
+    unsigned min_normalized_operand_set_size1 = UINT32_MAX;
+    for(unsigned i = 0; i < s1; ++i){
+        ArrayListSchema *set_schema = set_schemas1 + i;
+        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
+        
+        ArrayListDependencyPair *dependencies = dependencies_array1 + i;
+        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+            foreach_in_arraylist(Schema, s, pair->schemas){
+                calculate_schema_size(s);
+            }
+        }
+
+        SetSchema *normalized = normalized_set_schemas1 + i;
+        ArrayListSchema *normalized_list = &normalized->list;
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
+        foreach_in_arraylistptr(Schema, s, normalized_list) {
+            calculate_schema_depth(s);
+            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
+        }
+
+        normalized->size = 0;
+        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+        max_normalized_operand_set_size1 = MAX(max_normalized_operand_set_size1, normalized->size);
+        min_normalized_operand_set_size1 = MIN(min_normalized_operand_set_size1, normalized->size);
+    }
+    unsigned max_normalized_operand_set_size2 = 0;
+    unsigned min_normalized_operand_set_size2 = UINT32_MAX;
+    for(unsigned i = 0; i < s2; ++i){
+        ArrayListSchema *set_schema = set_schemas2 + i;
+        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
+        
+        ArrayListDependencyPair *dependencies = dependencies_array2 + i;
+        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
+            foreach_in_arraylist(Schema, s, pair->schemas){
+                calculate_schema_size(s);
+            }
+        }
+
+        SetSchema *normalized = normalized_set_schemas2 + i;
+        ArrayListSchema *normalized_list = &normalized->list;
+        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
+        foreach_in_arraylistptr(Schema, s, normalized_list) {
+            calculate_schema_depth(s);
+            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
+        }
+
+        normalized->size = 0;
+        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
+        max_normalized_operand_set_size2 = MAX(max_normalized_operand_set_size2, normalized->size);
+        min_normalized_operand_set_size2 = MIN(min_normalized_operand_set_size2, normalized->size);
+    }
+
+    bool *exists_common_schema_array = allocate(&arena_operands, s1*s2 * sizeof(bool));
+    ArrayListSchema *common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*common_set_schemas));
+    ArrayListDependencyPair *common_dependencies_array = allocate(&arena_operands, s1*s2 * sizeof(*common_dependencies_array));
+    SetSchema *normalized_common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*normalized_common_set_schemas));
+    // NOTE: loop to calculate the common set schemas and normalize them.
+    unsigned max_normalized_common_set_size = 0;
+    unsigned max_normalized_common_depth = 0;
+    for(unsigned t1 = 1; t1 <= s1; ++t1){
+        for(unsigned t2 = 1; t2 <= s2; ++t2){
+
+            // NOTE: calculate common schema
+            ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
+            ArrayListDependencyPair dependencies1 = dependencies_array1[t1 - 1];
+            
+            ArrayListSchema set_schema2 = set_schemas2[t2 - 1];
+            ArrayListDependencyPair dependencies2 = dependencies_array2[t2 - 1];
+
+            ArrayListSchema *computed_common_set_schema = common_set_schemas + (t1-1)*s2 + (t2-1);
+            ArrayListDependencyPair *computed_common_dependencies = common_dependencies_array + (t1-1)*s2 + (t2-1);
+            exists_common_schema_array[(t1-1)*s2 + (t2-1)] = common_set_schema_free_vars_baseline(
+                set_schema1, dependencies1, free_var_positions1,
+                set_schema2, dependencies2, free_var_positions2,
+                computed_common_set_schema, computed_common_dependencies,
+                &arena_operands);
+
+            // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
+            foreach_in_arraylistptr(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
+            foreach_in_arraylistptr(DependencyPair, pair, computed_common_dependencies){
+                foreach_in_arraylist(Schema, s, pair->schemas){
+                    calculate_schema_size(s);
+                }
+            }
+
+            // NOTE: calculate normalized set schemas. Sizes of schemas updated.
+            ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(*computed_common_set_schema, *computed_common_dependencies, &arena_operands);
+
+            // NOTE: calculate depths once to create iterator over Schemas
+            foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) {
+                calculate_schema_depth(s);
+                max_normalized_common_depth = MAX(max_normalized_common_depth, s->depth);
+            }
+
+            // NOTE: wrap to calculate size only in one place
+            SetSchema *normalized_common_set_schema = normalized_common_set_schemas + (t1-1)*s2 + (t2-1);
+            normalized_common_set_schema->list = list_normalized_common_set_schema;
+            normalized_common_set_schema->size = 0;
+            foreach_in_arraylist(Schema, s, normalized_common_set_schema->list) { normalized_common_set_schema->size += s->size; }
+            max_normalized_common_set_size = MAX(max_normalized_common_set_size, normalized_common_set_schema->size);
+        }
+    }
+
+    // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
+    //  before entering the resulting blocks' loop.
+    unsigned *starting_col_indices_array = allocate(&arena_operands, sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
+    unsigned *starting_col_indices_array1 = starting_col_indices_array;
+    unsigned *starting_col_indices_array2 = starting_col_indices_array + free_vars1.size*s1;
+    
+    unsigned *starting_indices = starting_col_indices_array1;
+    for(unsigned i = 0; i < s1; ++i){
+        ArrayListSchema normalized = normalized_set_schemas1[i].list;
+        starting_column_indexes(normalized, starting_indices);
+        starting_indices += free_vars1.size;
+    }
+    for(unsigned i = 0; i < s2; ++i){
+        ArrayListSchema normalized = normalized_set_schemas2[i].list;
+        starting_column_indexes(normalized, starting_indices);
+        starting_indices += free_vars2.size;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end_schemas);
+    timespec_subtract(&schemas_elapsed, &end_schemas, &start_schemas);
+
+    Arena arena_result;
+    float load_factor = 0.75f;
+    size_t num_buckets_hms_rows_to_mapping_sides = (unsigned)((float)(max_rows1) / load_factor) + 1 + (unsigned)((float)(max_rows2) / load_factor) + 1;
+    size_t arena_result_bytes = 
+        (max_rows1 + max_rows2) * (max_normalized_common_set_size*sizeof(unsigned)) +
+        (num_buckets_hms_rows_to_mapping_sides) * (sizeof(RowToMappingSide)) +
+        (max_normalized_common_set_size) * sizeof(unsigned) +
+        (max_rows1 * max_rows2) * sizeof(mgu_schema) +
+        (s1 + s2) * max_normalized_common_set_size * sizeof(int);
+    init_arena(&arena_result, arena_result_bytes);
+
+    Arena debug_arena; init_arena(&debug_arena, 10000*sizeof(Schema));
+
+    // NOTE: cleans to this arena are done in the mapping_column_indexes_side functions
+    Arena schema_iterator_arena; init_arena(&schema_iterator_arena, sizeof(SchemaIteratorNode) * (max_normalized_operand_depth + max_normalized_common_depth));
+
+    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
+    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
+    Arena row_vars_arena;
+    unsigned num_bytes_pointers1 = sizeof(unsigned*) * max_normalized_operand_set_size1;
+    unsigned num_bytes_pointers2 = sizeof(unsigned*) * max_normalized_operand_set_size2;
+    unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size1);
+    unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size2);
+    unsigned num_bytes_column_mappings1 = sizeof(int)*(max_normalized_operand_set_size1);
+    unsigned num_bytes_column_mappings2 = sizeof(int)*(max_normalized_operand_set_size2);
+    init_arena(&row_vars_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1 + num_bytes_column_mappings1,
+        num_bytes_pointers2 + num_bytes_virtual_columns2 + num_bytes_column_mappings2));
+
+
+    /* --- Process result blocks one at a time --- */
+    ArrayListCharPtr free_vars3;
+    result_block rb;
+    ArrayListSchema common_set_schema;
+    ArrayListDependencyPair common_dependencies;
+    clock_gettime(CLOCK_MONOTONIC, &start_reading);
+    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &arena_result, &debug_arena);
+    clock_gettime(CLOCK_MONOTONIC, &end_reading);
+    timespec_subtract(&elapsed, &end_reading, &start_reading);
+    timespec_add(&read_file_elapsed, &read_file_elapsed, &elapsed);
+
+    // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
+    bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
+    if (verbose) printf("ok_free_vars = %u\n", ok_free_vars);
+    assert(ok_free_vars);
+
+    if (verbose) print_result_block(&rb, 0);
+
+    struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {}, mapping_elapsed_nl_hashopt = {};
+
+    struct timespec start_row_extension, end_row_extension;
+    struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
+
+    // NOTE: the amount of calls to mapping side calculation thanks to the HasMap of Row structure optimization in the case of non-linear blocks
+    unsigned saved_calls1 = 0, saved_calls2 = 0;
+
+    for(unsigned t1 = 1; t1 <= s1; ++t1){
+        for(unsigned t2 = 1; t2 <= s2; ++t2) {
+
+            ArrayListSchema computed_common_set_schema = common_set_schemas[(t1-1)*s2 + (t2-1)];
+            ArrayListDependencyPair computed_common_dependencies = common_dependencies_array[(t1-1)*s2 + (t2-1)];
+            bool exists_common_schema = exists_common_schema_array[(t1-1)*s2 + (t2-1)];
+            
+            if(rb.t1 == t1 && rb.t2 == t2){
+                // NOTE: common schema exists so no fragment was skipped
+                assert(exists_common_schema);
+                
+                // NOTE: check correct common schema and dependencies!
+                {
+                    // NOTE: variables are identified from 1 to n in the resulting common schema in the file
+                    SetVariables read_vars = create_set_variables_defsize(); 
+                    variables_in_set_schema(common_set_schema, &read_vars);
+                    unsigned num_read_vars = read_vars.num_variables;
+                    free_set_variables(read_vars);
+                    
+                    size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
+                    Variable *mapping = allocate(&debug_arena, num_bytes_for_mapping);
+                    memset(mapping, 0, num_bytes_for_mapping);
+                    
+                    bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
+                    bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
+                    
+                    if (verbose) printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
+                    assert(ok_set_schemas);
+                }
+                
+                struct timespec start_mapping, end_mapping;
+                clock_gettime(CLOCK_MONOTONIC, &start_mapping);
+                
+                // Take arguments to calculate the mappings of column indexes
+                SetSchema normalized_common_set_schema = normalized_common_set_schemas[(t1-1)*s2 + (t2-1)];
+                SetSchema normalized_set_schema1 = normalized_set_schemas1[t1-1];
+                SetSchema normalized_set_schema2 = normalized_set_schemas2[t2-1];
+
+                unsigned *starting_col_indices1 = starting_col_indices_array1 + (t1-1)*free_vars1.size;
+                unsigned *starting_col_indices2 = starting_col_indices_array2 + (t2-1)*free_vars2.size;
+
+                unsigned row_len1 = rb.c1;
+                unsigned row_len2 = rb.c2;
+                assert(normalized_set_schema1.size == row_len1);
+                assert(normalized_set_schema2.size == row_len2);
+
+                operand_block *ob1 = obs1 + t1-1;
+                operand_block *ob2 = obs2 + t2-1;
+
+                // Calculate the mapping of column indexes
+                mgu_schema computed_mapping;
+                computed_mapping.n_common = normalized_common_set_schema.size;
+                unsigned num_cols1 = normalized_set_schema1.size;
+                computed_mapping.new_a = computed_mapping.n_common - num_cols1;
+                unsigned num_cols2 = normalized_set_schema2.size;
+                computed_mapping.new_b = computed_mapping.n_common - num_cols2;
+
+                unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
+                computed_mapping.common_columns = allocate(&arena_result, num_bytes);
+                for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
+
+                unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
+                mgu_schema *schemas; // = NULL;
+
+                if(rb.lineal_lineal){
+                    unsigned *mapping_sides = allocate(&arena_result, 2 * mapping_side_size);
+                    unsigned *mappingL = mapping_sides;
+                    unsigned *mappingR = mapping_sides + computed_mapping.n_common;
+
+                    assert(ob1->r > 0 && ob2->r > 0);
+                    
+                    mapping_column_indexes_side_lineal(
+                        normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                        starting_col_indices1, ob1->terms[0].row, mappingL, &schema_iterator_arena);
+                    
+                    mapping_column_indexes_side_lineal(
+                        normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                        starting_col_indices2, ob2->terms[0].row, mappingR, &schema_iterator_arena);
+
+                    // Only one mapping in linear result block
+                    mgu_schema *mapping = rb.ms;
+                    computed_mapping.common_L = mappingL;
+                    computed_mapping.common_R = mappingR;
+                    bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
+                    //assert(ok_mappings);
+                
+                    // We only use a schema for lineal blocks
+                    schemas = allocate(&arena_result, 1 * sizeof(*schemas));
+                    *schemas = computed_mapping;
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_l, &mapping_elapsed_l, &elapsed);
+
+                } else {
+                    // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
+                    unsigned *mapping_sides = allocate(&arena_result, (ob1->r + ob2->r) * mapping_side_size);
+                    schemas = allocate(&arena_result, (ob1->r)*(ob2->r) * sizeof(*schemas));
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
+                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
+                
+                    // NOTE: measure the alternative for mapping calculation that doesn't use the HashMap for row structure
+                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
+
+                    unsigned *mapping_side = mapping_sides;
+                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                            starting_col_indices1, ob1->terms[i].row, mapping_side, &row_vars_arena,
+                            &schema_iterator_arena
+                        );
+                        clear_arena(&row_vars_arena);    
+                    }
+                    
+                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
+                        mapping_column_indexes_side(
+                            normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                            starting_col_indices2, ob2->terms[i].row, mapping_side, &row_vars_arena,
+                            &schema_iterator_arena
+                        );
+                        clear_arena(&row_vars_arena);
+                    }
+
+                    // TODO(CLEAN): instead of copying computed_mapping's header information per mapping_sideL/R combination,
+                    //  we could pass the header only once per block to the matrix_intersection functions + the mapping sides information
+                    //  (the cleanest way would be to modify the struct mgu_schema, taking into account that it can have more than one mapping
+                    //  side depending on the linearity of the block).
+                    mgu_schema *schema = schemas;
+
+                    bool ok_mappings = true;
+                    for(unsigned i = 0; i < ob1->r; ++i){
+                        computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                        for(unsigned j = 0; j < ob2->r; ++j){
+                            computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
+                            
+                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
+                            ok_mappings &= equal_mgu_schemas(mapping, &computed_mapping);
+
+                            // NOTE: We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
+                            *schema = computed_mapping;
+                            ++schema;
+                        }
+                    }
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
+
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
+
+                    // NOTE: measure the alternative for mapping calculation that uses the HashMap for row structure
+                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
+
+                    // NOTE: function symbol differences don't affect to the resulting mapping, the mapping is determined by the placement of variables (0s and negatives),
+                    //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
+                    //  for an equivalent row was already computed.
+                    // NOTE: no resizing risk with a load_factor of 75%
+                    mapping_side = mapping_sides;
+
+                    float load_factor = 0.75f;
+                    unsigned num_buckets = (unsigned)((float)(ob1->r) / load_factor) + 1;
+                    MapRowToMappingSide map1 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema1.size, normalized_common_set_schema.size, &arena_result);
+                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
+                        int *row = ob1->terms[i].row;
+                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map1, row);
+                        if(pair){
+                            ++saved_calls1;
+                        } else {
+                            mapping_column_indexes_side(
+                                normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
+                                starting_col_indices1, row, mapping_side, &row_vars_arena,
+                                &schema_iterator_arena
+                            );
+                            clear_arena(&row_vars_arena);
+                            insert_to_map_row_to_mapping_side_arena(&map1, row, mapping_side, &arena_result);
+                        }
+                    }
+                    
+                    // NOTE: no resizing risk with a load_factor of 75%
+                    num_buckets = (unsigned)((float)(ob2->r) / load_factor) + 1;
+                    MapRowToMappingSide map2 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema2.size, normalized_common_set_schema.size, &arena_result);
+                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
+                        int *row = ob2->terms[i].row;
+                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map2, row);
+                        if(pair){
+                            ++saved_calls2;
+                        } else {
+                            mapping_column_indexes_side(
+                                normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
+                                starting_col_indices2, row, mapping_side, &row_vars_arena,
+                                &schema_iterator_arena
+                            );
+                            clear_arena(&row_vars_arena);
+                            insert_to_map_row_to_mapping_side_arena(&map2, row, mapping_side, &arena_result);
+                        }
+                    }
+
+                    // Change the mgu_schemas sides and compare
+                    // One mapping per row pairs in non-linear result block
+                    // NOTE: we use the same memory as before.
+                    schema = schemas;
+
+                    ok_mappings = true;
+                    for(unsigned i = 0; i < ob1->r; ++i){
+                        RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map1, ob1->terms[i].row);
+                        assert(row_to_ms);
+                        computed_mapping.common_L = row_to_ms->mapping_side;
+                        //computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                        for(unsigned j = 0; j < ob2->r; ++j){
+                            //printf("Rows: %d-%d (1-based)\n", i+1, j+1);
+                            
+                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
+
+                            RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map2, ob2->terms[j].row);
+                            assert(row_to_ms);
+                            computed_mapping.common_R = row_to_ms->mapping_side;
+                            //computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
+
+                            ok_mappings &= equal_mgu_schemas(mapping, &computed_mapping);
+                            //assert(ok_mappings);
+
+                            // We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
+                            *schema = computed_mapping;
+                            ++schema;
+                        }
+                    }
+
+                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
+                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
+                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
+                    
+                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
+                }
+
+                clock_gettime(CLOCK_MONOTONIC, &start_row_extension);
+
+                unsigned len_extended_row = normalized_common_set_schema.size;
+                int *extended_rows = allocate(&arena_result, (ob1->r + ob2->r) * len_extended_row * sizeof(*extended_rows));
+                int *extended_row = extended_rows;
+                if (rb.lineal_lineal) {
+                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
+                        extend_row_lineal(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
+                            starting_col_indices1, ob1->terms[i].row, extended_row, &schema_iterator_arena);
+                    }
+                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
+                        extend_row_lineal(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
+                            starting_col_indices2, ob2->terms[i].row, extended_row, &schema_iterator_arena);
+                    }
+
+                } else {
+                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
+                        extend_row(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
+                            starting_col_indices1, ob1->terms[i].row, extended_row, &row_vars_arena,
+                            &schema_iterator_arena);
+                        clear_arena(&row_vars_arena);
+                    }
+                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
+                        extend_row(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
+                            starting_col_indices2, ob2->terms[i].row, extended_row, &row_vars_arena,
+                            &schema_iterator_arena);
+                        clear_arena(&row_vars_arena);
+                    }
+                }
+
+                clock_gettime(CLOCK_MONOTONIC, &end_row_extension);
+                timespec_subtract(&elapsed, &end_row_extension, &start_row_extension);
+                if (rb.lineal_lineal) {
+                    timespec_add(&row_extention_elapsed_l, &row_extention_elapsed_l, &elapsed);
+                } else {
+                    timespec_add(&row_extention_elapsed_nl, &row_extention_elapsed_nl, &elapsed);
+                }
+
+                
+                // Matrix intersection: all variants, original core and alternative versions for lineal or nonlinear with mappings or extended rows
+                matrix_intersection(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], &rb, schemas);
+                if (rb.lineal_lineal) {
+                    matrix_intersection_with_mapping_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
+                    matrix_intersection_with_extended_rows_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+
+                } else {
+                    matrix_intersection_with_extended_rows(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
+                    matrix_intersection_with_mappings(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
+                }
+
+                clear_arena(&arena_result);
+                clear_arena(&debug_arena);
+                free_result_block(&rb);
+
+                clock_gettime(CLOCK_MONOTONIC, &start_reading);
+                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
+                clock_gettime(CLOCK_MONOTONIC, &end_reading);
+    
+                timespec_subtract(&elapsed, &end_reading, &start_reading);
+                timespec_add(&read_file_elapsed, &read_file_elapsed, &elapsed);
+
+                if (verbose) print_result_block(&rb, 0);
+
+            } else {
+                // NOTE: common schema doesn't exist so a fragment was skipped
+                printf("Resultant fragment: %d-%d (SKIPPED BECAUSE COMMON SCHEMA DOESN'T EXIST!)\n", t1, t2);
+                assert(!exists_common_schema);
+                clear_arena(&arena_result);
+                clear_arena(&debug_arena);
+            }
+        }
+    }
+
+    /* --- Print timing breakdown --- */
+    struct timespec mapping_elapsed, mapping_elapsed_hashopt, row_extention_elapsed, unification_elapsed_l_total, unification_lm_total, unification_elapsed_nl_total, unification_nlm_total, unification_le_total, unification_nle_total;
+    if (verbose) {
+        printf("-------- TIME MEASUREMENTS --------\n");
+        printf("File I/O: %ld.%09ld s\n\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Schema management: %ld.%09ld s\n\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Mapping obtention linear:             %ld.%09ld s\n", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
+        printf("Mapping obtention non-linear:         %ld.%09ld s\n", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
+        printf("Mapping obtention non-linear hashopt: %ld.%09ld s\n", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
+        printf("\tSaved calls 1=%u - Saved calls 2=%u - Total=%u\n", saved_calls1, saved_calls2, saved_calls1 + saved_calls2);
+        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
+        printf("Mapping obtention total:              %ld.%09ld s\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
+        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
+        printf("Mapping obtention total hashopt:      %ld.%09ld s\n\n", mapping_elapsed_hashopt.tv_sec, mapping_elapsed_hashopt.tv_nsec);
+
+        printf("----------------\n");
+        printf("Row extention linear:     %ld.%09ld s\n", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
+        printf("Row extention non-linear: %ld.%09ld s\n", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
+        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
+        printf("Row extention total:      %ld.%09ld s\n\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Original core algorithm:\n");
+        printf("Linear:\n");
+        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_l.tv_sec, unifiers_elapsed_l.tv_nsec);
+        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_l.tv_sec, unification_elapsed_l.tv_nsec);
+        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
+        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
+        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
+        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
+        
+        printf("Non-linear:\n");
+        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_nl.tv_sec, unifiers_elapsed_nl.tv_nsec);
+        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_nl.tv_sec, unification_elapsed_nl.tv_nsec);
+        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
+        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
+        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
+        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Alternative with mappings:\n");
+        printf("Linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
+        printf("Total: %ld.%09ld s\n\n", unification_lm_total.tv_sec, unification_lm_total.tv_nsec);
+        
+        printf("Non-linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
+        printf("Total: %ld.%09ld s\n\n", unification_nlm_total.tv_sec, unification_nlm_total.tv_nsec);
+        
+        printf("----------------\n");
+        printf("Alternative with extended rows:\n");
+        printf("Linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
+        printf("Total: %ld.%09ld s\n\n", unification_le_total.tv_sec, unification_le_total.tv_nsec);
+        
+        printf("Non-linear:\n");
+        printf("Core:  %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
+        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
+        printf("Total: %ld.%09ld s\n\n", unification_nle_total.tv_sec, unification_nle_total.tv_nsec);
+    } else {
+        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
+        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
+        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
+        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
+        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
+        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
+        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
+        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
+        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
+        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
+        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
+    }
+
+    /* --- Print one-line CSV summary --- */
+    if (!verbose) {
+        char *FILE = M3_file;
+        
+        unsigned F1 = s1;
+        unsigned L1 = 0;
+        unsigned N1 = 0;
+        double C1 = 0.0;
+        for (unsigned i = 0; i < s1; ++i) {
+            operand_block *ob = obs1 + i;
+            
+            ArrayListSchema set_schema = set_schemas1[i];
+            SetVariables vars = create_set_variables_defsize();
+            variables_in_set_schema(set_schema, &vars);
+            bool is_linear = vars.num_variables == 0;
+            free_set_variables(vars);
+    
+            if (is_linear) {
+                L1 += ob->r;
+            } else {
+                N1 += ob->r;
+            }
+    
+            C1 = incremental_mean(C1, ob->c, i + 1);
+        }
+    
+        unsigned F2 = s2;
+        unsigned L2 = 0;
+        unsigned N2 = 0;
+        double C2 = 0.0;
+        for (unsigned i = 0; i < s2; ++i) {
+            operand_block *ob = obs2 + i;
+            
+            ArrayListSchema set_schema = set_schemas2[i];
+            SetVariables vars = create_set_variables_defsize();
+            variables_in_set_schema(set_schema, &vars);
+            bool is_linear = vars.num_variables == 0;
+            free_set_variables(vars);
+    
+            if (is_linear) {
+                L2 += ob->r;
+            } else {
+                N2 += ob->r;
+            }
+    
+            C2 = incremental_mean(C2, ob->c, i + 1);
+        }
+        
+        printf("%s,%u,%u,%u,%f,%u,%u,%u,%f,", FILE, F1, L1, N1, C1, F2, L2, N2, C2);
+        printf("%ld.%09ld,", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
+        printf("%ld.%09ld,", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
+        printf("%ld.%09ld,", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
+        printf("%ld.%09ld,", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
+        printf("%ld.%09ld,", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
+        printf("%ld.%09ld,", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
+        printf("%ld.%09ld\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
+    }
+
+    /* --- Cleanup --- */
+    for (unsigned i = 0; i < s1; i++) free_operand_block(&obs1[i]);
+    for (unsigned i = 0; i < s2; i++) free_operand_block(&obs2[i]);
+    
+    free_arena(&arena_operands);
+    free_arena(&arena_result);
+    free_arena(&debug_arena);
+    free_arena(&schema_iterator_arena);
+    free_arena(&row_vars_arena);
+
+    free_dictionary(var_dict);
+    free_dictionary(unif_dict);
+    free_dictionary(symbols_to_ids);
+
+
+    fclose(stream_M1);
+    fclose(stream_M2);
+    fclose(stream_M3);
+
+    return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int main_dir(char *folder_path, bool verb){
     // NOTE: instances must respect the format. Among other characteristics, the resulting fragments should be
@@ -2783,6 +3636,8 @@ int main_dir(char *folder_path, bool verb){
             // 5. Check if M2 and M3 exist (access F_OK is like [[ -f ]])
             if (access(path_m2, F_OK) == 0 && access(path_m3, F_OK) == 0) {
                 if (verb) printf("%s\n", base);
+                // TODO(YA): call to the postprocessed version once the previous tests are passed with the new format is checked!
+                //int code = main_postprocessed_(path_m1, path_m2, path_m3, verb);
                 int code = main_(path_m1, path_m2, path_m3, verb);
                 if (verb) printf("\nMain's return code = %d\n\n##########################################################\n", code);
 

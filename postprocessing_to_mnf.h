@@ -267,6 +267,8 @@ struct BlockRow {
 
 #include "Schemas/schemas.h"
 
+// TODO(YA): add starting_col_indices data 
+
 typedef struct Block Block, *BlockPtr;
 struct Block {
     unsigned r;                     // Number of main terms
@@ -277,6 +279,10 @@ struct Block {
     SetDependencies *dependencies;  // The set of dependencies associated to the schema.
     SetSchema *normalized_schema;   // The normalized common schema of the rows in the block. NOTE: its size equals c.
 };
+
+// TODO(YA3): we could link matrices too, with an IntrusiveList program_pos, if we wanted to traverse all the Matrices in the program (f.ex., for when we
+//  need to reinitialize the Arena of Schemas and Dependencies).
+// TODO(YA): add an Arena to store all the information in the Matrix.
 
 typedef struct Matrix Matrix, *MatrixPtr;
 struct Matrix {
