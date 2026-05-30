@@ -5,6 +5,27 @@
 #include <string.h>
 #include <assert.h>
 
+#define DEFAULT_ALIGNMENT 16 // 16-byte alignment is safe for everything, including SIMD
+
+static inline unsigned num_active_bits(size_t n) {
+    unsigned result = 0;
+    while(n){
+        result += n & 1;
+        n >>= 1;
+    }
+    return result;
+}
+
+static inline bool is_power_of_2(size_t n) {
+    return num_active_bits(n) == 1;
+}
+
+// Helper function to align a size/pointer upward to a power of 2
+static inline uintptr_t align_forward(uintptr_t ptr, size_t alignment) {
+    assert(is_power_of_2(alignment));
+    return (ptr + (alignment - 1)) & ~(alignment - 1);
+}
+
 // PRE: size_in_bytes > 0
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit
 // is 63, we return the size itself (to avoid returning 0).
@@ -96,8 +117,14 @@ void *allocate_(Arena *arena, size_t num_bytes){
     MemoryBlock *block = arena->current_block;
     assert(block != NULL); // PRE: arena already initialized
 
-    size_t free_space = block->size - arena->next_free_position;
-    if(free_space < num_bytes){
+    // Align the pointer that we will return for faster memory access.
+    // NOTE: since malloc could return a 8-aligned starting address for the memory in memory blocks, it is
+    //  not enough to align the next_free_position of arena, we have to check with the final returning address.
+    uintptr_t current_ptr = (uintptr_t)block->memory + arena->next_free_position;
+    uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
+    size_t new_offset = aligned_ptr - (uintptr_t)block->memory + num_bytes;
+    
+    if(new_offset > block->size){
         bool already_next_allocated = block->next != NULL;
         if(already_next_allocated){
             arena->current_block = block->next;
@@ -120,16 +147,15 @@ void *allocate_(Arena *arena, size_t num_bytes){
         printf("Create Memory Block in Arena when resizing (call=%u)\n", global_create_memory_block_calls);
         MemoryBlock *new_memory_block = create_memory_block(new_block_size);
 
-        // Take the resulting address, insert the new block in the Arena and return the address
-        arena->current_block->next = new_memory_block;
+        // Insert the new block in the Arena and make a recursive call to take the alignment into account.
+        block->next = new_memory_block;
         arena->current_block = new_memory_block;
-        arena->next_free_position = num_bytes;
-        return new_memory_block->memory;
+        arena->next_free_position = 0;
+        return allocate_(arena, num_bytes);
     }
     else { // There is enough space
-        void *start_allocation = block->memory + arena->next_free_position;
-        arena->next_free_position += num_bytes;
-        return start_allocation;
+        arena->next_free_position = new_offset;
+        return aligned_ptr;
     }
 }
 
