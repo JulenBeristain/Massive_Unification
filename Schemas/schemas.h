@@ -45,8 +45,8 @@ union Schema {
     struct {
         SchemaType type;
         Variable v;
-        uint32_t size; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
-        uint32_t depth; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+        uint32_t size_; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+        uint32_t depth_; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
         void *_;
     };
 
@@ -81,6 +81,8 @@ union Schema {
 // Schema iterator /////////////////////////////////////////////////////////////////////////////////////////////////////////
 // NOTE: we will use the already implemented ArrayListSchema to be the base of the Stack that will be the Schema iterator.
 // NOTE: we could also use an ArrayList of pointers to Schemas or a simple linked list...
+// TODO(YA): maybe is more interesting to have an ArrayList of pointers to Schema, so size calculation don't have a chance to
+//  be wasted on temporal copies.
 typedef struct SchemaIteratorNode SchemaIteratorNode;
 struct SchemaIteratorNode {
     Schema schema;
@@ -109,7 +111,7 @@ DECLARE_ARRAYLIST_TYPE(Schema)
 typedef struct SetSchema SetSchema;
 struct SetSchema {
     ArrayListSchema list;
-    uint32_t size;          // NOTE: sum of the sizes of the schemas. Init to 0. Valid values start at 1 (no empty SetSchemas).
+    uint32_t size_;         // NOTE: sum of the sizes of the schemas. Init to 0. Valid values start at 1 (no empty SetSchemas).
 };                          // NOTE: no depth in SetSchema because we create iterators of Schemas
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -139,14 +141,14 @@ typedef ArrayListDependencyPair SetDependencies;
 
 static inline void init_variable_schema(Schema* s, Variable v){
     s->type = VARIABLE_SCHEMA;
-    s->size = 0;
-    s->depth = 0;
+    s->size_ = 0;
+    s->depth_ = 0;
     s->v = v;
 }
 static inline void init_general_schema_arena(Schema* s, unsigned arity, Arena* arena){
     s->type = GENERAL_SCHEMA;
-    s->size = 0;
-    s->depth = 0;
+    s->size_ = 0;
+    s->depth_ = 0;
     s->arity = arity;
     s->subschemas = allocate(arena, arity * sizeof(*(s->subschemas)));
 }
@@ -155,19 +157,29 @@ static inline Schema empty_schema(){
     // NOTE: unfortunately designated initializer don't behave with unions as with structs :(
     Schema empty;
     empty.type = GENERAL_SCHEMA;
-    empty.size = 1;
-    empty.depth = 1;
+    empty.size_ = 1;
+    empty.depth_ = 1;
     empty.arity = 0;
     empty.subschemas = NULL;
     return empty;
 }
 static inline bool is_empty(Schema s) { return s.type == GENERAL_SCHEMA && s.arity == 0; }
 
-unsigned schema_size(Schema s);
-unsigned schema_depth(Schema s);
-void calculate_schema_size(Schema *s);
-void calculate_schema_depth(Schema *s);
-unsigned set_schema_size(ArrayListSchema set_schema);
+unsigned schema_size_rec(Schema s);
+unsigned schema_depth_rec(Schema s);
+unsigned schema_size(Schema *s);
+unsigned schema_depth(Schema *s);
+unsigned set_schema_list_size_rec(ArrayListSchema set_schema);
+unsigned set_schema_list_size(ArrayListSchema set_schema);
+static inline unsigned set_schema_size_rec(SetSchema set_schema){
+    return set_schema_list_size_rec(set_schema.list);
+}
+static inline unsigned set_schema_size(SetSchema *set_schema){
+    if (set_schema->size_ == 0) {
+        set_schema->size_ = set_schema_list_size(set_schema->list);
+    }
+    return set_schema->size_;
+}
 
 bool equal_schemas(Schema s1, Schema s2);
 bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);

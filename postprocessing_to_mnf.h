@@ -281,16 +281,16 @@ struct Block {
 };
 
 // TODO(YA3): we could link matrices too, with an IntrusiveList program_pos, if we wanted to traverse all the Matrices in the program (f.ex., for when we
-//  need to reinitialize the Arena of Schemas and Dependencies).
-// TODO(YA): add an Arena to store all the information in the Matrix.
+//  need to reinitialize the Arena of Schemas and Dependencies). Or we could organize them in other ways. Unlike Blocks and BlockRows, we will want to have 
+//  have the matrices identified, well ordered --> Dictionary name to matrix ...
 
 typedef struct Matrix Matrix, *MatrixPtr;
 struct Matrix {
     unsigned b;                     // Number of blocks in the matrix
     IntrusiveList head_for_blocks;  // Anchor point for the blocks of this matrix.
+    ArrayListCharPtr free_vars;     // Free var information (strings and array of pointers stored in the arena)
+    Arena arena;                    // Arena to manage all the memory necessary for the matrix, its blocks and rows
 };
-
-
 
 static inline void remove_block_row(BlockRow *row) {
     intrusive_list_del(&row->block_pos);
@@ -376,6 +376,20 @@ static inline void init_block_with_deleted_row(
 static inline void init_empty_matrix(Matrix *matrix) {
     matrix->b = 0;
     init_intrusive_list(&matrix->head_for_blocks);
+    matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
+    // TODO(ADJUST): when testing with real instances, we can take here a more appropriate value to reduce the number of Memory Blocks
+    init_arena(&matrix->arena, KILOBYTES(4));
+}
+
+// TODO(FUT): when this function is used, we should try to adjust the arena_size based on the information in the file or the operand Matrices
+// NOTE: arena_size used as reference. The real size is the smallest greater power of 2 between 4kB and 4MB.
+static inline void init_empty_matrix_with_arena_size(Matrix *matrix, size_t arena_size) {
+    matrix->b = 0;
+    init_intrusive_list(&matrix->head_for_blocks);
+    matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
+
+    arena_size = CLAMP(smallest_greater_power_of_2(arena_size), KILOBYTES(4), MEGABYTES(4));
+    init_arena(&matrix->arena, arena_size);
 }
 
 void postprocess_to_mnf(Matrix *matrix, Arena *arena);
@@ -387,5 +401,22 @@ typedef struct {
 #define EQUAL_MATRICES_RESULT(Type, Index) (EqualMatricesResult){ .type = (Type), .solitary_block = (Index) }
 
 EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2);
+
+// NOTE: after freeing, shouldn't use the same Matrix variable without proper reinitialization
+static inline void free_matrix_v (Matrix m) { free_arena(&m.arena); }
+static inline void free_matrix_p (Matrix *m) { free_arena(&m->arena); }
+#define free_matrix(m)              \
+    _Generic((m),				    \
+		Matrix *: free_matrix_p,    \
+		Matrix:   free_matrix_v 	\
+	)(m)
+
+// NOTE: after clearing, you can use the same Matrix variable. It keeps the same memory usage as before.
+static inline void clear_matrix(Matrix *m){
+    clear_arena(&m->arena);
+    m->b = 0;
+    m->free_vars = EMPTY_ARRAYLIST(CharPtr);
+    init_intrusive_list(&m->head_for_blocks);
+}
 
 #endif

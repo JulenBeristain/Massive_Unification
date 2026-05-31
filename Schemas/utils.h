@@ -58,4 +58,28 @@ static inline double incremental_mean(double mean, double new, unsigned n){
     return mean + ((new - mean) / n);
 }
 
+#define KILOBYTES(N) ((N) << 10)
+#define MEGABYTES(N) ((N) << 20)
+#define GIGABYTES(N) ((N) << 30)
+
+// NOTE: returns 0 if n has its most significant bit (63) set.
+static inline size_t smallest_greater_power_of_2(size_t n) {
+    if (n == 0) {
+        return 1;
+    }
+    unsigned mask = 1 << MOST_SIGNIFICANT_BIT(size_t);
+    while(mask){
+        if(n & mask){
+            return mask << 1;;
+        }
+        mask >>= 1;
+    }
+    // NOTE: we know we won't arrive here thanks to the initial check!
+}
+
+#define CLAMP(n, min, max)      \
+    (((n) < (min)) ? (min) :    \
+        ((n) > (max)) ? (max) : \
+            (n))
+
 #endif

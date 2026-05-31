@@ -60,15 +60,11 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
 // PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
     MemoryBlock *memory_block = malloc(sizeof(*memory_block));
-    if (memory_block == NULL){
-        perror("create_memory_block: malloc failed to allocate memory");
-        exit(EXIT_FAILURE);
-    }
+    CHECK_MALLOC(memory_block);
+
     memory_block->memory = malloc(block_size);
-    if (memory_block->memory == NULL){
-        perror("create_memory_block: malloc failed to allocate memory");
-        exit(EXIT_FAILURE);
-    }
+    CHECK_MALLOC(memory_block->memory);
+    
     memory_block->size = block_size;
     memory_block->next = NULL;
     return memory_block;
@@ -76,7 +72,7 @@ static inline MemoryBlock *create_memory_block(size_t block_size){
 
 // NOTE: we expect size_in_bytes to be a big value, to be able to perform a lot of allocations with a single memory block,
 //  hopefully avoiding to allocate further blocks.
-void init_arena(Arena *arena, size_t size_in_bytes){
+void init_arena_chained(Arena *arena, size_t size_in_bytes){
     if(size_in_bytes == 0){
         SET_TO_ZERO(arena, sizeof(*arena));
         return;
@@ -94,7 +90,7 @@ void init_arena(Arena *arena, size_t size_in_bytes){
 }
 
 // NOTE: only the contents of the arena are freed. If the arena itself was malloced, it is not freed!
-void free_arena(Arena *arena){
+void free_arena_chained(Arena *arena){
     MemoryBlock *current = arena->memory_blocks;
     while(current){
         free(current->memory);
@@ -104,7 +100,7 @@ void free_arena(Arena *arena){
     }
 }
 
-void clear_arena(Arena *arena){
+void clear_arena_chained(Arena *arena){
     arena->current_block = arena->memory_blocks;
     arena->next_free_position = 0;
 }
@@ -113,7 +109,7 @@ void clear_arena(Arena *arena){
 //  we manage even that case gracefully.
 // If num_bytes is 0, NULL is returned.
 
-void *allocate_(Arena *arena, size_t num_bytes){
+void *allocate_chained_(Arena *arena, size_t num_bytes){
     MemoryBlock *block = arena->current_block;
     assert(block != NULL); // PRE: arena already initialized
 
@@ -159,14 +155,53 @@ void *allocate_(Arena *arena, size_t num_bytes){
     }
 }
 
-void *allocate(Arena *arena, size_t num_bytes){
+void *allocate_chained(Arena *arena, size_t num_bytes){
     if(num_bytes == 0){ return NULL; }
-    return allocate_(arena, num_bytes);
+    return allocate_chained_(arena, num_bytes);
 }
 
-void *callocate(Arena *arena, size_t num_bytes){
+void *callocate_chained(Arena *arena, size_t num_bytes){
     if(num_bytes == 0){ return NULL; }
     void *mem = allocate_(arena, num_bytes);
+    SET_TO_ZERO(mem, num_bytes);
+    return mem;
+}
+
+
+
+
+void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes) {
+    arena->memory = malloc(size_in_bytes);
+    CHECK_MALLOC(arena->memory);
+    arena->size = size_in_bytes;
+    arena->next_free_position = 0;
+}
+
+void *allocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
+    assert(arena->memory != NULL); // PRE: arena already initialized
+
+    // Align the pointer that we will return for faster memory access.
+    // NOTE: since malloc could return a 8-aligned starting address for the memory in arena, it is
+    //  not enough to align the next_free_position of arena, we have to check with the final returning address.
+    uintptr_t current_ptr = (uintptr_t)arena->memory + arena->next_free_position;
+    uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
+    size_t new_offset = aligned_ptr - (uintptr_t)arena->memory + num_bytes;
+    
+    if(new_offset > arena->size){
+        // TODO(YA): should traverse all Schemas in the program and shallow copy with a HashSet of addresses of Schemas
+        //  the current active Schemas.
+        // TODO(YA): hash set of void* and Dictionary string to void*
+        assert(false);
+    }
+    else { // There is enough space
+        arena->next_free_position = new_offset;
+        return aligned_ptr;
+    }
+}
+
+void *callocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
+    if(num_bytes == 0){ return NULL; }
+    void *mem = allocate_schemas_arena(arena, num_bytes);
     SET_TO_ZERO(mem, num_bytes);
     return mem;
 }

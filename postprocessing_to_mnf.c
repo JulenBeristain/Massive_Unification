@@ -229,7 +229,8 @@ EqualBlocksResult equal_blocks(Block *b1, Block *b2) {
     if (!equivalent_set_schemas_and_dependencies_ignoring_empties(*b1->schema, *b2->schema, *b1->dependencies, *b2->dependencies)) {
         return EQUAL_BLOCKS_RESULT(NOT_EQUIVALENT_SCHEMAS_AND_DEPENDENCIES, 0);
     }
-    if ((b1->normalized_schema->size != b2->normalized_schema->size) || !equal_set_schemas(b1->normalized_schema->list, b2->normalized_schema->list)){
+    unsigned size1 = set_schema_size(b1->normalized_schema), size2 = set_schema_size(b2->normalized_schema);
+    if ((size1 != size2) || !equal_set_schemas(b1->normalized_schema->list, b2->normalized_schema->list)){
         return EQUAL_BLOCKS_RESULT(NOT_EQUAL_NORMALIZED_SCHEMAS, 0);
     }
     if (b1->c != b2->c) {
@@ -316,3 +317,126 @@ EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
 }
 
 // TODO(YA-FUT): would be great if we had loading and writing functions for some format of matrix_files (the ones of the last tests?)
+//  See if we need different versions depending on operand and resultant matrices...
+
+
+
+typedef enum {
+    RM_FILE_NOT_OPENED, 
+    RM_NOT_BLOCK_COUNT,
+    RM_NOT_FREE_VARS, 
+    RM_SUCCESS 
+} ReadMatrixResultType;
+
+
+/**
+ * @brief Reads one operand matrix from @p stream into @p ob.
+ *
+ * Expects the layout:
+ *   <n_vars_with_deps>, [dep lines ×n_vars_with_deps], <flattened schema>,
+ *   <main_term rows>…, "%% END"
+ *
+ * Exits on format errors.
+ */
+static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena, SchemasArena *schemas_arena) {
+    
+    // Read unflatened schema and the set of dependencies
+    read_set_schema_with_dependencies(stream, block->schema, block->dependencies, schemas_arena);
+    block->normalized_schema = allocate(schemas_arena, sizeof(*block->normalized_schema));
+    block->normalized_schema->list = normalized_set_schema(*block->schema, *block->dependencies, schemas_arena);
+    set_schema_size(block->normalized_schema);
+
+    char   *line = NULL;
+    size_t  len  = 0;
+
+    /* Skip the flattened schema line. */
+    getline(&line, &len, stream);
+
+    /* Read main_term rows until the END marker or the expected row count is reached. */
+    ssize_t read;
+    unsigned row = 0;
+    while ((read = getline(&line, &len, stream)) != -1 && row < block->r) {
+        if (strstr(line, "% END") || strstr(line, "% End")) break;
+
+        /* First token is the exception-block count. */
+        char *line_copy = strdup(line);
+        unsigned e = (unsigned)strtoul(strtok(line_copy, ","), NULL, 10);
+        free(line_copy);
+
+        BlockRow *block_row = allocate(matrix_arena, sizeof(*block_row));
+        block_row->c = block->c;
+        intrusive_list_add(&block->head_for_rows, &block_row->block_pos);
+        // TODO(YA): review what the final boolean was for and how it differs from operand to resultant blocks
+        read_line(line, block_row->row, true);
+
+        // TODO(YA): make read_exception_blocks accessible
+        if (e) read_exception_blocks(stream, block_row, false);
+
+        row++;
+    }
+
+    free(line);
+}
+
+
+/**
+ * @brief Reads one complete operand block (header + matrix) from @p stream.
+ * @return Populated operand_block.
+ */
+void read_block(FILE *stream, Block *block, Arena *matrix_arena, SchemasArena *schemas_arena) {
+    // TODO(YA): make read_dimensions visible + make it return some value instead of exiting!!!
+    read_dimensions(stream, &block->r, &block->c);
+    
+    init_intrusive_list(&block->head_for_rows);
+    
+    read_block_content(stream, block, matrix_arena, schemas_arena);
+}
+
+
+ReadMatrixResultType read_matrix(char *filename, Matrix *matrix, SchemasArena *schemas_arena) {
+    FILE *stream = fopen(filename, "r");
+
+    if (!stream) {
+        fprintf(stderr, "Error opening file: %s\n", filename);
+        if (stream) fclose(stream);
+        return RM_FILE_NOT_OPENED;
+    }
+
+    /* Read block counts from M1 and M2 headers. */
+    // TODO(YA): make accessible the read_num_blocks function
+    if (read_num_blocks(stream, &matrix->b)){
+        return RM_NOT_BLOCK_COUNT;
+    }
+
+    // Read the row identifying the columns' free variables
+    {
+        char *line = NULL;
+        size_t len = 0;
+        if (getline(&line, &len, stream) == -1) { 
+            free(line);
+            return RM_NOT_FREE_VARS; 
+        }
+        // TODO(YA): make accessible scan_num_free_vars
+        unsigned num_free_vars = scan_num_free_vars(line);
+    
+        // TODO(FUT): we could put the size information in the header of the file, to adjust the size of Memory Blocks...
+        //  Right now we only know matrix.b
+        init_arena(&matrix->arena, KILOBYTES(4));
+    
+        // TODO(YA): make scan_free_vars accessible
+        ArrayListCharPtr free_vars = scan_free_vars(line, num_free_vars, &matrix->arena);
+        free(line);
+    }
+
+    init_intrusive_list(&matrix->head_for_blocks);
+    for (unsigned i = 0; i < matrix->b; ++i) {
+        Block *block = allocate(&matrix->arena, sizeof(*block));
+        
+        intrusive_list_add(&matrix->head_for_blocks, &block->matrix_pos);
+
+        read_block(stream, block, &matrix->arena, schemas_arena);
+    }
+    
+    fclose(stream);
+    return RM_SUCCESS;
+}
