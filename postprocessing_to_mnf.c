@@ -321,13 +321,6 @@ EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
 
 
 
-typedef enum {
-    RM_FILE_NOT_OPENED, 
-    RM_NOT_BLOCK_COUNT,
-    RM_NOT_FREE_VARS, 
-    RM_SUCCESS 
-} ReadMatrixResultType;
-
 
 /**
  * @brief Reads one operand matrix from @p stream into @p ob.
@@ -393,7 +386,7 @@ void read_block(FILE *stream, Block *block, Arena *matrix_arena, SchemasArena *s
 }
 
 
-ReadMatrixResultType read_matrix(char *filename, Matrix *matrix, SchemasArena *schemas_arena) {
+ReadMatrixResultType read_matrix(char *filename, Matrix *matrix) {
     FILE *stream = fopen(filename, "r");
 
     if (!stream) {

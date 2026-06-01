@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "arena.h"
+#include "utils.h"
 
 /**
  * In this file we declare structs and functions to work with sets of variables (as unsigned > 0).
@@ -27,15 +28,6 @@ struct HashSetVariables {
     uint32_t num_variables;
     uint32_t num_buckets;
     LinkedListVariablesNode **list_variables;
-};
-//////////////////////////////////////////////////////////////////////
-
-// Operations return code types //////////////////////////////////////
-typedef enum SetInsertReturnCode SetInsertReturnCode;
-enum SetInsertReturnCode { 
-    SET_INSERT_ADDED,
-    SET_INSERT_ADDED_RESIZING,
-    SET_INSERT_ALREADY_CONTAINED
 };
 //////////////////////////////////////////////////////////////////////
 

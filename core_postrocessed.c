@@ -2781,279 +2781,188 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 //
 //  - Remove suboptimal approximations: hashmap row structure to mapping side; matrix intersection original version (or the best with the new format)
 
-int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
-    struct timespec start_reading, end_reading;
-    struct timespec elapsed;
+#include "postprocessing_to_mnf.h"
 
+Matrix matrix_and(Matrix *m1, Matrix *m2) {
+    Matrix result; init_empty_matrix(&result);
+    
+    result.free_vars = final_free_vars_ordering(m1->free_vars, m2->free_vars, &result.blocks_arena);
+
+    Arena operation_arena; init_arena_defcapacity(&operation_arena);
+
+    // NOTE: free var positions isn't stored inside the Matrix structure, since it relates data about free_vars in one matrix
+    //  with data about resultant free_vars in the result Matrix. That said, their calculation is enclosed in matrix operation functions.
+    // NOTE: compute free_var_positions1/2
+    // NOTE: no resizing risk with these ArrayLists
+    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(result.free_vars.size, &operation_arena);
+    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(result.free_vars.size, &operation_arena);
+    foreach_in_arraylist(CharPtr, free_v, result.free_vars){
+        // NOTE: special value for not found = free_vars3.size
+        unsigned pos = find_in_array_list_char_ptr(m1->free_vars, *free_v);
+        if(pos == m1->free_vars.size){
+            pos = result.free_vars.size;
+        }
+        unsafe_add_to_array_list(free_var_positions1, pos);
+
+        pos = find_in_array_list_char_ptr(m2->free_vars, *free_v);
+        if(pos == m2->free_vars.size){
+            pos = result.free_vars.size;
+        }
+        unsafe_add_to_array_list(free_var_positions2, pos);
+    }
+
+    // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
+    //  before entering the resulting blocks' loop.
+    unsigned *starting_col_indices_array = allocate(&operation_arena, sizeof(*starting_col_indices_array) * ((m1->free_vars.size * m1->b) + (m2->free_vars.size * m2->b)));
+    unsigned *starting_col_indices_array1 = starting_col_indices_array;
+    unsigned *starting_col_indices_array2 = starting_col_indices_array + (m1->free_vars.size * m1->b);
+    {
+        unsigned *starting_indices = starting_col_indices_array1;
+        Block *block;
+        intrusive_list_for_each_entry(block, &m1->head_for_blocks, matrix_pos){
+            ArrayListSchema normalized = block->normalized_schema->list;
+            starting_column_indexes(normalized, starting_indices);
+            starting_indices += m1->free_vars.size;
+        }
+        intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos){
+            ArrayListSchema normalized = block->normalized_schema->list;
+            starting_column_indexes(normalized, starting_indices);
+            starting_indices += m2->free_vars.size;
+        }
+    }
+
+    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
+    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2.
+    //  Another suboptimal option would be to calculate the max_v1 for every set_schema pair inside the loop, to avoid "wasting" unused vars.
+    Variable max_v1 = 0;
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m1->head_for_blocks, matrix_pos) {
+            max_v1 = MAX(max_v1, max_v_in_set_schema(*block->schema));
+        }
+        intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos) {
+            increment_variables_in_set_schema(*block->schema, max_v1);
+            increment_variables_in_set_dependencies(*block->dependencies, max_v1);
+        }
+    }
+
+    // NOTE: loop to calculate the common set schemas and normalize them.
+    {
+        Arena temporal_arena; init_arena_defcapacity(&temporal_arena);
+        Block *block1;
+        intrusive_list_for_each_entry(block1, &m1->head_for_blocks, matrix_pos) {
+            Block *block2;
+            intrusive_list_for_each_entry(block2, &m2->head_for_blocks, matrix_pos) {
+                // Calculate common schema
+                ArrayListSchema set_schema1 = *block1->schema;
+                ArrayListDependencyPair dependencies1 = *block1->dependencies;
+
+                ArrayListSchema set_schema2 = *block2->schema;
+                ArrayListDependencyPair dependencies2 = *block2->dependencies;
+
+                ArrayListSchema *computed_common_set_schema;
+                ArrayListDependencyPair *computed_common_dependencies;
+
+                // TODO(Clean): everytime we perform some operation between schemas in different matrices, for example common_set_schema,
+                //  we have to deepcopy the resultant Schemas in case of a successful operation to avoid pointing to free memeory.
+                //  Another approach would be to do simple counting Garbage Collection with Schemas. We don't need complex generational
+                //  garbage collection algorithms thanks to the tree or DAG (when taken advantage of immutability) like structure of Schemas.
+                //  The downside is that we would need to malloc and free each Schema node separetely, although GC seems the best 
+                //  approach for data that might be shared between several separate Matrices.
+                clear_arena(&temporal_arena);
+                bool exists_common_schema = common_set_schema_free_vars_baseline(
+                    set_schema1, dependencies1, free_var_positions1,
+                    set_schema2, dependencies2, free_var_positions2,
+                    computed_common_set_schema, computed_common_dependencies,
+                    &temporal_arena);
+
+                if (exists_common_schema) {
+                    // Create resultant block in the temporal arena
+                    Block *block3 = allocate(&temporal_arena, sizeof(*block3));
+                    block3->schema = computed_common_set_schema;
+                    block3->dependencies = computed_common_dependencies;
+                    block3->normalized_schema = allocate(&temporal_arena, sizeof(block3->normalized_schema));
+                    block3->normalized_schema->list = normalized_set_schema(*block3->schema, *block3->dependencies, &temporal_arena);
+                    block3->c = set_schema_size(block3->normalized_schema);
+                    block3->r = 0;
+                    init_intrusive_list(&block3->head_for_rows);
+                    //block3->matrix_pos later when added to the matrix, if it has at least one row!
+
+                    // TODO(YA): Calculate resulting rows! 
+                    // NOTE: since having one row is enough to consider this block as a block that will be stored in the 
+                    //  memory of the matrix, we can store the rows directly in the memory of the Matrix.
+
+                    if(block3->r) {
+                        // Move the block and the schemas to the permanent arenas of the result matrix
+                        // NOTE: we first move the schemas to update the block's pointers to their new locations
+                        // NOTE: we have to do deepcopies of Schemas to avoid having references to Schemas in other matrices
+                        // TODO(YA): implement move Schemas: deepcopy
+                        // Separate in three calls + receive the Arenas + return the addresses
+                        schemas_deepcopy(block3->schema, block3->dependencies, block3->normalized_schema)
+
+
+                        // TODO(YA): update the references to the deepcopies of Schemas
+                        Block *permanent_block3 = allocate(&result.blocks_arena, sizeof(*permanent_block3));
+                        *permanent_block3 = *block3;
+                        add_block_to_matrix(&result, permanent_block3);
+                    }
+                }
+            }
+        }
+        free_arena(temporal_arena);
+    }
+
+    ...
+
+    // NOTE: we set Schema variables in set_schemas2 back to original names, 1..max, subtracting max_v1.
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos) {
+            decrement_variables_in_set_schema(*block->schema, max_v1);
+            decrement_variables_in_set_dependencies(*block->dependencies, max_v1);
+        }
+    }
+
+    free_arena(operation_arena);
+
+    return result;
+}
+
+int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
+    //struct timespec start_reading, end_reading;
+    //struct timespec elapsed;
+
+    // TODO(YA): I would say we need these globals to be accessible in read_matrix!!!
     var_dict  = create_dictionary(501);
     unif_dict = create_dictionary(501);
     symbols_to_ids = create_dictionary(501);
 
     verbose = verb;
 
-    FILE *stream_M1 = fopen(M1_file, "r");
-    FILE *stream_M2 = fopen(M2_file, "r");
-    FILE *stream_M3 = fopen(M3_file, "r");
-
-    if (!stream_M1 || !stream_M2 || !stream_M3) {
-        fprintf(stderr, "Error opening files: %s, %s, %s\n", M1_file, M2_file, M3_file);
-        if (stream_M1) fclose(stream_M1);
-        if (stream_M2) fclose(stream_M2);
-        if (stream_M3) fclose(stream_M3);
-        return EXIT_FAILURE;
+    Matrix m1;
+    ReadMatrixResultType read1 = read_matrix(M1_file, &m1);
+    if (read1 != RM_SUCCESS) {
+        assert(0);
+        exit(1);
     }
 
-    // TODO(YA): we should be reading the input matrices to Matrix structures directly! (Including info about free vars...)
+    Matrix m2;
+    ReadMatrixResultType read2 = read_matrix(M2_file, &m2);
+    if (read2 != RM_SUCCESS) {
+        assert(0);
+        exit(1);
+    }
 
-    /* Read block counts from M1 and M2 headers. */
-    unsigned s1, s2;
-    if (read_num_blocks(stream_M1, &s1))
-        fprintf(stderr, "Warning: could not read block count from %s\n", M1_file);
-    if (read_num_blocks(stream_M2, &s2))
-        fprintf(stderr, "Warning: could not read block count from %s\n", M2_file);
-    if (verbose) printf("M1 blocks %u, M2 blocks %u\n", s1, s2);
+    Matrix m3;
+    ReadMatrixResultType read3 = read_matrix(M3_file, &m3);
+    if (read3 != RM_SUCCESS) {
+        assert(0);
+        exit(1);
+    }
 
 
-    // Read the row identifying the columns' free variables
-    char *line1 = NULL, *line2 = NULL;
-    size_t len1 = 0, len2 = 0;
-    if (getline(&line1, &len1, stream_M1) == -1) { free(line1); exit(1); } // Failed to read the line
-    if (getline(&line2, &len2, stream_M2) == -1) { free(line2); exit(1); } // Failed to read the line
+
     
-    unsigned num_free_vars1 = scan_num_free_vars(line1);
-    unsigned num_free_vars2 = scan_num_free_vars(line2);
-
-    Arena arena_operands;
-    size_t arena_operands_bytes = 
-        (s1 + s2)*(sizeof(operand_block) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
-        2*(num_free_vars1 + num_free_vars2)*(sizeof(char*)) + strlen(line1) + strlen(line2) +
-        2*(num_free_vars1 + num_free_vars2)*(sizeof(unsigned)) +
-        (num_free_vars1*s1 + num_free_vars2*s2)*(sizeof(unsigned)) +
-        s1*s2 * (sizeof(bool) + sizeof(ArrayListSchema) + sizeof(ArrayListDependencyPair) + sizeof(SetSchema)) +
-        500000*(sizeof(Schema));
-    init_arena(&arena_operands, arena_operands_bytes);
-
-    ArrayListCharPtr free_vars1 = scan_free_vars(line1, num_free_vars1, &arena_operands);
-    ArrayListCharPtr free_vars2 = scan_free_vars(line2, num_free_vars2, &arena_operands);
-    free(line1);
-    free(line2);
-    ArrayListCharPtr computed_free_vars3 = final_free_vars_ordering(free_vars1, free_vars2, &arena_operands);
-
-    // TODO(YA): free var positions shouldn't be stored inside the Matrix structure, since it relates data about free_vars in one matrix
-    //  with data about resultant free_vars in the result Matrix. That said, their calculation should be enclosed in matrix operation functions.
-
-    // NOTE: compute free_var_positions1/2
-    // NOTE: no resizing risk with these ArrayLists
-    ArrayListUInt free_var_positions1 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
-    ArrayListUInt free_var_positions2 = create_array_list_uint_arena(computed_free_vars3.size, &arena_operands);
-    foreach_in_arraylist(CharPtr, free_v, computed_free_vars3){
-        // NOTE: special value for not found = free_vars3.size
-        unsigned pos = find_in_array_list_char_ptr(free_vars1, *free_v);
-        if(pos == free_vars1.size){
-            pos = computed_free_vars3.size;
-        }
-        unsafe_add_to_array_list(free_var_positions1, pos);
-
-        pos = find_in_array_list_char_ptr(free_vars2, *free_v);
-        if(pos == free_vars2.size){
-            pos = computed_free_vars3.size;
-        }
-        unsafe_add_to_array_list(free_var_positions2, pos);
-    }
-
-
-    operand_block *obs1 = allocate(&arena_operands, s1 * sizeof(operand_block));
-    operand_block *obs2 = allocate(&arena_operands, s2 * sizeof(operand_block));
-    ArrayListSchema *set_schemas1 = allocate(&arena_operands, s1 * sizeof(*set_schemas1));
-    ArrayListSchema *set_schemas2 = allocate(&arena_operands, s2 * sizeof(*set_schemas2));
-    ArrayListDependencyPair *dependencies_array1 = allocate(&arena_operands, s1 * sizeof(*dependencies_array1));
-    ArrayListDependencyPair *dependencies_array2 = allocate(&arena_operands, s2 * sizeof(*dependencies_array2));
-
-
-    /* --- Read operand blocks --- */
-    clock_gettime(CLOCK_MONOTONIC, &start_reading);
-    // NOTE: arena_operands is used only for Schemas and DependencyPairs, not OperandBlocks
-    unsigned max_rows1 = 0;
-    for (size_t i = 0; i < s1; i++) {
-        read_operand_block(stream_M1, obs1 + i, set_schemas1 + i, dependencies_array1 + i, &arena_operands);
-        max_rows1 = MAX(max_rows1, obs1[i].r);
-    }
-
-    unsigned max_rows2 = 0;
-    for (size_t i = 0; i < s2; i++) {
-        read_operand_block(stream_M2, obs2 + i, set_schemas2 + i, dependencies_array2 + i, &arena_operands);
-        max_rows2 = MAX(max_rows2, obs2[i].r);
-    }
-    clock_gettime(CLOCK_MONOTONIC, &end_reading);
-    timespec_subtract(&read_file_elapsed, &end_reading, &start_reading);
-
-    /* --- Set Schemas: variables' independence, normalization and commmon --- */
-    struct timespec start_schemas, end_schemas, schemas_elapsed;    
-    
-    clock_gettime(CLOCK_MONOTONIC, &start_schemas);
-
-    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
-    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2. More optimal,
-    //  less operations to perform.
-    //  Another option would be to calculate the max_v1 for every set_schema pair inside the loop, to avoid "wasting" unused vars.
-    Variable max_v1 = 0;
-    for(size_t i = 0; i < s1; ++i){
-        max_v1 = MAX(max_v1, max_v_in_set_schema(set_schemas1[i]));
-    }
-    for(size_t i = 0; i < s2; ++i){
-        increment_variables_in_set_schema(set_schemas2[i], max_v1);
-        increment_variables_in_set_dependencies(dependencies_array2[i], max_v1);
-    }
-
-    // NOTE: we normalize the operand blocks' schemas outside the loop, not once per resultant fragment (block combination)
-    SetSchema *normalized_set_schemas1 = allocate(&arena_operands, s1 * sizeof(*normalized_set_schemas1));
-    SetSchema *normalized_set_schemas2 = allocate(&arena_operands, s2 * sizeof(*normalized_set_schemas2));
-    // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
-    // NOTE: we also calculate the depths of the normalized schemas because we will instantiate iterators over them when calculating 
-    //  column index mappings.
-    // NOTE: we wrap the arraylist of schemas to calculate the entire size of all the schemas.
-    // NOTE: max_operand_depth to calculate the size of the Arena for Schema iterators, and the other for the row to mapping side mapping Arena.
-    unsigned max_normalized_operand_depth = 0;
-    unsigned max_normalized_operand_set_size1 = 0;
-    unsigned min_normalized_operand_set_size1 = UINT32_MAX;
-    for(unsigned i = 0; i < s1; ++i){
-        ArrayListSchema *set_schema = set_schemas1 + i;
-        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
-        
-        ArrayListDependencyPair *dependencies = dependencies_array1 + i;
-        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
-            foreach_in_arraylist(Schema, s, pair->schemas){
-                calculate_schema_size(s);
-            }
-        }
-
-        SetSchema *normalized = normalized_set_schemas1 + i;
-        ArrayListSchema *normalized_list = &normalized->list;
-        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
-        foreach_in_arraylistptr(Schema, s, normalized_list) {
-            calculate_schema_depth(s);
-            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
-        }
-
-        normalized->size = 0;
-        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
-        max_normalized_operand_set_size1 = MAX(max_normalized_operand_set_size1, normalized->size);
-        min_normalized_operand_set_size1 = MIN(min_normalized_operand_set_size1, normalized->size);
-    }
-    unsigned max_normalized_operand_set_size2 = 0;
-    unsigned min_normalized_operand_set_size2 = UINT32_MAX;
-    for(unsigned i = 0; i < s2; ++i){
-        ArrayListSchema *set_schema = set_schemas2 + i;
-        foreach_in_arraylistptr(Schema, s, set_schema) { calculate_schema_size(s); }
-        
-        ArrayListDependencyPair *dependencies = dependencies_array2 + i;
-        foreach_in_arraylistptr(DependencyPair, pair, dependencies){
-            foreach_in_arraylist(Schema, s, pair->schemas){
-                calculate_schema_size(s);
-            }
-        }
-
-        SetSchema *normalized = normalized_set_schemas2 + i;
-        ArrayListSchema *normalized_list = &normalized->list;
-        *normalized_list = normalized_set_schema(*set_schema, *dependencies, &arena_operands);
-        foreach_in_arraylistptr(Schema, s, normalized_list) {
-            calculate_schema_depth(s);
-            max_normalized_operand_depth = MAX(max_normalized_operand_depth, s->depth);
-        }
-
-        normalized->size = 0;
-        foreach_in_arraylistptr(Schema, s, normalized_list) { normalized->size += s->size; }
-        max_normalized_operand_set_size2 = MAX(max_normalized_operand_set_size2, normalized->size);
-        min_normalized_operand_set_size2 = MIN(min_normalized_operand_set_size2, normalized->size);
-    }
-
-    bool *exists_common_schema_array = allocate(&arena_operands, s1*s2 * sizeof(bool));
-    ArrayListSchema *common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*common_set_schemas));
-    ArrayListDependencyPair *common_dependencies_array = allocate(&arena_operands, s1*s2 * sizeof(*common_dependencies_array));
-    SetSchema *normalized_common_set_schemas = allocate(&arena_operands, s1*s2 * sizeof(*normalized_common_set_schemas));
-    // NOTE: loop to calculate the common set schemas and normalize them.
-    unsigned max_normalized_common_set_size = 0;
-    unsigned max_normalized_common_depth = 0;
-    for(unsigned t1 = 1; t1 <= s1; ++t1){
-        for(unsigned t2 = 1; t2 <= s2; ++t2){
-
-            // NOTE: calculate common schema
-            ArrayListSchema set_schema1 = set_schemas1[t1 - 1];
-            ArrayListDependencyPair dependencies1 = dependencies_array1[t1 - 1];
-            
-            ArrayListSchema set_schema2 = set_schemas2[t2 - 1];
-            ArrayListDependencyPair dependencies2 = dependencies_array2[t2 - 1];
-
-            ArrayListSchema *computed_common_set_schema = common_set_schemas + (t1-1)*s2 + (t2-1);
-            ArrayListDependencyPair *computed_common_dependencies = common_dependencies_array + (t1-1)*s2 + (t2-1);
-            exists_common_schema_array[(t1-1)*s2 + (t2-1)] = common_set_schema_free_vars_baseline(
-                set_schema1, dependencies1, free_var_positions1,
-                set_schema2, dependencies2, free_var_positions2,
-                computed_common_set_schema, computed_common_dependencies,
-                &arena_operands);
-
-            // NOTE: normalized uses longest_dependency which needs to know the sizes of the schemas, so we precalculate them.
-            foreach_in_arraylistptr(Schema, s, computed_common_set_schema) { calculate_schema_size(s); }
-            foreach_in_arraylistptr(DependencyPair, pair, computed_common_dependencies){
-                foreach_in_arraylist(Schema, s, pair->schemas){
-                    calculate_schema_size(s);
-                }
-            }
-
-            // NOTE: calculate normalized set schemas. Sizes of schemas updated.
-            ArrayListSchema list_normalized_common_set_schema = normalized_set_schema(*computed_common_set_schema, *computed_common_dependencies, &arena_operands);
-
-            // NOTE: calculate depths once to create iterator over Schemas
-            foreach_in_arraylist(Schema, s, list_normalized_common_set_schema) {
-                calculate_schema_depth(s);
-                max_normalized_common_depth = MAX(max_normalized_common_depth, s->depth);
-            }
-
-            // NOTE: wrap to calculate size only in one place
-            SetSchema *normalized_common_set_schema = normalized_common_set_schemas + (t1-1)*s2 + (t2-1);
-            normalized_common_set_schema->list = list_normalized_common_set_schema;
-            normalized_common_set_schema->size = 0;
-            foreach_in_arraylist(Schema, s, normalized_common_set_schema->list) { normalized_common_set_schema->size += s->size; }
-            max_normalized_common_set_size = MAX(max_normalized_common_set_size, normalized_common_set_schema->size);
-        }
-    }
-
-    // NOTE: we can precalculate the starting indices of each term (that correspond to the free vars) using the sizes of the normalized schemas
-    //  before entering the resulting blocks' loop.
-    unsigned *starting_col_indices_array = allocate(&arena_operands, sizeof(*starting_col_indices_array) * (free_vars1.size*s1 + free_vars2.size*s2));
-    unsigned *starting_col_indices_array1 = starting_col_indices_array;
-    unsigned *starting_col_indices_array2 = starting_col_indices_array + free_vars1.size*s1;
-    
-    unsigned *starting_indices = starting_col_indices_array1;
-    for(unsigned i = 0; i < s1; ++i){
-        ArrayListSchema normalized = normalized_set_schemas1[i].list;
-        starting_column_indexes(normalized, starting_indices);
-        starting_indices += free_vars1.size;
-    }
-    for(unsigned i = 0; i < s2; ++i){
-        ArrayListSchema normalized = normalized_set_schemas2[i].list;
-        starting_column_indexes(normalized, starting_indices);
-        starting_indices += free_vars2.size;
-    }
-
-    clock_gettime(CLOCK_MONOTONIC, &end_schemas);
-    timespec_subtract(&schemas_elapsed, &end_schemas, &start_schemas);
-
-    Arena arena_result;
-    float load_factor = 0.75f;
-    size_t num_buckets_hms_rows_to_mapping_sides = (unsigned)((float)(max_rows1) / load_factor) + 1 + (unsigned)((float)(max_rows2) / load_factor) + 1;
-    size_t arena_result_bytes = 
-        (max_rows1 + max_rows2) * (max_normalized_common_set_size*sizeof(unsigned)) +
-        (num_buckets_hms_rows_to_mapping_sides) * (sizeof(RowToMappingSide)) +
-        (max_normalized_common_set_size) * sizeof(unsigned) +
-        (max_rows1 * max_rows2) * sizeof(mgu_schema) +
-        (s1 + s2) * max_normalized_common_set_size * sizeof(int);
-    init_arena(&arena_result, arena_result_bytes);
-
-    Arena debug_arena; init_arena(&debug_arena, 10000*sizeof(Schema));
-
-    // NOTE: cleans to this arena are done in the mapping_column_indexes_side functions
-    Arena schema_iterator_arena; init_arena(&schema_iterator_arena, sizeof(SchemaIteratorNode) * (max_normalized_operand_depth + max_normalized_common_depth));
 
     // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
     //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
@@ -3068,31 +2977,15 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         num_bytes_pointers2 + num_bytes_virtual_columns2 + num_bytes_column_mappings2));
 
 
+
+    // TODO(YA): todas las comparaciones entre atributos, incluidos entre free vars, iran dentro de la función equal_matrices.
+    //  equal_matrices, en vez de devolver tan pronto como encuentre un error, podemos devolver un bitmap (al cual implementaremos)
+    //  un print function, que indica todos los tipos de errores distintos cometidos.
+
     /* --- Process result blocks one at a time --- */
-    ArrayListCharPtr free_vars3;
-    result_block rb;
-    ArrayListSchema common_set_schema;
-    ArrayListDependencyPair common_dependencies;
-    clock_gettime(CLOCK_MONOTONIC, &start_reading);
-    read_first_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &free_vars3, &arena_result, &debug_arena);
-    clock_gettime(CLOCK_MONOTONIC, &end_reading);
-    timespec_subtract(&elapsed, &end_reading, &start_reading);
-    timespec_add(&read_file_elapsed, &read_file_elapsed, &elapsed);
-
-    // NOTE: calculate and check final free vars only once! Since it corresponds to the entire M3!
-    bool ok_free_vars = equal_array_lists_char_ptr(free_vars3, computed_free_vars3);
-    if (verbose) printf("ok_free_vars = %u\n", ok_free_vars);
-    assert(ok_free_vars);
-
-    if (verbose) print_result_block(&rb, 0);
-
-    struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {}, mapping_elapsed_nl_hashopt = {};
-
-    struct timespec start_row_extension, end_row_extension;
-    struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
-
-    // NOTE: the amount of calls to mapping side calculation thanks to the HasMap of Row structure optimization in the case of non-linear blocks
-    unsigned saved_calls1 = 0, saved_calls2 = 0;
+    //struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {}, mapping_elapsed_nl_hashopt = {};
+    //struct timespec start_row_extension, end_row_extension;
+    //struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
 
     for(unsigned t1 = 1; t1 <= s1; ++t1){
         for(unsigned t2 = 1; t2 <= s2; ++t2) {

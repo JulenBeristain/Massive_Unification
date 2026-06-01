@@ -82,4 +82,22 @@ static inline size_t smallest_greater_power_of_2(size_t n) {
         ((n) > (max)) ? (max) : \
             (n))
 
+
+// Operations return code types //////////////////////////////////////
+// TODO(FUT): define macros to create HashMaps of any types and move this definitions to that file...
+typedef enum MapInsertReturnCode MapInsertReturnCode;
+enum MapInsertReturnCode { 
+    MAP_INSERT_ADDED,
+    MAP_INSERT_ADDED_RESIZING,
+    MAP_INSERT_ALREADY_CONTAINED
+};
+
+// TODO(FUT): define macros to create HashSets of any types and move this definitions to that file...
+typedef enum SetInsertReturnCode SetInsertReturnCode;
+enum SetInsertReturnCode { 
+    SET_INSERT_ADDED,
+    SET_INSERT_ADDED_RESIZING,
+    SET_INSERT_ALREADY_CONTAINED
+};
+
 #endif

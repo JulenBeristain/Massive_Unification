@@ -194,6 +194,8 @@ Variable max_v_in_schema(Schema schema);
 Variable max_v_in_set_schema(ArrayListSchema set_schema);
 void increment_variables_in_schema(Schema *schema, Variable increment);
 void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment);
+void decrement_variables_in_schema(Schema* schema, Variable decrement);
+void decrement_variables_in_set_schema(ArrayListSchema set_schema, Variable decrement);
 
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena);
 void substitute_vars_arena(Schema original, SetVariables vars, Schema substitution, Schema *result, Arena *arena);
@@ -220,6 +222,7 @@ bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDepe
 bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
 bool equivalent_set_dependencies_ignoring_empties(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable* mapping);
 void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
+void decrement_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable decrement);
 ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
 int read_set_schema_with_dependencies(FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena);
 

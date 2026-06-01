@@ -258,11 +258,16 @@ typedef IntrusiveListDouble IntrusiveList, *IntrusiveListPtr;
 
 typedef struct BlockRow BlockRow, *BlockRowPtr;
 struct BlockRow {
-    unsigned c;                  // Number of columns in the main term
-//    unsigned e;                  // Number of exception blocks for the main term
-    int *row;                    // 1D array containing the values of the main term
-    IntrusiveList block_pos;     // The intrusive list that stablishes the position of this main term in its block.
-//    exception_block *exceptions; // Array with e exception blocks for the main term (TODO(FUT): we may need to modify to not have the array, but intrusive lists of exception blocks)
+    unsigned c;                     // Number of columns in the main term
+//    unsigned e;                   // Number of exception blocks for the main term
+    int *row;                       // 1D array containing the values of the main term
+    IntrusiveList block_pos;        // The intrusive list that stablishes the position of this main term in its block.
+
+// TODO(YA): UNNECESSARY FOR OUR FINAL DECITION TO HANDLE THE MEMORY OF SCHEMAS.
+//    ArrayListSchema *schema;        // The denormalized schema of the row in the block. NULL if not inside postrprocessing_to_MNF.
+//    SetDependencies *dependencies;  // The set of dependencies associated to the schema. All dependent schemas are normalized ones. NULL if not inside postrprocessing_to_MNF.
+
+//    exception_block *exceptions;  // Array with e exception blocks for the main term (TODO(FUT): we may need to modify to not have the array, but intrusive lists of exception blocks)
 };
 
 #include "Schemas/schemas.h"
@@ -289,7 +294,8 @@ struct Matrix {
     unsigned b;                     // Number of blocks in the matrix
     IntrusiveList head_for_blocks;  // Anchor point for the blocks of this matrix.
     ArrayListCharPtr free_vars;     // Free var information (strings and array of pointers stored in the arena)
-    Arena arena;                    // Arena to manage all the memory necessary for the matrix, its blocks and rows
+    Arena blocks_arena;               // Arena to manage all the memory necessary for the matrix's blocks and rows
+    Arena schemas_arena;            // Arena to manage all the memory necessary for the schemas and dependencies
 };
 
 static inline void remove_block_row(BlockRow *row) {
@@ -378,7 +384,8 @@ static inline void init_empty_matrix(Matrix *matrix) {
     init_intrusive_list(&matrix->head_for_blocks);
     matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
     // TODO(ADJUST): when testing with real instances, we can take here a more appropriate value to reduce the number of Memory Blocks
-    init_arena(&matrix->arena, KILOBYTES(4));
+    init_arena(&matrix->blocks_arena, KILOBYTES(4));
+    init_arena(&matrix->schemas_arena, KILOBYTES(4));
 }
 
 // TODO(FUT): when this function is used, we should try to adjust the arena_size based on the information in the file or the operand Matrices
@@ -403,8 +410,14 @@ typedef struct {
 EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2);
 
 // NOTE: after freeing, shouldn't use the same Matrix variable without proper reinitialization
-static inline void free_matrix_v (Matrix m) { free_arena(&m.arena); }
-static inline void free_matrix_p (Matrix *m) { free_arena(&m->arena); }
+static inline void free_matrix_v (Matrix m) {
+    free_arena(&m.blocks_arena);
+    free_arena(&m.schemas_arena);
+}
+static inline void free_matrix_p (Matrix *m) { 
+    free_arena(&m->blocks_arena); 
+    free_arena(&m->schemas_arena);
+}
 #define free_matrix(m)              \
     _Generic((m),				    \
 		Matrix *: free_matrix_p,    \
@@ -413,10 +426,21 @@ static inline void free_matrix_p (Matrix *m) { free_arena(&m->arena); }
 
 // NOTE: after clearing, you can use the same Matrix variable. It keeps the same memory usage as before.
 static inline void clear_matrix(Matrix *m){
-    clear_arena(&m->arena);
+    clear_arena(&m->blocks_arena);
+    clear_arena(&m->schemas_arena);
     m->b = 0;
     m->free_vars = EMPTY_ARRAYLIST(CharPtr);
     init_intrusive_list(&m->head_for_blocks);
 }
+
+
+typedef enum {
+    RM_FILE_NOT_OPENED, 
+    RM_NOT_BLOCK_COUNT,
+    RM_NOT_FREE_VARS, 
+    RM_SUCCESS 
+} ReadMatrixResultType;
+
+ReadMatrixResultType read_matrix(char *filename, Matrix *matrix);
 
 #endif

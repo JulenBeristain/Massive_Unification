@@ -509,6 +509,25 @@ void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable incr
     }
 }
 
+void decrement_variables_in_schema(Schema* schema, Variable decrement)
+{
+    if (schema->type == VARIABLE_SCHEMA) {
+        schema->v -= decrement;
+    } else {
+        foreach_in_schemaptr(schema, subschema)
+        {
+            decrement_variables_in_schema(subschema, decrement);
+        }
+    }
+}
+void decrement_variables_in_set_schema(ArrayListSchema set_schema, Variable decrement)
+{
+    foreach_in_arraylist(Schema, s, set_schema)
+    {
+        decrement_variables_in_schema(s, decrement);
+    }
+}
+
 // NOTE: we are making shallow copies of substitution, not deep copies.
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema* result, Arena* arena)
 {
@@ -897,6 +916,18 @@ void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencie
         foreach_in_arraylist(Schema, schema, pair->schemas)
         {
             increment_variables_in_schema(schema, increment);
+        }
+    }
+}
+
+void decrement_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable decrement)
+{
+    foreach_in_arraylist(DependencyPair, pair, dependencies)
+    {
+        pair->v -= decrement;
+        foreach_in_arraylist(Schema, schema, pair->schemas)
+        {
+            decrement_variables_in_schema(schema, decrement);
         }
     }
 }

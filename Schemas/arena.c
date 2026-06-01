@@ -1,5 +1,6 @@
 #include "arena.h"
 #include "utils.h"
+#include "hash_to_pointers.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -90,8 +91,8 @@ void init_arena_chained(Arena *arena, size_t size_in_bytes){
 }
 
 // NOTE: only the contents of the arena are freed. If the arena itself was malloced, it is not freed!
-void free_arena_chained(Arena *arena){
-    MemoryBlock *current = arena->memory_blocks;
+void free_arena_chained(Arena arena){
+    MemoryBlock *current = arena.memory_blocks;
     while(current){
         free(current->memory);
         MemoryBlock *next = current->next;
@@ -168,7 +169,7 @@ void *callocate_chained(Arena *arena, size_t num_bytes){
 }
 
 
-
+#include "../postprocessing_to_mnf.h"
 
 void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes) {
     arena->memory = malloc(size_in_bytes);
@@ -176,6 +177,8 @@ void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes) {
     arena->size = size_in_bytes;
     arena->next_free_position = 0;
 }
+
+// TODO(YA): RENAME THE SCHEMAS ARENA, BECAUSE WE CHANGE THE APPROXIMATION TO HANDLE THE MEMORY OF SCHEMAS!!!
 
 void *allocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
     assert(arena->memory != NULL); // PRE: arena already initialized
@@ -190,8 +193,43 @@ void *allocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
     if(new_offset > arena->size){
         // TODO(YA): should traverse all Schemas in the program and shallow copy with a HashSet of addresses of Schemas
         //  the current active Schemas.
-        // TODO(YA): hash set of void* and Dictionary string to void*
+#if 0
+        // create the new arena
+        ;;;
+
+        extern HashMapStringToPointer matrices;
+        HashSetPointers addresses_of_copied_schemas = create_hash_set_pointers_defnumbuckets();
+
+        // TODO(FUT): would be helpful to know if the Arena is resizing while postprocessing some matrix to MNF. If that is
+        //  not the case, we know that BlockRows are not pointing to their denormalized schemas. Furthermore, we could identify
+        //  which matrix/matrices (if parallelized) are being postprocessed, and travers their BlockRows only... 
+        bool is_called_while_postprocessing = true;
+
+        foreach_in_hashmap_string_to_pointer(matrices, pair) {
+            Matrix *matrix = pair->ptr;
+
+            Block *block;
+            intrusive_list_for_each_entry(block, &matrix->head_for_blocks, matrix_pos) {
+                block->schema;
+                block->dependencies;
+                block->normalized_schema;
+
+                intrusive_list_
+            
+                // TODO(YA): what happens if the SchemasArena is filled when calculating Schemas of rows!? We need to traverse
+                //  through them too! Therefore, we need to store that information in BlockRow!!!
+
+                // TODO(YA): not enough to simply copy the Schemas in the old Arena memory, because the pointers change!
+                //  No solamente necesitamos hash set de addresses the Schemas ya vistos, sino que hay que hacer un mapeo
+                //  address viejo a address nuevo!
+            }
+        }
+
+        // free the previous arena
+        ;;;
+#else
         assert(false);
+#endif
     }
     else { // There is enough space
         arena->next_free_position = new_offset;

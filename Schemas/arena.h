@@ -30,7 +30,7 @@ typedef struct Arena {
 
 void init_arena_chained(Arena *arena, size_t size_in_bytes);
 static inline void init_arena_chained_defcapacity(Arena *arena) { init_arena_chained(arena, KILOBYTES(4)); }
-void free_arena_chained(Arena *arena);
+void free_arena_chained(Arena arena);
 void clear_arena_chained(Arena *arena);
 void *allocate_chained(Arena *arena, size_t num_bytes);
 void *callocate_chained(Arena *arena, size_t num_bytes);
@@ -46,8 +46,8 @@ void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes);
 static inline void init_schemas_arena_defcapacity(SchemasArena *arena) { init_schemas_arena(arena, 10000 * sizeof(Schema)); }
 
 // NOTE: don't use the Arena after freeing!
-static inline void free_schemas_arena(SchemasArena *arena) {
-    free(arena->memory);
+static inline void free_schemas_arena(SchemasArena arena) {
+    free(arena.memory);
 }
 
 static inline void clear_schemas_arena(SchemasArena *arena) {
@@ -67,16 +67,16 @@ typedef Arena ChainedArena;
         SchemasArena*: init_schemas_arena    \
     )(arena, size_in_bytes)
 
-#define init_arena_defcapacity(arena, size_in_bytes)    \
+#define init_arena_defcapacity(arena)    \
     _Generic((arena),                                   \
         ChainedArena*: init_arena_chained_defcapacity,   \
         SchemasArena*: init_schemas_arena_defcapacity    \
-    )(arena, size_in_bytes)
+    )(arena)
 
 #define free_arena(arena)                   \
     _Generic((arena),                       \
-        ChainedArena*: free_arena_chained,   \
-        SchemasArena*: free_schemas_arena    \
+        ChainedArena: free_arena_chained,   \
+        SchemasArena: free_schemas_arena    \
     )(arena)
 
 #define clear_arena(arena)                  \

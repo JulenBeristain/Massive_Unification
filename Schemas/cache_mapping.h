@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include "arena.h"
+#include "utils.h"
 
 // HASH MAP TYPES ////////////////////////////////////////////////////
 typedef struct RowToMappingSide RowToMappingSide;
@@ -20,15 +21,6 @@ struct HashMapRowToMappingSide {
     uint32_t len_rows;
     uint32_t len_mapping_sides;
     RowToMappingSide *buckets;
-};
-//////////////////////////////////////////////////////////////////////
-
-// Operations return code types //////////////////////////////////////
-typedef enum MapInsertReturnCode MapInsertReturnCode;
-enum MapInsertReturnCode { 
-    MAP_INSERT_ADDED,
-    MAP_INSERT_ADDED_RESIZING,
-    MAP_INSERT_ALREADY_CONTAINED
 };
 //////////////////////////////////////////////////////////////////////
 
