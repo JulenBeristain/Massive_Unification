@@ -2783,11 +2783,521 @@ int main_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
 
 #include "postprocessing_to_mnf.h"
 
+// TODO(YA-OPT): from an efficieny point of view, having to deepcopy schemas and dependencies per successful block combination doesn't seem
+//  very efficient and seems to invalidate the other possible optimizations that take advantage of the immutability of schemas.
+
+Schema *schema_deepcopy(Schema *schema, Arena *arena) {
+    Schema *result = allocate(arena, sizeof(*result));
+    *result = *schema;
+    if (schema->type == GENERAL_SCHEMA) {
+        result->subschemas = allocate(arena, sizeof(*result->subschemas) * result->arity);
+        foreach_in_schemaptrs(schema, result->subschemas, sub, res) {
+            *res = *schema_deepcopy(sub, arena);
+        }
+    }
+    return result;
+    
+}
+
+// TODO(CLEAN): a little ugly to have this two versions. Maybe we should make DependencyPairs to point to the 
+//  dependency list too, instead of having in the same struct as pair.v ???
+
+ArrayListSchema set_schema_contents_deepcopy(ArrayListSchema *set_schema, Arena *arena) {
+    // NOTE: no resizing risk
+    ArrayListSchema result = create_array_list_schema_arena(set_schema->size, arena);
+    result.size = set_schema->size;
+    foreach_in_arraylistptrs(Schema, schema, res, set_schema, &result) {
+        *res = *schema_deepcopy(schema, arena);
+    }
+    return result;
+}
+
+ArrayListSchema *set_schema_deepcopy(ArrayListSchema *set_schema, Arena *arena) {
+    ArrayListSchema *result = allocate(arena, sizeof(*result));
+    *result = set_schema_contents_deepcopy(set_schema, arena);
+    return result;
+}
+
+// TODO(YA-OPT): review how are the schemas in set of dependencies originally handled... Again, it looks wrong to 
+//  deepcopy the entire Schemas...
+
+// TODO(CLEAN): when copying the variable in the dependency pair, we could have variables renamed from the second 
+//  set schema, and therefore we can have some "gaps" or unused variable identifiers. Shouldn't be problematic, but
+//  we could normalize them from 1..max too...
+
+DependencyPair *dependency_pair_deepcopy(DependencyPair *pair, Arena *arena) {
+    DependencyPair *result = allocate(arena, sizeof(*result));
+    result->v = pair->v;
+    result->schemas = set_schema_contents_deepcopy(&pair->schemas, arena);
+    return result;
+}
+
+SetDependencies *set_dependencies_deepcopy(SetDependencies *dependencies, Arena *arena) {
+    SetDependencies *result = allocate(arena, sizeof(*result));
+    // NOTE: no resizing risk
+    *result = create_array_list_dependency_pair_arena(dependencies->size, arena);
+    result->size = dependencies->size;
+    foreach_in_arraylistptrs(DependencyPair, pair, res, dependencies, result) {
+        *res = *dependency_pair_deepcopy(pair, arena);
+    }
+    return result;
+}
+
+
+
+
+/**
+ * @brief Builds a raw unifier for a pair of main_term rows using their mgu_schema.
+ *
+ * Iterates over each common column pair defined in @p ms, calling unifier_a_b()
+ * for each.  The raw unifier may contain redundant or variable-to-variable
+ * bindings that are resolved by correct_unifier().
+ *
+ * @param unifier  Output array (caller allocates 2×ms->n_common slots starting at unifier[1]).
+ * @return 0 if the rows are potentially unifiable; 1 if a constant clash was detected.
+ */
+static int unifier_block_rows(BlockRow *br1, BlockRow *br2, mgu_schema *ms, unsigned *unifier) {
+    for (unsigned i = 0; i < ms->n_common; i++) {
+        /*
+         * common_L/R are 1-based; subtract 1 to get the 0-based column index.
+         */
+        assert(ms->common_L[i] > 0 && ms->common_R[i] > 0);
+        if (unifier_a_b(br1->row, ms->common_L[i] - 1,
+                        br2->row, ms->common_R[i] - 1,
+                        unifier, 2 * i, br1->c, ms->new_a, br2->c))
+            return 1;
+    }
+    return 0;
+}
+
+
+/**
+ * @brief Refines the raw unifier produced by unifier_rows() into a minimal substitution set.
+ *
+ * Algorithm:
+ *   1. Build a union-find-like L2 array (one entry per extended column index).
+ *   2. Normalise repeated-variable references so each variable is represented by
+ *      its first occurrence.
+ *   3. For each binding pair (x←y):
+ *        - If both are constants and equal, skip.
+ *        - If both are constants and distinct, return -1 (not unifiable).
+ *        - If one is a constant and the other a variable, record (variable←constant)
+ *          and propagate to all variables already aliased to the variable.
+ *        - If both are variables, make one point to the other and merge their alias lists.
+ *   4. Collect the final substitutions: for each column that is not substituted by
+ *      anything but has an alias list, emit (alias←column) pairs.
+ *   5. Write the substitution count into unifier[0].
+ *
+ * @param unifier  In/out array; layout on input: 2×n slots starting at unifier[1],
+ *                 each pair (x,y) meaning "x should become y".  On output: unifier[0]
+ *                 holds the number of valid substitutions, and the first 2×count slots
+ *                 contain the simplified bindings.
+ * @return 0 if the unifier is valid; -1 if a contradiction was found.
+ */
+static int correct_block_rows_unifier(BlockRow *br1, BlockRow *br2, mgu_schema *ms, unsigned *unifier) {
+    const unsigned c1  = br1->c;
+    const unsigned c2  = br2->c;
+    const unsigned m   = ms->n_common;
+    const int *row_a   = br1->row;
+    const int *row_b   = br2->row;
+
+    /*
+     * The extended index space has 2*m slots:
+     *   0..m-1     → extended M1 columns
+     *   m..2*m-1   → extended M2 columns (stored as original_index + m in the raw unifier)
+     */
+    unsigned lst_length = m * 2;
+    unsigned i;
+
+    L2 *lst = (L2 *)malloc(lst_length * sizeof(L2));
+    for (i = 0; i < lst_length; i++) lst[i] = create_L2_empty();
+
+    for (i = 0; i < 2 * m; i += 2) {
+        unsigned x  = unifier[1 + i];
+        unsigned y  = unifier[1 + i + 1];
+        int val_x, val_y;
+
+        if (x == 0 && y == 0) continue; /* Empty / equal-constant pair. */
+
+        /* Resolve repeated variables to their first occurrence (negative back-reference). */
+        if (x < c1 && row_a[x] < 0)
+            x = (unsigned)(-(row_a[x] + 1));
+        else if (x >= m && (x - m) < c2 && row_b[x - m] < 0)
+            x = (unsigned)(-(row_b[x - m] + 1)) + m;
+
+        if (y < c1 && row_a[y] < 0)
+            y = (unsigned)(-(row_a[y] + 1));
+        else if (y >= m && (y - m) < c2 && row_b[y - m] < 0)
+            y = (unsigned)(-(row_b[y - m] + 1)) + m;
+
+        /* Follow any existing substitution pointers. */
+        if (lst[x].count > 0) x = (unsigned)lst[x].by;
+        if (lst[y].count > 0) y = (unsigned)lst[y].by;
+        if (x == y) continue; /* Already aliased; nothing to do. */
+
+        /* Retrieve actual values. */
+        if      (x < c1)        val_x = row_a[x];
+        else if (x < m)         val_x = 1;           /* Fresh M1 variable. */
+        else if ((x - m) < c2)  val_x = row_b[x - m];
+        else                    val_x = 1;
+
+        if      (y < c1)        val_y = row_a[y];
+        else if (y < m)         val_y = 1;
+        else if ((y - m) < c2)  val_y = row_b[y - m];
+        else                    val_y = 1;
+
+        if (is_symbol(val_x) && is_symbol(val_y) && val_x != val_y) {
+            /* Constant clash → not unifiable. */
+            for (unsigned k = 0; k < lst_length; k++) free_L2(lst[k]);
+            free(lst);
+            return -1;
+        }
+        if (is_symbol(val_x) && is_symbol(val_y)) continue; /* Equal constants; nothing to do. */
+
+        if (is_symbol(val_x) && is_variable(val_y)) {
+            /* x is a constant, y is a variable → substitute y with x. */
+            lst[y].count = 1;
+            lst[y].by    = (int)x;
+            lst[y].ind   = (int)y;
+            /* Propagate: all variables previously pointing to y now point to x. */
+            for (L3 *cur = lst[y].head; cur != NULL; cur = cur->next)
+                lst[cur->ind].by = (int)x;
+            /* Move y and its chain to x's alias list. */
+            L3 *node = create_L3((int)y, NULL);
+            if (!lst[x].head) { lst[x].head = lst[x].tail = node; }
+            else              { lst[x].tail->next = node; lst[x].tail = node; }
+            if (lst[y].head) { node->next = lst[y].head; lst[x].tail = lst[y].tail; }
+            lst[y].head = lst[y].tail = NULL;
+        } else {
+            /* x is a variable (or both variables) → substitute x with y. */
+            lst[x].count = 1;
+            lst[x].by    = (int)y;
+            lst[x].ind   = (int)x;
+            for (L3 *cur = lst[x].head; cur != NULL; cur = cur->next)
+                lst[cur->ind].by = (int)y;
+            L3 *node = create_L3((int)x, NULL);
+            if (!lst[y].head) { lst[y].head = lst[y].tail = node; }
+            else              { lst[y].tail->next = node; lst[y].tail = node; }
+            if (lst[x].head) { node->next = lst[x].head; lst[y].tail = lst[x].tail; }
+            lst[x].head = lst[x].tail = NULL;
+        }
+    }
+
+    /* Collect final substitutions from the alias lists. */
+    int      last_unifier   = 0;
+    unsigned n_substitutions = 0;
+    for (i = 0; i < lst_length; i++) {
+        if (lst[i].count == 0 && lst[i].head) {
+            for (L3 *cur = lst[i].head; cur != NULL; cur = cur->next) {
+                unifier[1 + last_unifier]     = (unsigned)cur->ind;
+                unifier[1 + last_unifier + 1] = i;
+                n_substitutions++;
+                last_unifier += 2;
+            }
+        }
+    }
+    unifier[0] = n_substitutions;
+
+    for (i = 0; i < lst_length; i++) free_L2(lst[i]);
+    free(lst);
+    return 0;
+}
+
+
+/**
+ * @brief Computes all pairwise unifiers for two operand blocks.
+ *
+ * For each pair (i, j) of main_terms from @p ob1 and @p ob2:
+ *   1. Calls unifier_rows() to produce a raw binding list.
+ *   2. Calls correct_unifier() to refine it.
+ *   3. On success, appends the unifier plus operand row indices (i, j) to @p unifiers.
+ *
+ * @param unifiers  Pre-allocated output array (worst-case: ob1->r × ob2->r entries,
+ *                  each of size 1 + 2*rb->c + 2 unsigned slots).
+ * @return Number of valid unifiers found.
+ */
+static unsigned unifier_blocks(Block *b1, Block *b2, Block *b3, mgu_schema *schemas, bool is_b3_lineal, unsigned *unifiers) {
+    const unsigned m            = b3->c;
+    const unsigned unifier_size = 1 + 2 * m + 2;
+    unsigned       last_unifier = 0;
+
+    unsigned *unifier = (unsigned *)malloc(unifier_size * sizeof(unsigned));
+
+    unsigned i = ~0;
+    BlockRow *br1;
+    intrusive_list_for_each_entry(br1, &b1->head_for_rows, block_pos) {
+        ++i;
+
+        unsigned j = ~0;
+        BlockRow *br2;
+        intrusive_list_for_each_entry(br2, &b2->head_for_rows, block_pos) {
+            ++j;
+            
+            memset(unifier, 0, unifier_size * sizeof(unsigned));
+            unsigned index_mt    = i * b2->r + j;
+            mgu_schema *schema   = is_b3_lineal ? schemas : schemas + index_mt;
+        
+            if (unifier_block_rows(br1, br2, schema, unifier) != 0)
+                continue;
+            if (correct_block_rows_unifier(br1, br2, schema, unifier) != 0)
+                continue;
+        
+            // NOTE: we store the addresses of the BlockRows that unify in the new version with intrusive_lists and postprocessing.
+            //  We store the index_mt to identify what mgu_schema has been used for this unifier calculation
+            unifier[1 + 2*m] = index_mt;
+            BlockRow **address = unifier + (1 + 2 * m + 1);
+            *address = br1;
+            ++address;
+            *address = br2;
+            
+            memcpy(&unifiers[last_unifier * unifier_size], unifier,
+                   unifier_size * sizeof(unsigned));
+            last_unifier++;
+        }
+    }
+
+    free(unifier);
+    return last_unifier;
+}
+
+/**
+ * @brief Applies a unifier to produce the unified main_term @p mt3.
+ *
+ * Strategy:
+ *   1. Copy @p mt1->row into @p mt3->row (the left operand determines the
+ *      base layout; fresh columns are already zeroed by create_empty_main_term).
+ *   2. For each substitution (x←y) in the unifier where x belongs to the
+ *      left-side extended row:
+ *        - If y is a constant: set row[x] = val_y and replace all back-references
+ *          to x with the constant.
+ *        - If y is a variable: use unif_dict to track the canonical representative
+ *          for y; set row[x] accordingly and handle cross-row variable aliasing.
+ *   3. Clear unif_dict after all substitutions.
+ *
+ * @param mt1     Left operand main_term.
+ * @param mt2     Right operand main_term.
+ * @param mt3     Output main_term (must already be allocated via create_empty_main_term).
+ * @param unifier Substitution array: [n_subs, x0,y0, x1,y1, …].
+ */
+static void apply_unifier_left_to_block_rows(BlockRow *br1, BlockRow *br2, BlockRow *br3, unsigned *unifier) {
+    const unsigned n  = unifier[0] * 2;
+    const unsigned c1 = br1->c;
+    const unsigned c2 = br2->c;
+    const unsigned m  = br3->c;
+
+    /* Buffer for converting a column index to its string key in unif_dict. */
+    int    length = (int)log10((double)(2 * m)) + 2;
+    char  *y_str  = (char *)malloc((size_t)length * sizeof(char));
+
+    /* Copy the left row; columns c1..m-1 (fresh) remain zero. */
+    memcpy(br3->row, br1->row, c1 * sizeof(int));
+    int       *row_a = br3->row;
+    const int *row_b = br2->row;
+
+    for (unsigned i = 1; i < n; i += 2) {
+        unsigned x = unifier[i];
+        unsigned y = unifier[i + 1];
+        bool same_row = false;
+
+        if (x >= m) continue; /* x belongs to the right side; skip for left-row application. */
+
+        int val_y;
+        if (y < m)             { val_y = row_a[y]; same_row = true; }
+        else if ((y - m) < c2) { val_y = row_b[y - m]; }
+        else                   { val_y = 1; } /* Fresh variable on right side. */
+
+        if (is_symbol(val_y) > 0) {
+            /* y is a constant: replace x and all its back-references. */
+            row_a[x] = val_y;
+            for (unsigned j = 0; j < m; j++)
+                if (row_a[j] == (int)(-(x + 1))) row_a[j] = val_y;
+        } else {
+            /* y is a variable: track via unif_dict to handle repeated occurrences. */
+            snprintf(y_str, (size_t)length, "%d", y);
+            struct nlist *entry = lookup(unif_dict, y_str);
+
+            if (!entry) {
+                /*
+                 * First occurrence of y.  When both x and y are in the same
+                 * (left) row, ensure the variable with the smaller index is
+                 * the canonical representative so that later reordering is
+                 * consistent.
+                 */
+                if (same_row && x > y) {
+                    /* x > y: make x point to y (i.e. x ← -( y+1 )). */
+                    row_a[x] = -(int)(y + 1);
+                    snprintf(y_str, (size_t)length, "%d", x);
+                    install(unif_dict, y_str, (int)y);
+                } else if (same_row) {
+                    /* x < y: make y point to x. */
+                    row_a[y] = -(int)(x + 1);
+                    install(unif_dict, y_str, (int)x);
+                } else {
+                    install(unif_dict, y_str, (int)x);
+                }
+            } else {
+                /*
+                 * y was already seen.  Make x point to the same canonical
+                 * representative (z) as y, and update any existing references to x.
+                 */
+                int z    = entry->defn;
+                row_a[x] = -(z + 1);
+                for (unsigned j = 0; j < m; j++)
+                    if (row_a[j] == (int)(-(x + 1))) row_a[j] = -(z + 1);
+            }
+        }
+    }
+
+    clear(unif_dict);
+    free(y_str);
+}
+
+/**
+ * @brief Reorders a unified main_term's row into canonical column order.
+ *
+ * After apply_unifier_left(), the row values are indexed relative to the
+ * extended M1 layout.  This function remaps them to the result column order
+ * defined by ms->common_L, fixes back-reference indices, and resolves any
+ * residual chained references.
+ *
+ * @param mt  Unified main_term to reorder in place.
+ * @param ms  Schema whose common_L array defines the before→after column mapping.
+ */
+static void reorder_unified_block_row(BlockRow *br, mgu_schema *ms) {
+    unsigned c = br->c;
+    assert(c == ms->n_common);
+
+    int *before      = br->row;
+    int *after       = (int  *)malloc(c * sizeof(int));
+    int *before_after = (int  *)malloc(c * sizeof(int));
+    bool *duplicated  = (bool *)malloc(c * sizeof(bool));
+    memset(before_after, -1, c * sizeof(int));
+    memset(duplicated,    0,  c * sizeof(bool));
+
+    /*
+     * Pass 1: resolve single-level chained references in the before array.
+     * After apply_unifier_left(), it is possible that before[i] = -( ref+1 )
+     * where before[ref] != 0 (the reference target was itself substituted).
+     * This pass collapses one level of indirection.
+     */
+    for (unsigned i = 0; i < c; i++) {
+        int ref = before[i];
+        if (ref < 0 && !is_var_first_appearence(before[-(ref + 1)]))
+            before[i] = before[-(ref + 1)];
+    }
+
+    /*
+     * Pass 2: permute columns according to common_L.
+     * common_L[i] is the 1-based before-index for result column i.
+     * If a before-column appears more than once, the second occurrence
+     * is recorded as a reference to the first appearance in the after array.
+     */
+    for (unsigned i_after = 0; i_after < c; i_after++) {
+        unsigned i_before = ms->common_L[i_after] - 1; /* 0-based */
+        if (before_after[i_before] != -1) {
+            /* Already seen: reference or copy the constant. */
+            after[i_after] = is_symbol(before[i_before])
+                ? before[i_before]
+                : -(before_after[i_before] + 1);
+            duplicated[i_after] = true;
+        } else {
+            after[i_after]        = before[i_before];
+            before_after[i_before] = (int)i_after;
+        }
+    }
+
+    /*
+     * Pass 3: fix back-reference indices after the permutation.
+     * A reference after[i] = -(ref+1) was valid in the before array;
+     * the corresponding after-index is before_after[ref].
+     * If the first appearance moved to the right of the reference, the
+     * canonical position and the reference swap roles.
+     */
+    int *after2 = (int *)malloc(c * sizeof(int));
+    memcpy(after2, after, c * sizeof(int));
+
+    for (unsigned i = 0; i < c; i++) {
+        if (after[i] >= 0 || duplicated[i]) continue;
+
+        unsigned ref         = (unsigned)(-(after[i] + 1));
+        unsigned current_idx = (unsigned)before_after[ref];
+
+        if (current_idx < i) {
+            after2[i] = -(int)(current_idx + 1);
+        } else {
+            if (after2[current_idx] < 0) {
+                /* Already swapped in a previous iteration; follow the chain. */
+                after2[i] = after2[current_idx];
+            } else {
+                /* First swap: make current_idx reference i, and i become the canonical 0. */
+                // TODO(YA): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
+                //  I think the code still works even if temp swaps a symbol, so the assertion could be temp >= 0 ...
+                int temp = after2[current_idx];
+                assert(is_var_first_appearence(temp));
+                after2[current_idx] = -(int)(i + 1);
+                after2[i]           = temp;
+            }
+        }
+    }
+
+    /*
+     * Pass 4: resolve any residual single-level chained references in after2,
+     * using the same logic as Pass 1.
+     */
+    for (unsigned i = 0; i < c; i++) {
+        int ref = after2[i];
+        if (ref < 0 && !is_var_first_appearence(after2[-(ref + 1)]))
+            after2[i] = after2[-(ref + 1)];
+    }
+
+    memcpy(before, after2, c * sizeof(int));
+    free(after); free(after2); free(before_after); free(duplicated);
+}
+
+
+static void block_and(Block *b1, Block *b2, Block *b3, mgu_schema *schemas, bool is_b3_lineal, Arena *arena_for_rows) {
+    // TODO(FUT-OPT): as we see, important change to this matrix_intersection approach. Would be interesting to see how
+    //  the other algorithms would need to be changed, and what approach becomes the new more efficient one.
+    // NOTE: 2*2 instead of 2 in unifier_size because now, with intrusive list of rows in blocks, we don't have all rows
+    //  (or main_terms before) consecutive in memory. Therefore, instead of storing unsigned indices (2*4B=8B), we are going to 
+    //  store the pointers to the BlockRows that correspond to that unifier (2*8B=16B = 4*sizeof(unsigned))
+    // We also need an extra slot (the 1 prior to 2*2) to store the index_mt that identifies which mgu_schema has been used to
+    //  calculate that unifier.
+    unsigned unifier_size = 1 + 2*b3->c + 1 + 2*2;
+    unsigned *unifiers    = (unsigned *)malloc(b1->r * b2->r * unifier_size * sizeof(unsigned));
+    unsigned  unif_count  = unifier_blocks(b1, b2, b3, schemas, is_b3_lineal, unifiers);
+
+    for (unsigned i = 0; i < unif_count; i++) {
+
+        BlockRow **address = unifiers + (i * unifier_size + unifier_size);
+        --address;
+        BlockRow *br2 = *address;
+        --address;
+        BlockRow *br1 = *address;
+        unsigned index_mt = *(((unsigned *)(address)) - 1);
+
+        BlockRow *br3 = allocate(arena_for_rows, sizeof(*br3));
+        br3->c = b3->c;
+        add_row_to_block(b3, br3);
+        br3->row = allocate(arena_for_rows, sizeof(*br3->row) * br3->c);
+                                     
+        apply_unifier_left_to_block_rows(br1, br2, br3, &unifiers[i * unifier_size]);
+
+        mgu_schema *schema = is_b3_lineal ? schemas : schemas + index_mt;
+        reorder_unified_block_row(br3, schema);
+    }
+
+    free(unifiers);
+}
+
+
+
 Matrix matrix_and(Matrix *m1, Matrix *m2) {
     Matrix result; init_empty_matrix(&result);
     
     result.free_vars = final_free_vars_ordering(m1->free_vars, m2->free_vars, &result.blocks_arena);
 
+    // NOTE: arena used for data that is deduced from the operands and that remains with its initial value during the whole operation
     Arena operation_arena; init_arena_defcapacity(&operation_arena);
 
     // NOTE: free var positions isn't stored inside the Matrix structure, since it relates data about free_vars in one matrix
@@ -2846,13 +3356,31 @@ Matrix matrix_and(Matrix *m1, Matrix *m2) {
         }
     }
 
-    // NOTE: loop to calculate the common set schemas and normalize them.
+    
+    // NOTE: loop to calculate the common set schemas, normalize them and calculate each resulting block
     {
+        // NOTE: arena used to keep track of the mapping from row variables to extending new virtual columns when calculating
+        //  the mapping column sides.
+        Arena row_vars_arena; init_arena_defcapacity(&row_vars_arena);
+
+        // NOTE: arena used to minimize the memory allocations necessary for Schema iterator stacks
+        Arena schema_iterator_arena; init_arena_defcapacity(&schema_iterator_arena);
+
+        // NOTE: arena used for data (schemas, dependencies and block headers) obtained when operating with operand matrices' schemas 
+        //  and dependencies that we don't know if they will be included in the resulting Block at the moment the data is created. 
+        //  In the case the data has to be persisted in the resulting matrices memory, it is copied to the matrices arena.
+        // It also stores data that is used during the operation of each block pair to calculate the resulting rows; i.e., 
+        //  mgu_schemas (column mappings, which are not stored in the Matrix).
         Arena temporal_arena; init_arena_defcapacity(&temporal_arena);
+        unsigned t1 = 0;
         Block *block1;
         intrusive_list_for_each_entry(block1, &m1->head_for_blocks, matrix_pos) {
+            ++t1;
+            unsigned t2 = 0;
             Block *block2;
             intrusive_list_for_each_entry(block2, &m2->head_for_blocks, matrix_pos) {
+                ++t2;
+
                 // Calculate common schema
                 ArrayListSchema set_schema1 = *block1->schema;
                 ArrayListDependencyPair dependencies1 = *block1->dependencies;
@@ -2863,7 +3391,7 @@ Matrix matrix_and(Matrix *m1, Matrix *m2) {
                 ArrayListSchema *computed_common_set_schema;
                 ArrayListDependencyPair *computed_common_dependencies;
 
-                // TODO(Clean): everytime we perform some operation between schemas in different matrices, for example common_set_schema,
+                // TODO(CLEAN): everytime we perform some operation between schemas in different matrices, for example common_set_schema,
                 //  we have to deepcopy the resultant Schemas in case of a successful operation to avoid pointing to free memeory.
                 //  Another approach would be to do simple counting Garbage Collection with Schemas. We don't need complex generational
                 //  garbage collection algorithms thanks to the tree or DAG (when taken advantage of immutability) like structure of Schemas.
@@ -2881,27 +3409,129 @@ Matrix matrix_and(Matrix *m1, Matrix *m2) {
                     Block *block3 = allocate(&temporal_arena, sizeof(*block3));
                     block3->schema = computed_common_set_schema;
                     block3->dependencies = computed_common_dependencies;
-                    block3->normalized_schema = allocate(&temporal_arena, sizeof(block3->normalized_schema));
+                    block3->normalized_schema = allocate(&temporal_arena, sizeof(*block3->normalized_schema));
                     block3->normalized_schema->list = normalized_set_schema(*block3->schema, *block3->dependencies, &temporal_arena);
                     block3->c = set_schema_size(block3->normalized_schema);
                     block3->r = 0;
                     init_intrusive_list(&block3->head_for_rows);
                     //block3->matrix_pos later when added to the matrix, if it has at least one row!
+                    
+                    // Take arguments to calculate the mappings of column indexes
+                    SetSchema *normalized_common_set_schema = block3->normalized_schema;
+                    SetSchema *normalized_set_schema1 = block1->normalized_schema;
+                    SetSchema *normalized_set_schema2 = block2->normalized_schema;
 
-                    // TODO(YA): Calculate resulting rows! 
+                    unsigned *starting_col_indices1 = starting_col_indices_array1 + (t1-1) * m1->free_vars.size;
+                    unsigned *starting_col_indices2 = starting_col_indices_array2 + (t2-1) * m2->free_vars.size;
+
+                    unsigned row_len1 = block1->c;
+                    unsigned row_len2 = block2->c;
+                    assert(set_schema_size(normalized_set_schema1) == row_len1);
+                    assert(set_schema_size(normalized_set_schema1) == row_len2);
+
+                    // Calculate the mapping of column indexes
+                    mgu_schema computed_mapping;
+                    computed_mapping.n_common = set_schema_size(normalized_common_set_schema);
+                    unsigned num_cols1 = set_schema_size(normalized_set_schema1);
+                    computed_mapping.new_a = computed_mapping.n_common - num_cols1;
+                    unsigned num_cols2 = set_schema_size(normalized_set_schema2);
+                    computed_mapping.new_b = computed_mapping.n_common - num_cols2;
+
+                    unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
+                    computed_mapping.common_columns = allocate(&temporal_arena, num_bytes);
+                    for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
+
+                    unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
+                    mgu_schema *schemas; // = NULL;
+
+                    bool block1_is_lineal = set_schema_contains_variables(*block1->schema);
+                    bool block2_is_lineal = set_schema_contains_variables(*block2->schema);
+                    bool block3_is_lineal = block1_is_lineal && block2_is_lineal;
+
+                    if(block3_is_lineal){
+                        unsigned *mapping_sides = allocate(&temporal_arena, 2 * mapping_side_size);
+                        unsigned *mappingL = mapping_sides;
+                        unsigned *mappingR = mapping_sides + computed_mapping.n_common;
+
+                        assert(block1->r > 0 && block2->r > 0);
+                        
+                        BlockRow *first_row1 = intrusive_list_first_entry(&block1->head_for_rows, BlockRow, block_pos);
+                        mapping_column_indexes_side_lineal(
+                            *normalized_set_schema1, free_var_positions1, *normalized_common_set_schema,
+                            starting_col_indices1, first_row1->row, mappingL, &schema_iterator_arena);
+                            
+                        BlockRow *first_row2 = intrusive_list_first_entry(&block2->head_for_rows, BlockRow, block_pos);
+                        mapping_column_indexes_side_lineal(
+                            *normalized_set_schema2, free_var_positions2, *normalized_common_set_schema,
+                            starting_col_indices2, first_row2->row, mappingR, &schema_iterator_arena);
+
+                        // Only one mapping in linear result block
+                        computed_mapping.common_L = mappingL;
+                        computed_mapping.common_R = mappingR;
+                    
+                        // We only use a schema for lineal blocks
+                        schemas = allocate(&temporal_arena, 1 * sizeof(*schemas));
+                        *schemas = computed_mapping;
+
+                    } else {
+                        // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
+                        unsigned *mapping_sides = allocate(&temporal_arena, (block1->r + block2->r) * mapping_side_size);
+                        schemas = allocate(&temporal_arena, (block1->r)*(block2->r) * sizeof(*schemas));
+
+                        unsigned *mapping_side = mapping_sides;
+
+                        BlockRow *block_row;
+                        intrusive_list_for_each_entry(block_row, &block1->head_for_rows, block_pos) {
+                            mapping_column_indexes_side(
+                                *normalized_set_schema1, free_var_positions1, *normalized_common_set_schema,
+                                starting_col_indices1, block_row->row, mapping_side, &row_vars_arena,
+                                &schema_iterator_arena
+                            );
+                            clear_arena(&row_vars_arena);
+                            mapping_side += computed_mapping.n_common;
+                        }
+                        intrusive_list_for_each_entry(block_row, &block2->head_for_rows, block_pos) {
+                            mapping_column_indexes_side(
+                                *normalized_set_schema2, free_var_positions2, *normalized_common_set_schema,
+                                starting_col_indices2, block_row->row, mapping_side, &row_vars_arena,
+                                &schema_iterator_arena
+                            );
+                            clear_arena(&row_vars_arena);
+                            mapping_side += computed_mapping.n_common;  
+                        }
+
+                        // TODO(CLEAN): instead of copying computed_mapping's header information per mapping_sideL/R combination,
+                        //  we could pass the header only once per block to the matrix_intersection functions + the mapping sides information
+                        //  (the cleanest way would be to modify the struct mgu_schema, taking into account that it can have more than one mapping
+                        //  side depending on the linearity of the block).
+                        mgu_schema *schema = schemas;
+
+                        for(unsigned i = 0; i < block1->r; ++i){
+                            computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
+                            for(unsigned j = 0; j < block2->r; ++j){
+                                computed_mapping.common_R = mapping_sides + (block1->r + j)*computed_mapping.n_common;
+
+                                // NOTE: We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
+                                *schema = computed_mapping;
+                                ++schema;
+                            }
+                        }
+                    }
+
+                    // And operation between blocks
                     // NOTE: since having one row is enough to consider this block as a block that will be stored in the 
                     //  memory of the matrix, we can store the rows directly in the memory of the Matrix.
+                    block_and(block1, block2, block3, schemas, block3_is_lineal, &result.blocks_arena);
 
                     if(block3->r) {
                         // Move the block and the schemas to the permanent arenas of the result matrix
                         // NOTE: we first move the schemas to update the block's pointers to their new locations
                         // NOTE: we have to do deepcopies of Schemas to avoid having references to Schemas in other matrices
-                        // TODO(YA): implement move Schemas: deepcopy
-                        // Separate in three calls + receive the Arenas + return the addresses
-                        schemas_deepcopy(block3->schema, block3->dependencies, block3->normalized_schema)
 
+                        block3->schema = set_schema_deepcopy(block3->schema, &result.schemas_arena);
+                        block3->dependencies = set_dependencies_deepcopy(block3->dependencies, &result.schemas_arena);
+                        block3->normalized_schema = set_schema_deepcopy(block3->normalized_schema, &result.schemas_arena);
 
-                        // TODO(YA): update the references to the deepcopies of Schemas
                         Block *permanent_block3 = allocate(&result.blocks_arena, sizeof(*permanent_block3));
                         *permanent_block3 = *block3;
                         add_block_to_matrix(&result, permanent_block3);
@@ -2910,9 +3540,11 @@ Matrix matrix_and(Matrix *m1, Matrix *m2) {
             }
         }
         free_arena(temporal_arena);
+        free_arena(row_vars_arena);
+        free_arena(schema_iterator_arena);
     }
 
-    ...
+    free_arena(operation_arena);
 
     // NOTE: we set Schema variables in set_schemas2 back to original names, 1..max, subtracting max_v1.
     {
@@ -2923,15 +3555,10 @@ Matrix matrix_and(Matrix *m1, Matrix *m2) {
         }
     }
 
-    free_arena(operation_arena);
-
     return result;
 }
 
 int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
-    //struct timespec start_reading, end_reading;
-    //struct timespec elapsed;
-
     // TODO(YA): I would say we need these globals to be accessible in read_matrix!!!
     var_dict  = create_dictionary(501);
     unif_dict = create_dictionary(501);
@@ -2960,506 +3587,22 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         exit(1);
     }
 
+    Matrix computed_m3 = matrix_and(&m1, &m2);
 
+    postprocess_to_mnf(&computed_m3);
 
-    
-
-    // NOTE: at most we will have as many variables as the number of columns and at most as many new virtual columns as the sum
-    //  of the number of new columns (if any repeated variable, we will have less virtual columns, because its virtuals will be repeated too)
-    Arena row_vars_arena;
-    unsigned num_bytes_pointers1 = sizeof(unsigned*) * max_normalized_operand_set_size1;
-    unsigned num_bytes_pointers2 = sizeof(unsigned*) * max_normalized_operand_set_size2;
-    unsigned num_bytes_virtual_columns1 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size1);
-    unsigned num_bytes_virtual_columns2 = sizeof(unsigned)*(max_normalized_common_set_size - min_normalized_operand_set_size2);
-    unsigned num_bytes_column_mappings1 = sizeof(int)*(max_normalized_operand_set_size1);
-    unsigned num_bytes_column_mappings2 = sizeof(int)*(max_normalized_operand_set_size2);
-    init_arena(&row_vars_arena, MAX(num_bytes_pointers1 + num_bytes_virtual_columns1 + num_bytes_column_mappings1,
-        num_bytes_pointers2 + num_bytes_virtual_columns2 + num_bytes_column_mappings2));
-
-
-
-    // TODO(YA): todas las comparaciones entre atributos, incluidos entre free vars, iran dentro de la función equal_matrices.
-    //  equal_matrices, en vez de devolver tan pronto como encuentre un error, podemos devolver un bitmap (al cual implementaremos)
-    //  un print function, que indica todos los tipos de errores distintos cometidos.
-
-    /* --- Process result blocks one at a time --- */
-    //struct timespec mapping_elapsed_l = {}, mapping_elapsed_nl = {}, mapping_elapsed_nl_hashopt = {};
-    //struct timespec start_row_extension, end_row_extension;
-    //struct timespec row_extention_elapsed_l = {}, row_extention_elapsed_nl = {};
-
-    for(unsigned t1 = 1; t1 <= s1; ++t1){
-        for(unsigned t2 = 1; t2 <= s2; ++t2) {
-
-            ArrayListSchema computed_common_set_schema = common_set_schemas[(t1-1)*s2 + (t2-1)];
-            ArrayListDependencyPair computed_common_dependencies = common_dependencies_array[(t1-1)*s2 + (t2-1)];
-            bool exists_common_schema = exists_common_schema_array[(t1-1)*s2 + (t2-1)];
-            
-            if(rb.t1 == t1 && rb.t2 == t2){
-                // NOTE: common schema exists so no fragment was skipped
-                assert(exists_common_schema);
-                
-                // NOTE: check correct common schema and dependencies!
-                {
-                    // NOTE: variables are identified from 1 to n in the resulting common schema in the file
-                    SetVariables read_vars = create_set_variables_defsize(); 
-                    variables_in_set_schema(common_set_schema, &read_vars);
-                    unsigned num_read_vars = read_vars.num_variables;
-                    free_set_variables(read_vars);
-                    
-                    size_t num_bytes_for_mapping = (1 + num_read_vars) * sizeof(Variable);
-                    Variable *mapping = allocate(&debug_arena, num_bytes_for_mapping);
-                    memset(mapping, 0, num_bytes_for_mapping);
-                    
-                    bool ok_set_schemas = equivalent_set_schemas(common_set_schema, computed_common_set_schema, mapping);
-                    bool ok_dependendencies = equivalent_set_dependencies(common_dependencies, computed_common_dependencies, mapping);
-                    
-                    if (verbose) printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
-                    assert(ok_set_schemas);
-                }
-                
-                struct timespec start_mapping, end_mapping;
-                clock_gettime(CLOCK_MONOTONIC, &start_mapping);
-                
-                // Take arguments to calculate the mappings of column indexes
-                SetSchema normalized_common_set_schema = normalized_common_set_schemas[(t1-1)*s2 + (t2-1)];
-                SetSchema normalized_set_schema1 = normalized_set_schemas1[t1-1];
-                SetSchema normalized_set_schema2 = normalized_set_schemas2[t2-1];
-
-                unsigned *starting_col_indices1 = starting_col_indices_array1 + (t1-1)*free_vars1.size;
-                unsigned *starting_col_indices2 = starting_col_indices_array2 + (t2-1)*free_vars2.size;
-
-                unsigned row_len1 = rb.c1;
-                unsigned row_len2 = rb.c2;
-                assert(normalized_set_schema1.size == row_len1);
-                assert(normalized_set_schema2.size == row_len2);
-
-                operand_block *ob1 = obs1 + t1-1;
-                operand_block *ob2 = obs2 + t2-1;
-
-                // Calculate the mapping of column indexes
-                mgu_schema computed_mapping;
-                computed_mapping.n_common = normalized_common_set_schema.size;
-                unsigned num_cols1 = normalized_set_schema1.size;
-                computed_mapping.new_a = computed_mapping.n_common - num_cols1;
-                unsigned num_cols2 = normalized_set_schema2.size;
-                computed_mapping.new_b = computed_mapping.n_common - num_cols2;
-
-                unsigned num_bytes = sizeof(*computed_mapping.common_columns) * computed_mapping.n_common;
-                computed_mapping.common_columns = allocate(&arena_result, num_bytes);
-                for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
-
-                unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
-                mgu_schema *schemas; // = NULL;
-
-                if(rb.lineal_lineal){
-                    unsigned *mapping_sides = allocate(&arena_result, 2 * mapping_side_size);
-                    unsigned *mappingL = mapping_sides;
-                    unsigned *mappingR = mapping_sides + computed_mapping.n_common;
-
-                    assert(ob1->r > 0 && ob2->r > 0);
-                    
-                    mapping_column_indexes_side_lineal(
-                        normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                        starting_col_indices1, ob1->terms[0].row, mappingL, &schema_iterator_arena);
-                    
-                    mapping_column_indexes_side_lineal(
-                        normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                        starting_col_indices2, ob2->terms[0].row, mappingR, &schema_iterator_arena);
-
-                    // Only one mapping in linear result block
-                    mgu_schema *mapping = rb.ms;
-                    computed_mapping.common_L = mappingL;
-                    computed_mapping.common_R = mappingR;
-                    bool ok_mappings = equal_mgu_schemas(mapping, &computed_mapping);
-                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
-                    //assert(ok_mappings);
-                
-                    // We only use a schema for lineal blocks
-                    schemas = allocate(&arena_result, 1 * sizeof(*schemas));
-                    *schemas = computed_mapping;
-
-                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
-                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                    timespec_add(&mapping_elapsed_l, &mapping_elapsed_l, &elapsed);
-
-                } else {
-                    // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
-                    unsigned *mapping_sides = allocate(&arena_result, (ob1->r + ob2->r) * mapping_side_size);
-                    schemas = allocate(&arena_result, (ob1->r)*(ob2->r) * sizeof(*schemas));
-
-                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
-                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
-                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
-                
-                    // NOTE: measure the alternative for mapping calculation that doesn't use the HashMap for row structure
-                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
-
-                    unsigned *mapping_side = mapping_sides;
-                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
-                        mapping_column_indexes_side(
-                            normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                            starting_col_indices1, ob1->terms[i].row, mapping_side, &row_vars_arena,
-                            &schema_iterator_arena
-                        );
-                        clear_arena(&row_vars_arena);    
-                    }
-                    
-                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
-                        mapping_column_indexes_side(
-                            normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                            starting_col_indices2, ob2->terms[i].row, mapping_side, &row_vars_arena,
-                            &schema_iterator_arena
-                        );
-                        clear_arena(&row_vars_arena);
-                    }
-
-                    // TODO(CLEAN): instead of copying computed_mapping's header information per mapping_sideL/R combination,
-                    //  we could pass the header only once per block to the matrix_intersection functions + the mapping sides information
-                    //  (the cleanest way would be to modify the struct mgu_schema, taking into account that it can have more than one mapping
-                    //  side depending on the linearity of the block).
-                    mgu_schema *schema = schemas;
-
-                    bool ok_mappings = true;
-                    for(unsigned i = 0; i < ob1->r; ++i){
-                        computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
-                        for(unsigned j = 0; j < ob2->r; ++j){
-                            computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
-                            
-                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
-                            ok_mappings &= equal_mgu_schemas(mapping, &computed_mapping);
-
-                            // NOTE: We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
-                            *schema = computed_mapping;
-                            ++schema;
-                        }
-                    }
-
-                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
-                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                    timespec_add(&mapping_elapsed_nl, &mapping_elapsed_nl, &elapsed);
-
-                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
-
-                    // NOTE: measure the alternative for mapping calculation that uses the HashMap for row structure
-                    clock_gettime(CLOCK_MONOTONIC, &start_mapping);
-
-                    // NOTE: function symbol differences don't affect to the resulting mapping, the mapping is determined by the placement of variables (0s and negatives),
-                    //  and the original and common schemas. In practice, most of the mapping sides are equal, so we are going to use a HashMap to determine if the mapping
-                    //  for an equivalent row was already computed.
-                    // NOTE: no resizing risk with a load_factor of 75%
-                    mapping_side = mapping_sides;
-
-                    float load_factor = 0.75f;
-                    unsigned num_buckets = (unsigned)((float)(ob1->r) / load_factor) + 1;
-                    MapRowToMappingSide map1 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema1.size, normalized_common_set_schema.size, &arena_result);
-                    for(unsigned i = 0; i < ob1->r; ++i, mapping_side += computed_mapping.n_common){
-                        int *row = ob1->terms[i].row;
-                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map1, row);
-                        if(pair){
-                            ++saved_calls1;
-                        } else {
-                            mapping_column_indexes_side(
-                                normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                                starting_col_indices1, row, mapping_side, &row_vars_arena,
-                                &schema_iterator_arena
-                            );
-                            clear_arena(&row_vars_arena);
-                            insert_to_map_row_to_mapping_side_arena(&map1, row, mapping_side, &arena_result);
-                        }
-                    }
-                    
-                    // NOTE: no resizing risk with a load_factor of 75%
-                    num_buckets = (unsigned)((float)(ob2->r) / load_factor) + 1;
-                    MapRowToMappingSide map2 = create_map_row_to_mapping_side_arena(num_buckets, normalized_set_schema2.size, normalized_common_set_schema.size, &arena_result);
-                    for(unsigned i = 0; i < ob2->r; ++i, mapping_side += computed_mapping.n_common){
-                        int *row = ob2->terms[i].row;
-                        RowToMappingSide *pair = get_pair_in_map_row_to_mapping_side(map2, row);
-                        if(pair){
-                            ++saved_calls2;
-                        } else {
-                            mapping_column_indexes_side(
-                                normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                                starting_col_indices2, row, mapping_side, &row_vars_arena,
-                                &schema_iterator_arena
-                            );
-                            clear_arena(&row_vars_arena);
-                            insert_to_map_row_to_mapping_side_arena(&map2, row, mapping_side, &arena_result);
-                        }
-                    }
-
-                    // Change the mgu_schemas sides and compare
-                    // One mapping per row pairs in non-linear result block
-                    // NOTE: we use the same memory as before.
-                    schema = schemas;
-
-                    ok_mappings = true;
-                    for(unsigned i = 0; i < ob1->r; ++i){
-                        RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map1, ob1->terms[i].row);
-                        assert(row_to_ms);
-                        computed_mapping.common_L = row_to_ms->mapping_side;
-                        //computed_mapping.common_L = mapping_sides + i*computed_mapping.n_common;
-                        for(unsigned j = 0; j < ob2->r; ++j){
-                            //printf("Rows: %d-%d (1-based)\n", i+1, j+1);
-                            
-                            mgu_schema *mapping = rb.terms[ i*rb.r2 + j ].ms;
-
-                            RowToMappingSide *row_to_ms = get_pair_in_map_row_to_mapping_side(map2, ob2->terms[j].row);
-                            assert(row_to_ms);
-                            computed_mapping.common_R = row_to_ms->mapping_side;
-                            //computed_mapping.common_R = mapping_sides + (ob1->r + j)*computed_mapping.n_common;
-
-                            ok_mappings &= equal_mgu_schemas(mapping, &computed_mapping);
-                            //assert(ok_mappings);
-
-                            // We copy the structs (only the pointers) of all the schemas, one per ob1/2 combination
-                            *schema = computed_mapping;
-                            ++schema;
-                        }
-                    }
-
-                    clock_gettime(CLOCK_MONOTONIC, &end_mapping);
-                    timespec_subtract(&elapsed, &end_mapping, &start_mapping);
-                    timespec_add(&mapping_elapsed_nl_hashopt, &mapping_elapsed_nl_hashopt, &elapsed);
-                    
-                    if (verbose) printf("ok_mappings = %u\n\n", ok_mappings);
-                }
-
-                clock_gettime(CLOCK_MONOTONIC, &start_row_extension);
-
-                unsigned len_extended_row = normalized_common_set_schema.size;
-                int *extended_rows = allocate(&arena_result, (ob1->r + ob2->r) * len_extended_row * sizeof(*extended_rows));
-                int *extended_row = extended_rows;
-                if (rb.lineal_lineal) {
-                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
-                        extend_row_lineal(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
-                            starting_col_indices1, ob1->terms[i].row, extended_row, &schema_iterator_arena);
-                    }
-                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
-                        extend_row_lineal(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
-                            starting_col_indices2, ob2->terms[i].row, extended_row, &schema_iterator_arena);
-                    }
-
-                } else {
-                    for (unsigned i = 0; i < ob1->r; ++i, extended_row += len_extended_row) {
-                        extend_row(normalized_set_schema1, free_var_positions1, normalized_common_set_schema, 
-                            starting_col_indices1, ob1->terms[i].row, extended_row, &row_vars_arena,
-                            &schema_iterator_arena);
-                        clear_arena(&row_vars_arena);
-                    }
-                    for (unsigned i = 0; i < ob2->r; ++i, extended_row += len_extended_row) {
-                        extend_row(normalized_set_schema2, free_var_positions2, normalized_common_set_schema, 
-                            starting_col_indices2, ob2->terms[i].row, extended_row, &row_vars_arena,
-                            &schema_iterator_arena);
-                        clear_arena(&row_vars_arena);
-                    }
-                }
-
-                clock_gettime(CLOCK_MONOTONIC, &end_row_extension);
-                timespec_subtract(&elapsed, &end_row_extension, &start_row_extension);
-                if (rb.lineal_lineal) {
-                    timespec_add(&row_extention_elapsed_l, &row_extention_elapsed_l, &elapsed);
-                } else {
-                    timespec_add(&row_extention_elapsed_nl, &row_extention_elapsed_nl, &elapsed);
-                }
-
-                
-                // Matrix intersection: all variants, original core and alternative versions for lineal or nonlinear with mappings or extended rows
-                matrix_intersection(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], &rb, schemas);
-                if (rb.lineal_lineal) {
-                    matrix_intersection_with_mapping_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
-                    matrix_intersection_with_extended_rows_lineal(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
-
-                } else {
-                    matrix_intersection_with_extended_rows(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], len_extended_row, extended_rows, &rb);
-                    matrix_intersection_with_mappings(&obs1[rb.t1 - 1], &obs2[rb.t2 - 1], schemas, &rb);
-                }
-
-                clear_arena(&arena_result);
-                clear_arena(&debug_arena);
-                free_result_block(&rb);
-
-                clock_gettime(CLOCK_MONOTONIC, &start_reading);
-                read_next_result_block(stream_M3, &rb, &common_set_schema, &common_dependencies, &arena_result);
-                clock_gettime(CLOCK_MONOTONIC, &end_reading);
-    
-                timespec_subtract(&elapsed, &end_reading, &start_reading);
-                timespec_add(&read_file_elapsed, &read_file_elapsed, &elapsed);
-
-                if (verbose) print_result_block(&rb, 0);
-
-            } else {
-                // NOTE: common schema doesn't exist so a fragment was skipped
-                printf("Resultant fragment: %d-%d (SKIPPED BECAUSE COMMON SCHEMA DOESN'T EXIST!)\n", t1, t2);
-                assert(!exists_common_schema);
-                clear_arena(&arena_result);
-                clear_arena(&debug_arena);
-            }
-        }
-    }
-
-    /* --- Print timing breakdown --- */
-    struct timespec mapping_elapsed, mapping_elapsed_hashopt, row_extention_elapsed, unification_elapsed_l_total, unification_lm_total, unification_elapsed_nl_total, unification_nlm_total, unification_le_total, unification_nle_total;
-    if (verbose) {
-        printf("-------- TIME MEASUREMENTS --------\n");
-        printf("File I/O: %ld.%09ld s\n\n", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
-        
-        printf("----------------\n");
-        printf("Schema management: %ld.%09ld s\n\n", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
-        
-        printf("----------------\n");
-        printf("Mapping obtention linear:             %ld.%09ld s\n", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
-        printf("Mapping obtention non-linear:         %ld.%09ld s\n", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
-        printf("Mapping obtention non-linear hashopt: %ld.%09ld s\n", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
-        printf("\tSaved calls 1=%u - Saved calls 2=%u - Total=%u\n", saved_calls1, saved_calls2, saved_calls1 + saved_calls2);
-        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
-        printf("Mapping obtention total:              %ld.%09ld s\n", mapping_elapsed.tv_sec, mapping_elapsed.tv_nsec);
-        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
-        printf("Mapping obtention total hashopt:      %ld.%09ld s\n\n", mapping_elapsed_hashopt.tv_sec, mapping_elapsed_hashopt.tv_nsec);
-
-        printf("----------------\n");
-        printf("Row extention linear:     %ld.%09ld s\n", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
-        printf("Row extention non-linear: %ld.%09ld s\n", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
-        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
-        printf("Row extention total:      %ld.%09ld s\n\n", row_extention_elapsed.tv_sec, row_extention_elapsed.tv_nsec);
-        
-        printf("----------------\n");
-        printf("Original core algorithm:\n");
-        printf("Linear:\n");
-        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_l.tv_sec, unifiers_elapsed_l.tv_nsec);
-        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_l.tv_sec, unification_elapsed_l.tv_nsec);
-        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
-        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
-        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
-        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
-        
-        printf("Non-linear:\n");
-        printf("Unifier computation: %ld.%09ld s\n", unifiers_elapsed_nl.tv_sec, unifiers_elapsed_nl.tv_nsec);
-        printf("Unifier application: %ld.%09ld s\n", unification_elapsed_nl.tv_sec, unification_elapsed_nl.tv_nsec);
-        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
-        printf("Total unification:   %ld.%09ld s\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
-        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
-        printf("Total:               %ld.%09ld s\n\n", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
-        
-        printf("----------------\n");
-        printf("Alternative with mappings:\n");
-        printf("Linear:\n");
-        printf("Core:  %ld.%09ld s\n", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
-        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
-        printf("Total: %ld.%09ld s\n\n", unification_lm_total.tv_sec, unification_lm_total.tv_nsec);
-        
-        printf("Non-linear:\n");
-        printf("Core:  %ld.%09ld s\n", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
-        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
-        printf("Total: %ld.%09ld s\n\n", unification_nlm_total.tv_sec, unification_nlm_total.tv_nsec);
-        
-        printf("----------------\n");
-        printf("Alternative with extended rows:\n");
-        printf("Linear:\n");
-        printf("Core:  %ld.%09ld s\n", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
-        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
-        printf("Total: %ld.%09ld s\n\n", unification_le_total.tv_sec, unification_le_total.tv_nsec);
-        
-        printf("Non-linear:\n");
-        printf("Core:  %ld.%09ld s\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
-        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
-        printf("Total: %ld.%09ld s\n\n", unification_nle_total.tv_sec, unification_nle_total.tv_nsec);
-    } else {
-        timespec_add(&mapping_elapsed, &mapping_elapsed_l, &mapping_elapsed_nl);
-        timespec_add(&mapping_elapsed_hashopt, &mapping_elapsed_l, &mapping_elapsed_nl_hashopt);
-        timespec_add(&row_extention_elapsed, &row_extention_elapsed_l, &row_extention_elapsed_nl);
-        timespec_add(&unification_elapsed_l_total, &unifiers_elapsed_l, &unification_elapsed_l);
-        timespec_add(&unification_elapsed_l_total, &unification_elapsed_l_total, &mapping_elapsed_l);
-        timespec_add(&unification_elapsed_nl_total, &unifiers_elapsed_nl, &unification_elapsed_nl);
-        timespec_add(&unification_elapsed_nl_total, &unification_elapsed_nl_total, &mapping_elapsed_nl);
-        timespec_add(&unification_lm_total, &unification_elapsed_lm, &mapping_elapsed_l);
-        timespec_add(&unification_nlm_total, &unification_elapsed_nlm, &mapping_elapsed_nl);
-        timespec_add(&unification_le_total, &unification_elapsed_le, &mapping_elapsed_l);
-        timespec_add(&unification_nle_total, &unification_elapsed_nle, &mapping_elapsed_nl);
-    }
-
-    /* --- Print one-line CSV summary --- */
-    if (!verbose) {
-        char *FILE = M3_file;
-        
-        unsigned F1 = s1;
-        unsigned L1 = 0;
-        unsigned N1 = 0;
-        double C1 = 0.0;
-        for (unsigned i = 0; i < s1; ++i) {
-            operand_block *ob = obs1 + i;
-            
-            ArrayListSchema set_schema = set_schemas1[i];
-            SetVariables vars = create_set_variables_defsize();
-            variables_in_set_schema(set_schema, &vars);
-            bool is_linear = vars.num_variables == 0;
-            free_set_variables(vars);
-    
-            if (is_linear) {
-                L1 += ob->r;
-            } else {
-                N1 += ob->r;
-            }
-    
-            C1 = incremental_mean(C1, ob->c, i + 1);
-        }
-    
-        unsigned F2 = s2;
-        unsigned L2 = 0;
-        unsigned N2 = 0;
-        double C2 = 0.0;
-        for (unsigned i = 0; i < s2; ++i) {
-            operand_block *ob = obs2 + i;
-            
-            ArrayListSchema set_schema = set_schemas2[i];
-            SetVariables vars = create_set_variables_defsize();
-            variables_in_set_schema(set_schema, &vars);
-            bool is_linear = vars.num_variables == 0;
-            free_set_variables(vars);
-    
-            if (is_linear) {
-                L2 += ob->r;
-            } else {
-                N2 += ob->r;
-            }
-    
-            C2 = incremental_mean(C2, ob->c, i + 1);
-        }
-        
-        printf("%s,%u,%u,%u,%f,%u,%u,%u,%f,", FILE, F1, L1, N1, C1, F2, L2, N2, C2);
-        printf("%ld.%09ld,", read_file_elapsed.tv_sec, read_file_elapsed.tv_nsec);
-        printf("%ld.%09ld,", schemas_elapsed.tv_sec, schemas_elapsed.tv_nsec);
-        printf("%ld.%09ld,", mapping_elapsed_l.tv_sec, mapping_elapsed_l.tv_nsec);
-        printf("%ld.%09ld,", mapping_elapsed_nl.tv_sec, mapping_elapsed_nl.tv_nsec);
-        printf("%ld.%09ld,", mapping_elapsed_nl_hashopt.tv_sec, mapping_elapsed_nl_hashopt.tv_nsec);
-        printf("%ld.%09ld,", row_extention_elapsed_l.tv_sec, row_extention_elapsed_l.tv_nsec);
-        printf("%ld.%09ld,", row_extention_elapsed_nl.tv_sec, row_extention_elapsed_nl.tv_nsec);
-        printf("%ld.%09ld,", unification_elapsed_l_total.tv_sec, unification_elapsed_l_total.tv_nsec);
-        printf("%ld.%09ld,", unification_elapsed_nl_total.tv_sec, unification_elapsed_nl_total.tv_nsec);
-        printf("%ld.%09ld,", unification_elapsed_lm.tv_sec, unification_elapsed_lm.tv_nsec);
-        printf("%ld.%09ld,", unification_elapsed_nlm.tv_sec, unification_elapsed_nlm.tv_nsec);
-        printf("%ld.%09ld,", unification_elapsed_le.tv_sec, unification_elapsed_le.tv_nsec);
-        printf("%ld.%09ld\n", unification_elapsed_nle.tv_sec, unification_elapsed_nle.tv_nsec);
-    }
+    EqualMatricesResult are_equal = equal_matrices(&m3, &computed_m3);
+    assert(are_equal.type == EQUAL);
 
     /* --- Cleanup --- */
-    for (unsigned i = 0; i < s1; i++) free_operand_block(&obs1[i]);
-    for (unsigned i = 0; i < s2; i++) free_operand_block(&obs2[i]);
-    
-    free_arena(&arena_operands);
-    free_arena(&arena_result);
-    free_arena(&debug_arena);
-    free_arena(&schema_iterator_arena);
-    free_arena(&row_vars_arena);
+
+    free_matrix(m1);
+    free_matrix(m2);
+    free_matrix(m3);
 
     free_dictionary(var_dict);
     free_dictionary(unif_dict);
     free_dictionary(symbols_to_ids);
-
-
-    fclose(stream_M1);
-    fclose(stream_M2);
-    fclose(stream_M3);
 
     return 0;
 }

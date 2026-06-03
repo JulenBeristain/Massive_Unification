@@ -421,6 +421,27 @@ bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_sch
     return true;
 }
 
+bool schema_contains_variables(Schema schema) {
+    if (schema.type == VARIABLE_SCHEMA) {
+        return true;
+    }
+    foreach_in_schema(schema, sub) {
+        if (schema_contains_variables(*sub)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool set_schema_contains_variables(ArrayListSchema set_schema) {
+    foreach_in_arraylist(Schema, s, set_schema) {
+        if (schema_contains_variables(*s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // TODO: we could do an Arena version of this function.
 void variables_in_schema(Schema schema, SetVariables* vars)
 {

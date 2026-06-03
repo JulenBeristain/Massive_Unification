@@ -334,7 +334,7 @@ static inline void add_block_to_matrix(Matrix *matrix, Block *block) {
 // TODO(YA): decide how to handle the memory of the new structs when adapting the core main function to add post-processing and its testing.
 //  Depending on that, we could implement some more functions to return directly the Block as a value.
 //  Plus, some of these functions might be completely unnecessary. See in the adapted core in which order are
-//  matrices, blocks and rows created...
+//  matrices, blocks and rows created... DELETE THE UNUSED / NOT GONNA BE USED FUNCTIONS!!!
 static inline void init_empty_block_row(BlockRow *block_row, unsigned c, int *row, Block *block) {
     block_row->c = c;
     block_row->row = row;
@@ -396,10 +396,23 @@ static inline void init_empty_matrix_with_arena_size(Matrix *matrix, size_t aren
     matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
 
     arena_size = CLAMP(smallest_greater_power_of_2(arena_size), KILOBYTES(4), MEGABYTES(4));
-    init_arena(&matrix->arena, arena_size);
+    init_arena(&matrix->blocks_arena, arena_size);
+    init_arena(&matrix->schemas_arena, arena_size);
 }
 
-void postprocess_to_mnf(Matrix *matrix, Arena *arena);
+void postprocess_to_mnf(Matrix *matrix);
+
+
+typedef enum { 
+    DIMENSION_MISMATCH, 
+    ELEMENT_MISMATCH, 
+    EQUAL,
+    NOT_EQUIVALENT_SCHEMAS_AND_DEPENDENCIES,
+    NOT_EQUAL_NORMALIZED_SCHEMAS,
+    NOT_CORRESPONDING_ROW,
+    NOT_CORRESPONDING_BLOCK, 
+    NOT_EQUAL_FREEVARS,
+} EqualMatricesResultType;
 
 typedef struct {
     EqualMatricesResultType type;
@@ -409,14 +422,16 @@ typedef struct {
 
 EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2);
 
+
+
 // NOTE: after freeing, shouldn't use the same Matrix variable without proper reinitialization
 static inline void free_matrix_v (Matrix m) {
-    free_arena(&m.blocks_arena);
-    free_arena(&m.schemas_arena);
+    free_arena(m.blocks_arena);
+    free_arena(m.schemas_arena);
 }
 static inline void free_matrix_p (Matrix *m) { 
-    free_arena(&m->blocks_arena); 
-    free_arena(&m->schemas_arena);
+    free_arena(m->blocks_arena); 
+    free_arena(m->schemas_arena);
 }
 #define free_matrix(m)              \
     _Generic((m),				    \

@@ -10,7 +10,7 @@
 #include "../structures.h"
 
 /**
- * FUTURE WORK:
+ * FUTURE WORK (TODO(YA-REVIEW)):
  * Obtention of column index mapping
  * Optimize management of schemas (if bad time measurements...)
  * Optimize AND SIMPLIFY further the core of the unification with matrices (and parallelize it)
@@ -186,6 +186,8 @@ bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2)
 bool equivalent_schemas(Schema s1, Schema s2, Variable *mapping);
 bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping);
 
+bool schema_contains_variables(Schema schema);
+bool set_schema_contains_variables(ArrayListSchema set_schema);
 void variables_in_schema(Schema schema, SetVariables *vars);
 void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *vars);
 Variable min_v_in_schema(Schema schema);

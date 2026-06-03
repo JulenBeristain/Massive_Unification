@@ -23,10 +23,14 @@
 
 // TODO(YA3): see if we need to accept more than one type of Arenas or if we create a local Arena for intermediate operations... The thing is that each Matrix
 //  should have its own lifetime, and therefore, its memory (with everything it points to) too...
-void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
+void postprocess_to_mnf(Matrix *matrix) {
     
+    // NOTE: arena to store temporarily the denormalized schemas and dependencies of each row. They have to be included in the
+    //  matrix's schemas arena only when we know they become the schemas and dependencies of a new block. It stores the temporal
+    //  common schemas too.
+    Arena denormalized_arena; init_arena_defcapacity(&denormalized_arena);
 
-    // TODO(YA2-OPT): we can skip the linear block...
+    // TODO(YA2-OPT): we can skip the linear block... is_linear_block =  num_distinct_schema_variables(block.set_schema) == 0
     Block *block;
     intrusive_list_for_each_entry(block, &matrix->head_for_blocks, matrix_pos) {
         BlockRow *block_row;
@@ -36,9 +40,9 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
             int *row = block_row->row;
             SetSchema *row_normalized_set_schema = block->normalized_schema;
             // TODO(YA3): review the memory management in the long run...
-            ArrayListSchema *row_set_schema = allocate(arena, sizeof(*row_set_schema));
-            SetDependencies *row_dependencies = allocate(arena, sizeof(*row_dependencies));
-            denormalized_set_schema(*row_normalized_set_schema, row, row_set_schema, row_dependencies, arena);
+            ArrayListSchema *row_set_schema = allocate(&denormalized_arena, sizeof(*row_set_schema));
+            SetDependencies *row_dependencies = allocate(&denormalized_arena, sizeof(*row_dependencies));
+            denormalized_set_schema(*row_normalized_set_schema, row, row_set_schema, row_dependencies, &denormalized_arena);
         
             // TODO(YA4-Clean): the logic is repeated for the current block and the rest of the blocks, I think they can be compacted... But NO if the 
             //  optimization below is implemented! (Then the operations on the Block that contains the Row will be distinct indeed...)
@@ -50,13 +54,13 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
             // TODO(YA2): taking into account that the lifetime of the matrix is unique, here we should use a non-arena version that returns a pointer to the object in the heap directly... 
             //  That means that whenever Blocks' schemas and dependencies are updated, the old ones have to be freed too!!! 
             // TODO(YA2): currently, as we see, using Arenas is no good due to the amount of calls to common_set_schema_strict that might give invalid results...
-            ArrayListSchema *common_set_schema = allocate(arena, sizeof(*common_set_schema));
-            ArrayListDependencyPair *common_dependencies = allocate(arena, sizeof(*common_dependencies));
+            ArrayListSchema *common_set_schema = allocate(&denormalized_arena, sizeof(*common_set_schema));
+            ArrayListDependencyPair *common_dependencies = allocate(&denormalized_arena, sizeof(*common_dependencies));
             bool is_row_in_corresponding_block = common_set_schema_strict_baseline(
                 *row_set_schema, *row_dependencies,
                 *block->schema, *block->dependencies,
                 common_set_schema, common_dependencies,
-                arena);
+                &denormalized_arena);
 
             // If we need to move the Row, we have to see if already exists a valid block
             if (!is_row_in_corresponding_block) {
@@ -69,7 +73,7 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
                         *row_set_schema, *row_dependencies,
                         *current_block->schema, *current_block->dependencies,
                         common_set_schema, common_dependencies,
-                        arena);
+                        &denormalized_arena);
                     if (is_valid_block_found) {
                         break;
                     }
@@ -80,7 +84,7 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
                             *row_set_schema, *row_dependencies,
                             *current_block->schema, *current_block->dependencies,
                             common_set_schema, common_dependencies,
-                            arena);
+                            &denormalized_arena);
                         if (is_valid_block_found) {
                             break;
                         }
@@ -98,7 +102,10 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
                     block->c--;
                     
                     // If the diminished row has no more rows left, it is removed from the Matrix.
-                    // TODO(YA3): When Blocks won't be in the Arena, we should free their memory too!!!
+                    // TODO(YA3): When Blocks won't be in the Arena, we should free their memory too!!! NOT really. Once the postprocessing
+                    //  is finished, the Matrix is immutable. So we will only waste sizeof(*block) = 64 Bytes per each block that has lost
+                    //  all its rows. We don't expect this case to be incredibly common + it's preferable to simplify the memory management
+                    //  and do less operations regarding it than wasting 64 Bytes.
                     if (block->c == 0) {
                         remove_block_from_matrix(matrix, block);
                     }
@@ -170,6 +177,8 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
             }
         }
     }
+
+    free_arena(denormalized_arena);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -178,16 +187,6 @@ void postprocess_to_mnf(Matrix *matrix, Arena *arena) {
 
 // NOTE: these equal functions are only used for testing and debugging, they are not (at least right now) inherently interesting operations that will
 //  be used with other operations.
-
-typedef enum { 
-    DIMENSION_MISMATCH, 
-    ELEMENT_MISMATCH, 
-    EQUAL,
-    NOT_EQUIVALENT_SCHEMAS_AND_DEPENDENCIES,
-    NOT_EQUAL_NORMALIZED_SCHEMAS,
-    NOT_CORRESPONDING_ROW,
-    NOT_CORRESPONDING_BLOCK
-} EqualMatricesResultType;
 
 typedef struct {
     EqualMatricesResultType type;
@@ -277,6 +276,11 @@ EqualBlocksResult equal_blocks(Block *b1, Block *b2) {
 
 // NOTE: matrix comparison doesn't take into account the order of the blocks and the rows within blocks.
 EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
+    
+    if(!equal_array_lists_char_ptr(m1->free_vars, m2->free_vars)) {
+        return EQUAL_MATRICES_RESULT(NOT_EQUAL_FREEVARS, 0);
+    }
+    
     if (m1->b != m2->b) {
         return EQUAL_MATRICES_RESULT(DIMENSION_MISMATCH, 0);
     }
@@ -316,11 +320,10 @@ EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
     return EQUAL_MATRICES_RESULT(EQUAL, 0);
 }
 
-// TODO(YA-FUT): would be great if we had loading and writing functions for some format of matrix_files (the ones of the last tests?)
+
+
+// TODO(YA-DEBUG-TESTING): would be great if we had loading and writing functions for some format of matrix_files (the ones of the last tests?)
 //  See if we need different versions depending on operand and resultant matrices...
-
-
-
 
 /**
  * @brief Reads one operand matrix from @p stream into @p ob.
@@ -331,8 +334,7 @@ EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
  *
  * Exits on format errors.
  */
-static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena, SchemasArena *schemas_arena) {
-    
+static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena, Arena *schemas_arena) {
     // Read unflatened schema and the set of dependencies
     read_set_schema_with_dependencies(stream, block->schema, block->dependencies, schemas_arena);
     block->normalized_schema = allocate(schemas_arena, sizeof(*block->normalized_schema));
@@ -376,7 +378,7 @@ static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena, 
  * @brief Reads one complete operand block (header + matrix) from @p stream.
  * @return Populated operand_block.
  */
-void read_block(FILE *stream, Block *block, Arena *matrix_arena, SchemasArena *schemas_arena) {
+void read_block(FILE *stream, Block *block, Arena *matrix_arena, Arena *schemas_arena) {
     // TODO(YA): make read_dimensions visible + make it return some value instead of exiting!!!
     read_dimensions(stream, &block->r, &block->c);
     
@@ -414,20 +416,21 @@ ReadMatrixResultType read_matrix(char *filename, Matrix *matrix) {
     
         // TODO(FUT): we could put the size information in the header of the file, to adjust the size of Memory Blocks...
         //  Right now we only know matrix.b
-        init_arena(&matrix->arena, KILOBYTES(4));
+        init_arena(&matrix->blocks_arena, KILOBYTES(4));
+        init_arena(&matrix->schemas_arena, KILOBYTES(4));
     
         // TODO(YA): make scan_free_vars accessible
-        ArrayListCharPtr free_vars = scan_free_vars(line, num_free_vars, &matrix->arena);
+        ArrayListCharPtr free_vars = scan_free_vars(line, num_free_vars, &matrix->blocks_arena);
         free(line);
     }
 
     init_intrusive_list(&matrix->head_for_blocks);
     for (unsigned i = 0; i < matrix->b; ++i) {
-        Block *block = allocate(&matrix->arena, sizeof(*block));
+        Block *block = allocate(&matrix->blocks_arena, sizeof(*block));
         
         intrusive_list_add(&matrix->head_for_blocks, &block->matrix_pos);
 
-        read_block(stream, block, &matrix->arena, schemas_arena);
+        read_block(stream, block, &matrix->blocks_arena, &matrix->schemas_arena);
     }
     
     fclose(stream);
