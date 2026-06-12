@@ -2336,11 +2336,79 @@ void denormalized_set_schema(
     // NOTE: as to the schemas in the set of dependencies, since they come from the normalized set schema, their
     //  sizes and depths are already calculated.
     foreach_in_arraylistptr(Schema, s, row_set_schema){
-        calculate_schema_size(s);
-        calculate_schema_depth(s);
+        schema_size(s);
+        schema_depth(s);
     }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END POSTPROCESSING OF MATRICES: OBTAIN SET SCHEMA OF ROW DENORMALIZING NORMALIZED FRAGMENT SET SCHEMA BASED ON THE RESULTING ROW  ///
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// TODO(YA-OPT): from an efficieny point of view, having to deepcopy schemas and dependencies per successful block combination doesn't seem
+//  very efficient and seems to invalidate the other possible optimizations that take advantage of the immutability of schemas.
+
+Schema *schema_deepcopy(Schema *schema, Arena *arena) {
+    Schema *result = allocate(arena, sizeof(*result));
+    *result = *schema;
+    if (schema->type == GENERAL_SCHEMA) {
+        result->subschemas = allocate(arena, sizeof(*result->subschemas) * result->arity);
+        foreach_in_schemaptrs(schema, result->subschemas, sub, res) {
+            *res = *schema_deepcopy(sub, arena);
+        }
+    }
+    return result;
+    
+}
+
+// TODO(CLEAN): a little ugly to have this two versions. Maybe we should make DependencyPairs to point to the 
+//  dependency list too, instead of having in the same struct as pair.v ???
+
+ArrayListSchema set_schema_contents_deepcopy(ArrayListSchema *set_schema, Arena *arena) {
+    // NOTE: no resizing risk
+    ArrayListSchema result = create_array_list_schema_arena(set_schema->size, arena);
+    result.size = set_schema->size;
+    foreach_in_arraylistptrs(Schema, schema, res, set_schema, &result) {
+        *res = *schema_deepcopy(schema, arena);
+    }
+    return result;
+}
+
+ArrayListSchema *set_schema_deepcopy(ArrayListSchema *set_schema, Arena *arena) {
+    ArrayListSchema *result = allocate(arena, sizeof(*result));
+    *result = set_schema_contents_deepcopy(set_schema, arena);
+    return result;
+}
+
+// TODO(YA-OPT): review how are the schemas in set of dependencies originally handled... Again, it looks wrong to 
+//  deepcopy the entire Schemas...
+
+// TODO(CLEAN): when copying the variable in the dependency pair, we could have variables renamed from the second 
+//  set schema, and therefore we can have some "gaps" or unused variable identifiers. Shouldn't be problematic, but
+//  we could normalize them from 1..max too...
+
+DependencyPair *dependency_pair_deepcopy(DependencyPair *pair, Arena *arena) {
+    DependencyPair *result = allocate(arena, sizeof(*result));
+    result->v = pair->v;
+    result->schemas = set_schema_contents_deepcopy(&pair->schemas, arena);
+    return result;
+}
+
+SetDependencies *set_dependencies_deepcopy(SetDependencies *dependencies, Arena *arena) {
+    SetDependencies *result = allocate(arena, sizeof(*result));
+    // NOTE: no resizing risk
+    *result = create_array_list_dependency_pair_arena(dependencies->size, arena);
+    result->size = dependencies->size;
+    foreach_in_arraylistptrs(DependencyPair, pair, res, dependencies, result) {
+        *res = *dependency_pair_deepcopy(pair, arena);
+    }
+    return result;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// END DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

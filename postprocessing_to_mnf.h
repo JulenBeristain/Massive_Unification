@@ -146,6 +146,11 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
          &container_ptr->list_member_name != (until_ptr);			\
          container_ptr = intrusive_list_next_entry(container_ptr, list_member_name))
 
+// NOTE: exclusive end, until_ptr entry is not included.
+#define intrusive_list_for_each_entry_since_until(container_started_ptr, head_ptr, list_member_name, until_ptr)				\
+    for (; &container_started_ptr->list_member_name != (until_ptr);			\
+         container_started_ptr = intrusive_list_next_entry(container_started_ptr, list_member_name))
+
 #define intrusive_list_for_each_entry_safe(container_ptr, next_buffer_ptr, head_ptr, list_member_name)			\
 	for (container_ptr = intrusive_list_first_entry(head_ptr, typeof(*container_ptr), list_member_name),	\
 		next_buffer_ptr = intrusive_list_next_entry(container_ptr, list_member_name);			\
