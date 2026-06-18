@@ -398,9 +398,11 @@ static void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
 
 size_t next_symbol_id = FIRST_FUNCTION_SYMBOL_POSITIVE;
 
-// TODO(YA): implement is_original_variable
 static inline bool is_original_variable(char *tok) {
-    return true;
+    // NOTE: important to not consider prefix's NULL terminator for len.
+    char *prefix = "$ORIG_";
+    unsigned prefix_len = 6;
+    return strncmp(tok, prefix, prefix_len) == 0;
 }
 
 /**

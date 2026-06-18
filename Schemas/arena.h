@@ -2,64 +2,97 @@
 #define ARENA_H
 
 #include <stdlib.h>
+#include "utils.h"
 
-// NOTE: another variant would be to not have a current_block, and having a next_free_position per block. When 
-//  allocating, we would iterate over all blocks until one with enough memory was found (if any). This would
-//  reduce fragmentation (unused memory in the tails of each block) in case of an unexpectedly single big allocation.
-//  Note that if initialized with enough size_in_bytes, even a simple linear arena would work perfectly, and that
+// NOTE: if initialized with enough size_in_bytes, even a simple linear arena would work perfectly, and that
 //  the two variants will work equally. In our case, we don't expect surprisingly big single special allocations,
 //  so we will keep this version that gives more flexibility and robustness than the simple linear arena.
 
 // NOTE: in this implementation we have a chain of MemoryBlocks. We always point to the last block that is being
-//  used, we don't come back to blocks before it unless the Arena is cleared. Blocks can have different sizes.
-//  Since at each time take into account a single block (the last that has at least an allocation, unless a 
-//  big allocation was requested with no enough space in any previous block) we only have a single position index.
+//  used, we don't come back to blocks before it unless the Arena is cleared or it pops to a prior state. 
+//  Blocks can have different sizes. Since at each time take into account a single block (the last that has at 
+//  least an allocation, unless a big allocation was requested with no enough space in any previous block) we 
+//  only have a single position index.
 
 typedef struct MemoryBlock MemoryBlock, *MemoryBlockPtr;
 struct MemoryBlock {
-    void *memory;
     size_t size;
     MemoryBlock *next;
 };
+static inline void *memory_block_start (MemoryBlock *mem_block) {
+    return address_after_struct(mem_block);
+}
 
-typedef struct Arena {
+typedef struct {
     MemoryBlock *memory_blocks;
     MemoryBlock *current_block;
     size_t next_free_position;  //NOTE: as we will be only in a block at a time, a unique index is enough!
-} Arena, *ArenaPtr;
+} ChainedArena, *ChainedArenaPtr;
 
-void init_arena_chained(Arena *arena, size_t size_in_bytes);
-static inline void init_arena_chained_defcapacity(Arena *arena) { init_arena_chained(arena, KILOBYTES(4)); }
-void free_arena_chained(Arena arena);
-void clear_arena_chained(Arena *arena);
-void *allocate_chained(Arena *arena, size_t num_bytes);
-void *callocate_chained(Arena *arena, size_t num_bytes);
+void init_chained_arena(ChainedArena *arena, size_t size_in_bytes);
+static inline void init_chained_arena_defcapacity(ChainedArena *arena) { 
+    init_chained_arena(arena, KILOBYTES(4) - sizeof(MemoryBlock));
+}
+void free_chained_arena(ChainedArena arena);
+void clear_chained_arena(ChainedArena *arena);
+void *allocate_chained_arena(ChainedArena *arena, size_t num_bytes);
+void *callocate_chained_arena(ChainedArena *arena, size_t num_bytes);
+
+typedef struct {
+    MemoryBlock *current_block;
+    size_t next_free_position;
+} ChainedArenaState;
+
+static inline ChainedArenaState register_state_chained_arena(ChainedArena *arena) {
+    return (ChainedArenaState){ .current_block = arena->current_block, .next_free_position = arena->next_free_position };
+}
+
+static inline void recover_state_chained_arena(ChainedArena *arena, ChainedArenaState state) {
+    arena->current_block = state.current_block;
+    arena->next_free_position = state.next_free_position;
+}
 
 
 typedef struct {
-    void *memory;
     size_t size;
     size_t next_free_position;
-} SchemasArena;
-
-void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes);
-static inline void init_schemas_arena_defcapacity(SchemasArena *arena) { init_schemas_arena(arena, 10000 * sizeof(Schema)); }
-
-// NOTE: don't use the Arena after freeing!
-static inline void free_schemas_arena(SchemasArena arena) {
-    free(arena.memory);
+} LinearArena;
+static inline void *linear_arena_memory (LinearArena *arena) {
+    return address_after_struct(arena);
 }
 
-static inline void clear_schemas_arena(SchemasArena *arena) {
+LinearArena *create_linear_arena(size_t size_in_bytes);
+static inline void create_linear_arena_defcapacity() { 
+    create_linear_arena(KILOBYTES(4) - sizeof(LinearArena));
+ }
+
+// NOTE: don't use the Arena after freeing!
+static inline void free_linear_arena(LinearArena *arena) {
+    free(arena);
+}
+
+static inline void clear_linear_arena(LinearArena *arena) {
     arena->next_free_position = 0;
 }
 
-void *allocate_schemas_arena(SchemasArena *arena, size_t num_bytes);
-void *callocate_schemas_arena(SchemasArena *arena, size_t num_bytes);
+void *allocate_linear_arena(LinearArena *arena, size_t num_bytes);
+void *callocate_linear_arena(LinearArena *arena, size_t num_bytes);
+
+typedef struct {
+    size_t next_free_position;
+} LinearArenaState;
+
+static inline LinearArenaState register_state_linear_arena(LinearArena *arena) {
+    return (LinearArenaState){ .next_free_position = arena->next_free_position };
+}
+
+static inline void recover_state_linear_arena(LinearArena *arena, LinearArenaState state) {
+    arena->next_free_position = state.next_free_position;
+}
 
 
 // Default Arena is a ChainedArena
-typedef Arena ChainedArena;
+typedef ChainedArena Arena;
 
 #define init_arena(arena, size_in_bytes)    \
     _Generic((arena),                       \
@@ -96,5 +129,18 @@ typedef Arena ChainedArena;
         ChainedArena*: callocate_chained,        \
         SchemasArena*: callocate_schemas_arena   \
     )(arena, num_bytes)
+
+#define register_state_arena(arena) \
+    _Generic((arena),                                   \
+        ChainedArena*: register_state_chained_arena,    \
+        LinearArena*: register_state_linear_arena       \
+    )(arena)
+
+
+#define recover_state_arena(arena, state) \
+    _Generic((arena),                                  \
+        ChainedArena*: recover_state_chained_arena,    \
+        LinearArena*: recover_state_linear_arena       \
+    )(arena, state)
 
 #endif

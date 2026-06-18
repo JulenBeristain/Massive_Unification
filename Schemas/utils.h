@@ -67,14 +67,15 @@ static inline size_t smallest_greater_power_of_2(size_t n) {
     if (n == 0) {
         return 1;
     }
-    unsigned mask = 1 << MOST_SIGNIFICANT_BIT(size_t);
+    size_t mask = 1ul << MOST_SIGNIFICANT_BIT(size_t);
     while(mask){
         if(n & mask){
-            return mask << 1;;
+            return mask << 1;
         }
         mask >>= 1;
     }
     // NOTE: we know we won't arrive here thanks to the initial check!
+    return 0;
 }
 
 #define CLAMP(n, min, max)      \
@@ -99,5 +100,7 @@ enum SetInsertReturnCode {
     SET_INSERT_ADDED_RESIZING,
     SET_INSERT_ALREADY_CONTAINED
 };
+
+#define address_after_struct(struct_ptr) ((char *)(struct_ptr) + sizeof(*struct_ptr))
 
 #endif

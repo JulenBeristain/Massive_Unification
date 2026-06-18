@@ -1,5 +1,4 @@
 #include "arena.h"
-#include "utils.h"
 #include "hash_to_pointers.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -31,7 +30,7 @@ static inline uintptr_t align_forward(uintptr_t ptr, size_t alignment) {
 // Block size is the smaller power of 2 greater or equal than size_in_bytes. In the extreme case that the most significant bit
 // is 63, we return the size itself (to avoid returning 0).
 static inline size_t calculate_block_size(size_t size_in_bytes){
-    unsigned most_significant_1; // Range: [0, 63] - Ensured to initialize because size_in_bytes has at least a bit activated
+    unsigned most_significant_1 = 0; // Range: [0, 63] - Ensured to initialize because size_in_bytes has at least a bit activated
     unsigned i = MOST_SIGNIFICANT_BIT(size_t);
     while(i){
         if(GET_BIT(size_in_bytes, i)){
@@ -60,11 +59,8 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
 
 // PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
-    MemoryBlock *memory_block = malloc(sizeof(*memory_block));
+    MemoryBlock *memory_block = malloc(sizeof(*memory_block) + block_size);
     CHECK_MALLOC(memory_block);
-
-    memory_block->memory = malloc(block_size);
-    CHECK_MALLOC(memory_block->memory);
     
     memory_block->size = block_size;
     memory_block->next = NULL;
@@ -73,7 +69,7 @@ static inline MemoryBlock *create_memory_block(size_t block_size){
 
 // NOTE: we expect size_in_bytes to be a big value, to be able to perform a lot of allocations with a single memory block,
 //  hopefully avoiding to allocate further blocks.
-void init_arena_chained(Arena *arena, size_t size_in_bytes){
+void init_chained_arena(Arena *arena, size_t size_in_bytes){
     if(size_in_bytes == 0){
         SET_TO_ZERO(arena, sizeof(*arena));
         return;
@@ -94,7 +90,6 @@ void init_arena_chained(Arena *arena, size_t size_in_bytes){
 void free_arena_chained(Arena arena){
     MemoryBlock *current = arena.memory_blocks;
     while(current){
-        free(current->memory);
         MemoryBlock *next = current->next;
         free(current);
         current = next;
@@ -110,22 +105,22 @@ void clear_arena_chained(Arena *arena){
 //  we manage even that case gracefully.
 // If num_bytes is 0, NULL is returned.
 
-void *allocate_chained_(Arena *arena, size_t num_bytes){
+void *allocate_chained_arena_(Arena *arena, size_t num_bytes){
     MemoryBlock *block = arena->current_block;
     assert(block != NULL); // PRE: arena already initialized
 
     // Align the pointer that we will return for faster memory access.
     // NOTE: since malloc could return a 8-aligned starting address for the memory in memory blocks, it is
     //  not enough to align the next_free_position of arena, we have to check with the final returning address.
-    uintptr_t current_ptr = (uintptr_t)block->memory + arena->next_free_position;
+    uintptr_t current_ptr = (uintptr_t)memory_block_start(block) + arena->next_free_position;
     uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
-    size_t new_offset = aligned_ptr - (uintptr_t)block->memory + num_bytes;
+    size_t new_offset = aligned_ptr - (uintptr_t)memory_block_start(block) + num_bytes;
     
     if(new_offset > block->size){
         bool already_next_allocated = block->next != NULL;
         if(already_next_allocated){
             arena->current_block = block->next;
-            return allocate_(arena, num_bytes);
+            return allocate_chained_arena_(arena, num_bytes);
         }
 
         // Allocate a new memory block with enough space (if num_bytes less than the current block size, choose that)
@@ -148,98 +143,59 @@ void *allocate_chained_(Arena *arena, size_t num_bytes){
         block->next = new_memory_block;
         arena->current_block = new_memory_block;
         arena->next_free_position = 0;
-        return allocate_(arena, num_bytes);
+        return allocate_chained_arena_(arena, num_bytes);
     }
     else { // There is enough space
         arena->next_free_position = new_offset;
-        return aligned_ptr;
+        return (void *)aligned_ptr;
     }
 }
 
-void *allocate_chained(Arena *arena, size_t num_bytes){
+void *allocate_chained_arena(Arena *arena, size_t num_bytes){
     if(num_bytes == 0){ return NULL; }
-    return allocate_chained_(arena, num_bytes);
+    return allocate_chained_arena_(arena, num_bytes);
 }
 
-void *callocate_chained(Arena *arena, size_t num_bytes){
+void *callocate_chained_arena(Arena *arena, size_t num_bytes){
     if(num_bytes == 0){ return NULL; }
-    void *mem = allocate_(arena, num_bytes);
+    void *mem = allocate_chained_arena_(arena, num_bytes);
     SET_TO_ZERO(mem, num_bytes);
     return mem;
 }
 
 
-#include "../postprocessing_to_mnf.h"
 
-void init_schemas_arena(SchemasArena *arena, size_t size_in_bytes) {
-    arena->memory = malloc(size_in_bytes);
-    CHECK_MALLOC(arena->memory);
+LinearArena *create_linear_arena(size_t size_in_bytes) {
+    LinearArena *arena = malloc(sizeof(*arena) + size_in_bytes);
+    CHECK_MALLOC(arena);
     arena->size = size_in_bytes;
     arena->next_free_position = 0;
+    return arena;
 }
 
-// TODO(YA): RENAME THE SCHEMAS ARENA, BECAUSE WE CHANGE THE APPROXIMATION TO HANDLE THE MEMORY OF SCHEMAS!!!
-
-void *allocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
-    assert(arena->memory != NULL); // PRE: arena already initialized
+void *allocate_linear_arena(LinearArena *arena, size_t num_bytes) {
+    assert(arena != NULL); // PRE: arena already initialized
 
     // Align the pointer that we will return for faster memory access.
     // NOTE: since malloc could return a 8-aligned starting address for the memory in arena, it is
     //  not enough to align the next_free_position of arena, we have to check with the final returning address.
-    uintptr_t current_ptr = (uintptr_t)arena->memory + arena->next_free_position;
+    uintptr_t current_ptr = (uintptr_t)linear_arena_memory(arena) + arena->next_free_position;
     uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
-    size_t new_offset = aligned_ptr - (uintptr_t)arena->memory + num_bytes;
+    size_t new_offset = aligned_ptr - (uintptr_t)linear_arena_memory(arena) + num_bytes;
     
     if(new_offset > arena->size){
-        // TODO(YA): should traverse all Schemas in the program and shallow copy with a HashSet of addresses of Schemas
-        //  the current active Schemas.
-#if 0
-        // create the new arena
-        ;;;
-
-        extern HashMapStringToPointer matrices;
-        HashSetPointers addresses_of_copied_schemas = create_hash_set_pointers_defnumbuckets();
-
-        // TODO(FUT): would be helpful to know if the Arena is resizing while postprocessing some matrix to MNF. If that is
-        //  not the case, we know that BlockRows are not pointing to their denormalized schemas. Furthermore, we could identify
-        //  which matrix/matrices (if parallelized) are being postprocessed, and travers their BlockRows only... 
-        bool is_called_while_postprocessing = true;
-
-        foreach_in_hashmap_string_to_pointer(matrices, pair) {
-            Matrix *matrix = pair->ptr;
-
-            Block *block;
-            intrusive_list_for_each_entry(block, &matrix->head_for_blocks, matrix_pos) {
-                block->schema;
-                block->dependencies;
-                block->normalized_schema;
-
-                intrusive_list_
-            
-                // TODO(YA): what happens if the SchemasArena is filled when calculating Schemas of rows!? We need to traverse
-                //  through them too! Therefore, we need to store that information in BlockRow!!!
-
-                // TODO(YA): not enough to simply copy the Schemas in the old Arena memory, because the pointers change!
-                //  No solamente necesitamos hash set de addresses the Schemas ya vistos, sino que hay que hacer un mapeo
-                //  address viejo a address nuevo!
-            }
-        }
-
-        // free the previous arena
-        ;;;
-#else
-        assert(false);
-#endif
+        fprintf(stderr, "NOT ENOUGH MEMORY IN LINEAR ARENA! EXITING THE PROGRAM...\n");
+        exit(1);
     }
     else { // There is enough space
         arena->next_free_position = new_offset;
-        return aligned_ptr;
+        return (void *)aligned_ptr;
     }
 }
 
-void *callocate_schemas_arena(SchemasArena *arena, size_t num_bytes) {
+void *callocate_linear_arena(LinearArena *arena, size_t num_bytes) {
     if(num_bytes == 0){ return NULL; }
-    void *mem = allocate_schemas_arena(arena, num_bytes);
+    void *mem = allocate_linear_arena(arena, num_bytes);
     SET_TO_ZERO(mem, num_bytes);
     return mem;
 }

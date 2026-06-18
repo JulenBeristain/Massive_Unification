@@ -124,6 +124,8 @@ struct DependencyPair {
     ArrayListSchema schemas;
 };
 
+int i = sizeof(DependencyPair);
+
 DECLARE_ARRAYLIST_TYPE(DependencyPair)
 typedef ArrayListDependencyPair SetDependencies;
 
