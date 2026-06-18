@@ -47,7 +47,7 @@ static inline ChainedArenaState register_state_chained_arena(ChainedArena *arena
     return (ChainedArenaState){ .current_block = arena->current_block, .next_free_position = arena->next_free_position };
 }
 
-static inline void recover_state_chained_arena(ChainedArena *arena, ChainedArenaState state) {
+static inline void pop_to_state_chained_arena(ChainedArena *arena, ChainedArenaState state) {
     arena->current_block = state.current_block;
     arena->next_free_position = state.next_free_position;
 }
@@ -86,48 +86,47 @@ static inline LinearArenaState register_state_linear_arena(LinearArena *arena) {
     return (LinearArenaState){ .next_free_position = arena->next_free_position };
 }
 
-static inline void recover_state_linear_arena(LinearArena *arena, LinearArenaState state) {
+static inline void pop_to_state_linear_arena(LinearArena *arena, LinearArenaState state) {
     arena->next_free_position = state.next_free_position;
 }
 
 
 // Default Arena is a ChainedArena
 typedef ChainedArena Arena;
+typedef ChainedArenaState ArenaState;
 
 #define init_arena(arena, size_in_bytes)    \
     _Generic((arena),                       \
-        ChainedArena*: init_arena_chained,   \
-        SchemasArena*: init_schemas_arena    \
+        ChainedArena*: init_chained_arena   \
     )(arena, size_in_bytes)
 
 #define init_arena_defcapacity(arena)    \
     _Generic((arena),                                   \
-        ChainedArena*: init_arena_chained_defcapacity,   \
-        SchemasArena*: init_schemas_arena_defcapacity    \
+        ChainedArena*: init_chained_arena_defcapacity   \
     )(arena)
 
 #define free_arena(arena)                   \
     _Generic((arena),                       \
-        ChainedArena: free_arena_chained,   \
-        SchemasArena: free_schemas_arena    \
+        ChainedArena: free_chained_arena,   \
+        LinearArena*: free_linear_arena    \
     )(arena)
 
 #define clear_arena(arena)                  \
     _Generic((arena),                       \
-        ChainedArena*: clear_arena_chained,  \
-        SchemasArena*: clear_schemas_arena   \
+        ChainedArena*: clear_chained_arena, \
+        LinearArena*: clear_linear_arena   \
     )(arena)
 
 #define allocate(arena, num_bytes)              \
     _Generic((arena),                           \
-        ChainedArena*: allocate_chained,         \
-        SchemasArena*: allocate_schemas_arena    \
+        ChainedArena*: allocate_chained_arena,  \
+        LinearArena*: allocate_linear_arena    \
     )(arena, num_bytes)
 
 #define callocate(arena, num_bytes)             \
     _Generic((arena),                           \
-        ChainedArena*: callocate_chained,        \
-        SchemasArena*: callocate_schemas_arena   \
+        ChainedArena*: callocate_chained_arena, \
+        LinearArena*: callocate_linear_arena   \
     )(arena, num_bytes)
 
 #define register_state_arena(arena) \
@@ -137,10 +136,10 @@ typedef ChainedArena Arena;
     )(arena)
 
 
-#define recover_state_arena(arena, state) \
+#define pop_to_state_arena(arena, state) \
     _Generic((arena),                                  \
-        ChainedArena*: recover_state_chained_arena,    \
-        LinearArena*: recover_state_linear_arena       \
+        ChainedArena*: pop_to_state_chained_arena,     \
+        LinearArena*: pop_to_state_linear_arena        \
     )(arena, state)
 
 #endif

@@ -7,6 +7,10 @@
 #include "arena.h"
 #include "utils.h"
 
+// TODO: we have tested that this cache mapping is not more efficient than simply calculating each mapping side, even if
+//  there might be some repeated. Until the general macros for defining HashMaps are defined, we will keep saving this file.
+//  But then, it has to be removed.
+
 // HASH MAP TYPES ////////////////////////////////////////////////////
 typedef struct RowToMappingSide RowToMappingSide;
 struct RowToMappingSide {
@@ -50,12 +54,6 @@ void print_hash_map_row_to_mapping_side(HashMapRowToMappingSide hm);
         ++pairptr                                                   \
     )
 
-#define foreach_in_hashmap_row_to_mapping_sideptr(hmptr, pairptr)           \
-    for(RowToMappingSide *pairptr = (hmptr)->buckets,                       \
-                         *_end = (hmptr)->buckets + (hmptr)->num_buckets;   \
-        pairptr < _end;                                                     \
-        ++pairptr                                                           \
-    )
 //////////////////////////////////////////////////////////////////////
 
 // Default kind of Map from Rows to Mapping Sides ////////////////////

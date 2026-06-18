@@ -549,6 +549,46 @@ void decrement_variables_in_set_schema(ArrayListSchema set_schema, Variable decr
     }
 }
 
+void normalize_schema_variables_(Schema *s, Variable *mapping, unsigned *num_found){
+    if(s->type == VARIABLE_SCHEMA) {
+        Variable old = s->v;
+        Variable new = mapping[old];
+        if (new) {
+            s->v = new;
+        } else {
+            *num_found++;
+            mapping[old] = *num_found;
+            s->v = *num_found;
+        }
+    } else {
+        foreach_in_schema(*s, sub) {
+            normalize_schema_variables_(sub, mapping, num_found);
+        }
+    }
+}
+void normalize_schema_variables_arena(Schema *schema, Arena *arena){
+    ArenaState initial_arena_state = register_state_arena(arena);
+    
+    Variable max_v = max_v_in_schema(*schema);
+    Variable *mapping = callocate(arena, 1 + max_v);
+    
+    unsigned num_found = 0;
+
+    normalize_schema_variables_(schema, mapping, &num_found);
+
+    pop_to_state_arena(arena, initial_arena_state);
+}
+void normalize_schema_variables(Schema *schema){
+    Variable max_v = max_v_in_schema(*schema);
+    Variable *mapping = calloc(1 + max_v, sizeof(*mapping));
+    
+    unsigned num_found = 0;
+    
+    normalize_schema_variables_(schema, mapping, &num_found);
+    
+    free(mapping);
+}
+
 // NOTE: we are making shallow copies of substitution, not deep copies.
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema* result, Arena* arena)
 {

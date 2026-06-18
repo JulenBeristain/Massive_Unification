@@ -1,5 +1,4 @@
 #include "arena.h"
-#include "hash_to_pointers.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>

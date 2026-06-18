@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include "hash_to_pointers.h"
 
+// TODO: I think that this hash maps of pointers was intended to be used in postprocessing, to save and then access efficiently
+//  only the rows that we removed. I have already implemented it in a different way, so this file should be removed. 
+//  Until the general macros for defining HashMaps are defined, we will keep saving this file. But then, it has to be removed.
+
 // Form hash value for string s
 static unsigned hash_string(char *s) {
     unsigned hashval;
@@ -58,7 +62,7 @@ static inline void resize_hash_map_string_to_pointer(HashMapStringToPointer *hm)
     StringToPointer *new_buckets = calloc(new_num_buckets, sizeof(*new_buckets));
     CHECK_CALLOC(new_buckets);
 
-    foreach_in_hashmap_string_to_pointer_ptr(hm, pair){
+    foreach_in_hashmap_string_to_pointer(*hm, pair){
         if (pair->str) {
             uint32_t bucket_i = hash_string(pair->str) % new_num_buckets;
 #ifndef NDEBUG

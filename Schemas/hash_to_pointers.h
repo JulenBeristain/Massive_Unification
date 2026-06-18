@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include "utils.h"
 
+
+// TODO: I think that this hash maps of pointers was intended to be used in postprocessing, to save and then access efficiently
+//  only the rows that we removed. I have already implemented it in a different way, so this file should be removed. 
+//  Until the general macros for defining HashMaps are defined, we will keep saving this file. But then, it has to be removed.
+
+
 // Hashmap that goes from Strings to void pointers (for Matrix pointers, to store the named set of Matrices in the program)
 typedef struct {
     char *str;
@@ -38,14 +44,6 @@ void print_hash_map_string_to_pointer(HashMapStringToPointer hm);
         pairptr < _end;                                             \
         ++pairptr                                                   \
     )
-
-#define foreach_in_hashmap_string_to_pointer_ptr(hmptr, pairptr)            \
-    for(StringToPointer *pairptr = (hmptr)->buckets,                        \
-                         *_end = (hmptr)->buckets + (hmptr)->num_buckets;   \
-        pairptr < _end;                                                     \
-        ++pairptr                                                           \
-    )
-
 
 
 // Hashset of void pointers (for Schema pointers, to keep the shallow copies structure when copying current active Schemas

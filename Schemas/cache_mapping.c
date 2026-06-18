@@ -3,6 +3,10 @@
 #include <stdio.h>
 #include <assert.h>
 
+// TODO: we have tested that this cache mapping is not more efficient than simply calculating each mapping side, even if
+//  there might be some repeated. Until the general macros for defining HashMaps are defined, we will keep saving this file.
+//  But then, it has to be removed.
+
 // NOTE: for the optimization of the calculation of mapping sides
 
 #define FNV_OFFSET_BASIS 2166136261U

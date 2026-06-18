@@ -9,19 +9,6 @@
 #include "arraylist.h"
 #include "../structures.h"
 
-/**
- * FUTURE WORK (TODO(YA-REVIEW)):
- * Obtention of column index mapping
- * Optimize management of schemas (if bad time measurements...)
- * Optimize AND SIMPLIFY further the core of the unification with matrices (and parallelize it)
- * Postprocess results to normalize the mappings...
- * Management of exception blocks...
- * 
- * Manage the inductive terms; i.e., implement flatenning matrix extension in C
- * Implement boolean operations between matrices in C
- * Repropose the code removing a dimension from the matrix...
- */
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// TYPE DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -29,77 +16,54 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/**
- * The structure that represents a Schema. It is inductively defined. It can be:
- * 
- * 1) A variable
- * 2) An ordered set of subschemas, including the empty set (<>).
- * 
- */
-// OPT: using an Arena for Schemas only, we could use a uint32 instead of a pointer for subschemas to use a position instead of a pointer (although more pointer arithmetic cost when accesing...)
-// OPT: another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
-//  and use v to discern if it is a variable or not (if equal to 0, general schema).
-typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
-typedef union Schema Schema, *SchemaPtr;
-union Schema {
-    struct {
-        SchemaType type;
-        Variable v;
-        uint32_t size_; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
-        uint32_t depth_; // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
-        void *_;
-    };
 
-    struct {
-        SchemaType __;
+// TODO(OPT): another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
+//  and use v to discern if it is a variable or not (if equal to 0, general schema). This optimization sinergizes with 
+//  extra indirection, uniqueness of leaves, Pool Allocation and RefCountingGC of Schema nodes.
+typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
+typedef struct Schema Schema, *SchemaPtr;
+struct Schema {
+    union {
+        unsigned v;
         unsigned arity;
-        uint32_t ___;
-        uint32_t ____;
-        Schema *subschemas;
     };
+    SchemaType type;
+
+    unsigned size_;     // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+    unsigned depth_;    // NOTE: initialized to 0. Valid values start at 1. Computed just before the value is going to be used.
+
+    Schema *subschemas;
 };
 
 // Macros to traverse general schemas //////////////////////////////////////////////////////////////////////////////////////
 #define foreach_in_schema(schema, sub) \
     for(Schema *sub = (schema).subschemas, *_end = (schema).subschemas + (schema).arity; sub < _end; ++sub)
-#define foreach_in_schemaptr(schemaptr, sub) \
-    for(Schema *sub = (schemaptr)->subschemas, *_end = (schemaptr)->subschemas + (schemaptr)->arity; sub < _end; ++sub)
 
 #define foreach_in_schemas(schema_short, schema_long, sub1, sub2) \
     for(Schema *sub1 = (schema_short).subschemas, *sub2 = (schema_long).subschemas, \
                *_end = (schema_short).subschemas + (schema_short).arity; \
         sub1 < _end; \
         ++sub1, ++sub2)
-#define foreach_in_schemaptrs(schema_short, schema_long, sub1, sub2) \
-    for(Schema *sub1 = (schema_short)->subschemas, *sub2 = (schema_long)->subschemas, \
-               *_end = (schema_short)->subschemas + (schema_short)->arity; \
-        sub1 < _end; \
-        ++sub1, ++sub2)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Schema iterator /////////////////////////////////////////////////////////////////////////////////////////////////////////
-// NOTE: we will use the already implemented ArrayListSchema to be the base of the Stack that will be the Schema iterator.
-// NOTE: we could also use an ArrayList of pointers to Schemas or a simple linked list...
-// TODO(YA): maybe is more interesting to have an ArrayList of pointers to Schema, so size calculation don't have a chance to
-//  be wasted on temporal copies.
-typedef struct SchemaIteratorNode SchemaIteratorNode;
-struct SchemaIteratorNode {
-    Schema schema;
+
+typedef struct {
+    Schema *schema;
     unsigned next_child;
-};
+} SchemaIteratorNode;
 
 DECLARE_ARRAYLIST_TYPE(SchemaIteratorNode)
 DEFINE_ARRAYLIST_FREE(SchemaIteratorNode, schema_iterator_node)
 
-typedef struct SchemaIterator SchemaIterator;
-struct SchemaIterator {
+typedef struct {
     ArrayListSchemaIteratorNode stack;
     bool first_next;
-};
+} SchemaIterator;
 
-SchemaIterator create_schema_iterator(Schema schema);
-SchemaIterator create_schema_iterator_arena(Schema schema, Arena *arena);
+SchemaIterator create_schema_iterator(Schema *schema);
+SchemaIterator create_schema_iterator_arena(Schema *schema, Arena *arena);
 static inline void free_schema_iterator(SchemaIterator iterator){ free_array_list_schema_iterator_node(iterator.stack); }
 bool schema_iterator_next(SchemaIterator *iterator, Schema *next);
 void schema_iterator_skip(SchemaIterator *iterator);
@@ -107,24 +71,20 @@ void schema_iterator_skip(SchemaIterator *iterator);
 // End Schema iterator /////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DECLARE_ARRAYLIST_TYPE(Schema)
-typedef struct SetSchema SetSchema;
-struct SetSchema {
-    ArrayListSchema list;
-    uint32_t size_;         // NOTE: sum of the sizes of the schemas. Init to 0. Valid values start at 1 (no empty SetSchemas).
-};                          // NOTE: no depth in SetSchema because we create iterators of Schemas
+// NOTE: we reuse the type of Schema to define a SetSchema. Even in that case, it is a good idea to have set_schema version
+//  of operations like size, because the size of the SetSchema is equal to its underground schema's size minus 1.
+typedef Schema SetSchema;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct DependencyPair DependencyPair, *DependencyPairPtr;
-struct DependencyPair {
-    Variable v;
-    ArrayListSchema schemas;
-};
+DECLARE_ARRAYLIST_TYPE(SchemaPtr)
 
-int i = sizeof(DependencyPair);
+typedef struct {
+    Variable v;
+    ArrayListSchemaPtr schemas;
+} DependencyPair, *DependencyPairPtr;
 
 DECLARE_ARRAYLIST_TYPE(DependencyPair)
 typedef ArrayListDependencyPair SetDependencies;
@@ -141,29 +101,20 @@ typedef ArrayListDependencyPair SetDependencies;
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-static inline void init_variable_schema(Schema* s, Variable v){
-    s->type = VARIABLE_SCHEMA;
-    s->size_ = 0;
-    s->depth_ = 0;
-    s->v = v;
+#define VARIABLE_SCHEMA_LITERAL(v) (Schema){ .type = VARIABLE_SCHEMA, .v = (v)}
+static inline void init_variable_schema(Schema *s, Variable v){
+    *s = VARIABLE_SCHEMA_LITERAL(v);
 }
+
+#define GENERAL_SCHEMA_LITERAL(arity, arena) \
+    (Schema){ .type = GENERAL_SCHEMA, .arity = (arity), .subschemas = allocate((arena), (arity) * sizeof(Schema))}
 static inline void init_general_schema_arena(Schema* s, unsigned arity, Arena* arena){
-    s->type = GENERAL_SCHEMA;
-    s->size_ = 0;
-    s->depth_ = 0;
-    s->arity = arity;
-    s->subschemas = allocate(arena, arity * sizeof(*(s->subschemas)));
+    *s = GENERAL_SCHEMA_LITERAL(arity, arena);
 }
-// NOTE: size and depth set to 1, already the correct value.
+
+#define EMPTY_SCHEMA_LITERAL (Schema){ .type = GENERAL_SCHEMA, .size_ = 1, .depth_ = 1 }
 static inline Schema empty_schema(){ 
-    // NOTE: unfortunately designated initializer don't behave with unions as with structs :(
-    Schema empty;
-    empty.type = GENERAL_SCHEMA;
-    empty.size_ = 1;
-    empty.depth_ = 1;
-    empty.arity = 0;
-    empty.subschemas = NULL;
-    return empty;
+    return EMPTY_SCHEMA_LITERAL;
 }
 static inline bool is_empty(Schema s) { return s.type == GENERAL_SCHEMA && s.arity == 0; }
 
@@ -171,52 +122,73 @@ unsigned schema_size_rec(Schema s);
 unsigned schema_depth_rec(Schema s);
 unsigned schema_size(Schema *s);
 unsigned schema_depth(Schema *s);
-unsigned set_schema_list_size_rec(ArrayListSchema set_schema);
-unsigned set_schema_list_size(ArrayListSchema set_schema);
 static inline unsigned set_schema_size_rec(SetSchema set_schema){
-    return set_schema_list_size_rec(set_schema.list);
+    return schema_size_rec(set_schema) - 1;
 }
 static inline unsigned set_schema_size(SetSchema *set_schema){
-    if (set_schema->size_ == 0) {
-        set_schema->size_ = set_schema_list_size(set_schema->list);
-    }
-    return set_schema->size_;
+    return schema_size(set_schema) - 1;
 }
 
 bool equal_schemas(Schema s1, Schema s2);
-bool equal_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2);
+static inline bool equal_set_schemas(SetSchema set_schema1, SetSchema set_schema2) {
+    return equal_schemas(set_schema1, set_schema2);
+}
 bool equivalent_schemas(Schema s1, Schema s2, Variable *mapping);
-bool equivalent_set_schemas(ArrayListSchema set_schema1, ArrayListSchema set_schema2, Variable *mapping);
+static inline bool equivalent_set_schemas(SetSchema set_schema1, SetSchema set_schema2, Variable *mapping){
+    return equivalent_set_schemas(set_schema1, set_schema2, mapping);
+}
 
 bool schema_contains_variables(Schema schema);
-bool set_schema_contains_variables(ArrayListSchema set_schema);
+static inline bool set_schema_contains_variables(SetSchema set_schema){
+    return schema_contains_variables(set_schema);
+}
 void variables_in_schema(Schema schema, SetVariables *vars);
-void variables_in_set_schema(ArrayListSchema set_schema, SetVariables *vars);
+static inline void variables_in_set_schema(SetSchema set_schema, SetVariables *vars){
+    variables_in_schema(set_schema, vars);
+}
 Variable min_v_in_schema(Schema schema);
-Variable min_v_in_set_schema(ArrayListSchema set_schema);
+static inline Variable min_v_in_set_schema(SetSchema set_schema){
+    return min_v_in_schema(set_schema);
+}
 Variable max_v_in_schema(Schema schema);
-Variable max_v_in_set_schema(ArrayListSchema set_schema);
+static inline Variable max_v_in_set_schema(SetSchema set_schema){
+    return max_v_in_schema(set_schema);
+}
 void increment_variables_in_schema(Schema *schema, Variable increment);
-void increment_variables_in_set_schema(ArrayListSchema set_schema, Variable increment);
+static inline void increment_variables_in_set_schema(SetSchema *set_schema, Variable increment){
+    increment_variables_in_schema(set_schema, increment);
+}
 void decrement_variables_in_schema(Schema* schema, Variable decrement);
-void decrement_variables_in_set_schema(ArrayListSchema set_schema, Variable decrement);
+static inline void decrement_variables_in_set_schema(SetSchema *set_schema, Variable decrement){
+    decrement_variables_in_schema(set_schema, decrement);
+}
+void normalize_schema_variables_arena(Schema *schema, Arena *arena);
+static inline void normalize_set_schema_variables_arena(SetSchema *set_schema, Arena *arena){
+    normalize_schema_variables_arena(set_schema, arena);
+}
+void normalize_schema_variables(Schema *schema);
+static inline void normalize_set_schema_variables(SetSchema *set_schema){
+    normalize_schema_variables(set_schema);
+}
 
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena);
 void substitute_vars_arena(Schema original, SetVariables vars, Schema substitution, Schema *result, Arena *arena);
 
-ArrayListSchema read_set_schema(char *line, Arena *arena);
+SetSchema read_set_schema(char *line, Arena *arena);
 
-DECLARE_ARRAYLIST_CREATE_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_ADD_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_FIND(Schema, schema)
-DEFINE_ARRAYLIST_CONTAINS(Schema, schema)
-DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(Schema, schema)
-DECLARE_ARRAYLIST_REMOVE_INDEX(Schema, schema)
-unsigned find_equivalent_in_array_list_schema(ArrayListSchema list, Schema elem, Variable *mapping);
-static inline bool contains_equivalent_array_list_schema(ArrayListSchema list, Schema elem, Variable *mapping){
+DECLARE_ARRAYLIST_CREATE_ARENA(SchemaPtr, schema_ptr)
+DECLARE_ARRAYLIST_ADD_ARENA(SchemaPtr, schema_ptr)
+DECLARE_ARRAYLIST_FIND(SchemaPtr, schema_ptr)
+DEFINE_ARRAYLIST_CONTAINS(SchemaPtr, schema_ptr)
+DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(SchemaPtr, schema_ptr)
+DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(SchemaPtr, schema_ptr)
+DECLARE_ARRAYLIST_REMOVE_INDEX(SchemaPtr, schema_ptr)
+unsigned find_equivalent_in_array_list_schema(ArrayListSchemaPtr list, Schema *elem, Variable *mapping);
+static inline bool contains_equivalent_array_list_schema(ArrayListSchemaPtr list, Schema *elem, Variable *mapping){
     return list.size != find_equivalent_in_array_list_schema(list, elem, mapping);
 }
+
+// TODO(YA): SIGUE REVISANDO POR AQUÍ!!!
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
