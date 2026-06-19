@@ -39,6 +39,9 @@ struct Schema {
 #define foreach_in_schema(schema, sub) \
     for(Schema *sub = (schema).subschemas, *_end = (schema).subschemas + (schema).arity; sub < _end; ++sub)
 
+#define foreach_in_schema_after_first(schema, sub) \
+    for(Schema *sub = (schema).subschemas + 1, *_end = (schema).subschemas + (schema).arity; sub < _end; ++sub)
+
 #define foreach_in_schemas(schema_short, schema_long, sub1, sub2) \
     for(Schema *sub1 = (schema_short).subschemas, *sub2 = (schema_long).subschemas, \
                *_end = (schema_short).subschemas + (schema_short).arity; \
@@ -106,8 +109,8 @@ static inline void init_variable_schema(Schema *s, Variable v){
     *s = VARIABLE_SCHEMA_LITERAL(v);
 }
 
-#define GENERAL_SCHEMA_LITERAL(arity, arena) \
-    (Schema){ .type = GENERAL_SCHEMA, .arity = (arity), .subschemas = allocate((arena), (arity) * sizeof(Schema))}
+#define GENERAL_SCHEMA_LITERAL(arity_value, arena) \
+    (Schema){ .type = GENERAL_SCHEMA, .arity = (arity_value), .subschemas = allocate((arena), (arity_value) * sizeof(Schema))}
 static inline void init_general_schema_arena(Schema* s, unsigned arity, Arena* arena){
     *s = GENERAL_SCHEMA_LITERAL(arity, arena);
 }
@@ -135,7 +138,7 @@ static inline bool equal_set_schemas(SetSchema set_schema1, SetSchema set_schema
 }
 bool equivalent_schemas(Schema s1, Schema s2, Variable *mapping);
 static inline bool equivalent_set_schemas(SetSchema set_schema1, SetSchema set_schema2, Variable *mapping){
-    return equivalent_set_schemas(set_schema1, set_schema2, mapping);
+    return equivalent_schemas(set_schema1, set_schema2, mapping);
 }
 
 bool schema_contains_variables(Schema schema);
@@ -153,6 +156,10 @@ static inline Variable min_v_in_set_schema(SetSchema set_schema){
 Variable max_v_in_schema(Schema schema);
 static inline Variable max_v_in_set_schema(SetSchema set_schema){
     return max_v_in_schema(set_schema);
+}
+unsigned num_distinct_schema_variables(Schema schema);
+static inline unsigned num_distinct_set_schema_variables(SetSchema set_schema) {
+    return num_distinct_schema_variables(set_schema);
 }
 void increment_variables_in_schema(Schema *schema, Variable increment);
 static inline void increment_variables_in_set_schema(SetSchema *set_schema, Variable increment){
@@ -183,54 +190,42 @@ DEFINE_ARRAYLIST_CONTAINS(SchemaPtr, schema_ptr)
 DECLARE_ARRAYLIST_ADD_NO_REPEATED_ARENA(SchemaPtr, schema_ptr)
 DECLARE_ARRAYLIST_EXTEND_NO_REPEATED_ARENA(SchemaPtr, schema_ptr)
 DECLARE_ARRAYLIST_REMOVE_INDEX(SchemaPtr, schema_ptr)
-unsigned find_equivalent_in_array_list_schema(ArrayListSchemaPtr list, Schema *elem, Variable *mapping);
-static inline bool contains_equivalent_array_list_schema(ArrayListSchemaPtr list, Schema *elem, Variable *mapping){
-    return list.size != find_equivalent_in_array_list_schema(list, elem, mapping);
+unsigned find_equivalent_in_array_list_schema_ptr(ArrayListSchemaPtr list, Schema *elem, Variable *mapping);
+static inline bool contains_equivalent_array_list_schema_ptr(ArrayListSchemaPtr list, Schema *elem, Variable *mapping){
+    return list.size != find_equivalent_in_array_list_schema_ptr(list, elem, mapping);
 }
-
-// TODO(YA): SIGUE REVISANDO POR AQUÍ!!!
+DECLARE_ARRAYLIST_PRINTLN(SchemaPtr, schema_ptr)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// SET OF DEPENDENCIES ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool equal_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
-bool equivalent_set_dependencies(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable *mapping);
-bool equivalent_set_dependencies_ignoring_empties(ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2, Variable* mapping);
-void increment_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable increment);
-void decrement_variables_in_set_dependencies(ArrayListDependencyPair dependencies, Variable decrement);
+bool equal_set_dependencies(SetDependencies dependencies1, SetDependencies dependencies2);
+bool equivalent_set_dependencies(SetDependencies dependencies1, SetDependencies dependencies2, Variable *mapping);
+bool equivalent_set_dependencies_ignoring_empties(SetDependencies dependencies1, SetDependencies dependencies2, Variable* mapping);
+void increment_variables_in_set_dependencies(SetDependencies dependencies, Variable increment);
+void decrement_variables_in_set_dependencies(SetDependencies dependencies, Variable decrement);
 ArrayListDependencyPair read_set_dependencies(FILE *stream, unsigned num_vars_with_dependencies, Arena *arena);
-int read_set_schema_with_dependencies(FILE *stream, ArrayListSchema *set_schema, ArrayListDependencyPair *dependencies, Arena *arena);
+int read_set_schema_with_dependencies(FILE *stream, SetSchema *set_schema, SetDependencies *dependencies, Arena *arena);
 
 DECLARE_ARRAYLIST_CREATE_ARENA(DependencyPair, dependency_pair)
 DECLARE_ARRAYLIST_ADD_ARENA(DependencyPair, dependency_pair)
 DECLARE_ARRAYLIST_EXTEND_ARENA(DependencyPair, dependency_pair)
 DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
-static inline unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyPair list, Variable v){
-    unsigned i = 0;
-    foreach_in_arraylist(DependencyPair, iter, list){
-        if (v == iter->v){
-            return i;
-        }
-        ++i;
-    }
-    return list.size;
-}
+unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyPair list, Variable v);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// JOINED EQUIVALENCE TESTS OF SCHEMAS AND DEPENDENCIES ///////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-unsigned num_distinct_schema_variables(ArrayListSchema set_schema);
-
 // NOTE: check schema and dependency equivalence encapsulating the calculation of variable mapping.
 bool equivalent_set_schemas_and_dependencies(
-    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
-    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
+    SetSchema set_schema1, SetSchema set_schema2,
+    SetDependencies dependencies1, SetDependencies dependencies2);
 
 bool equivalent_set_schemas_and_dependencies_ignoring_empties(
-    ArrayListSchema set_schema1, ArrayListSchema set_schema2,
-    ArrayListDependencyPair dependencies1, ArrayListDependencyPair dependencies2);
+    SetSchema set_schema1, SetSchema set_schema2,
+    SetDependencies dependencies1, SetDependencies dependencies2);
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -238,15 +233,15 @@ bool equivalent_set_schemas_and_dependencies_ignoring_empties(
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool common_set_schema_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, 
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    SetSchema set_schema1, SetDependencies dependencies1,
+    SetSchema set_schema2, SetDependencies dependencies2, 
+    SetSchema *common_set_schema, SetDependencies *common_dependencies,
     Arena *arena);
 
 bool common_set_schema_strict_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, 
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    SetSchema set_schema1, SetDependencies dependencies1,
+    SetSchema set_schema2, SetDependencies dependencies2, 
+    SetSchema *common_set_schema, SetDependencies *common_dependencies,
     Arena *arena);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -256,12 +251,14 @@ bool common_set_schema_strict_baseline(
 typedef enum { PRINT_VISUALLY, PRINT_FILE_FORMAT } PrintingMode;
 void print_schema(Schema s, PrintingMode mode);
 void println_schema(Schema s, PrintingMode mode);
-DECLARE_ARRAYLIST_PRINT_SEPARATORS_1(Schema, schema, PrintingMode, printing_mode)
-void print_set_schema(ArrayListSchema set_schema, PrintingMode mode);
-void println_set_schema(ArrayListSchema set_schema, PrintingMode mode);
-void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, char *schema_separator, PrintingMode schema_mode);
-void print_set_dependencies(ArrayListDependencyPair set_dependencies, PrintingMode mode);
-void println_set_dependencies(ArrayListDependencyPair set_dependencies, PrintingMode mode);
+void printdef_schema(Schema s);
+void print_set_schema(SetSchema set_schema, PrintingMode mode);
+void println_set_schema(SetSchema set_schema, PrintingMode mode);
+void printdef_set_schema(SetSchema set_schema);
+void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, char *schema_separator);
+void print_set_dependencies(SetDependencies set_dependencies, PrintingMode mode);
+void println_set_dependencies(SetDependencies set_dependencies, PrintingMode mode);
+void printdef_set_dependencies(SetDependencies dependencies);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END FUNCTION DECLARATIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -298,16 +295,17 @@ DECLARE_ARRAYLIST_PRINT_SEPARATORS(UInt, uint)
 DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
 
-void starting_column_indexes(ArrayListSchema fragment_set_schema, unsigned *starting_columns);
-ArrayListSchema normalized_set_schema(ArrayListSchema set_schema, ArrayListDependencyPair dependencies, Arena* arena);
+void starting_column_indexes(SetSchema fragment_set_schema, unsigned *starting_columns);
+SetSchema normalized_set_schema(SetSchema set_schema, SetDependencies dependencies, Arena* arena);
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
 
 bool common_set_schema_free_vars_baseline(
-    ArrayListSchema set_schema1, ArrayListDependencyPair dependencies1, ArrayListUInt free_var_positions1,
-    ArrayListSchema set_schema2, ArrayListDependencyPair dependencies2, ArrayListUInt free_var_positions2,
-    ArrayListSchema *common_set_schema, ArrayListDependencyPair *common_dependencies,
+    SetSchema set_schema1, SetDependencies dependencies1, ArrayListUInt free_var_positions1,
+    SetSchema set_schema2, SetDependencies dependencies2, ArrayListUInt free_var_positions2,
+    SetSchema *common_set_schema, SetDependencies *common_dependencies,
     Arena *arena);
 
+//TODO(YA): see if with pop_to is possible to simplify row_vars and schema_iterators arena to a single one 
 void mapping_column_indexes_side(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
@@ -372,7 +370,7 @@ enum {
 
 void denormalized_set_schema(
     SetSchema normalized_set_schema, int *row, 
-    ArrayListSchema *row_set_schema, SetDependencies *row_dependencies,
+    SetSchema *row_set_schema, SetDependencies *row_dependencies,
     Arena* arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -383,12 +381,16 @@ void denormalized_set_schema(
 /// DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+Schema schema_deepcopy_except_root(Schema *schema, Arena *arena);
+static inline SetSchema set_schema_deepcopy_except_root(SetSchema *set_schema, Arena *arena) {
+    return schema_deepcopy_except_root(set_schema, arena);
+}
 Schema *schema_deepcopy(Schema *schema, Arena *arena);
-ArrayListSchema set_schema_contents_deepcopy(ArrayListSchema *set_schema, Arena *arena);
-ArrayListSchema *set_schema_deepcopy(ArrayListSchema *set_schema, Arena *arena);
+static inline SetSchema *set_schema_deepcopy(SetSchema *set_schema, Arena *arena){
+    return schema_deepcopy(set_schema, arena);
+}
 
-DependencyPair *dependency_pair_deepcopy(DependencyPair *pair, Arena *arena);
-SetDependencies *set_dependencies_deepcopy(SetDependencies *dependencies, Arena *arena);
+ArrayListSchemaPtr deepcopy_arraylist_schema_ptr(ArrayListSchemaPtr list, Arena *arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

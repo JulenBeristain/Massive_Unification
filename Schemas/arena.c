@@ -4,6 +4,9 @@
 #include <string.h>
 #include <assert.h>
 
+#define CHAINED_ARENA_BASE_POS sizeof(MemoryBlock)
+#define LINEAR_ARENA_BASE_POS sizeof(LinearArena)
+
 #define DEFAULT_ALIGNMENT 16 // 16-byte alignment is safe for everything, including SIMD
 
 static inline unsigned num_active_bits(size_t n) {
@@ -58,7 +61,7 @@ static inline size_t calculate_block_size(size_t size_in_bytes){
 
 // PRE: block_size > 0
 static inline MemoryBlock *create_memory_block(size_t block_size){
-    MemoryBlock *memory_block = malloc(sizeof(*memory_block) + block_size);
+    MemoryBlock *memory_block = malloc(block_size);
     CHECK_MALLOC(memory_block);
     
     memory_block->size = block_size;
@@ -82,7 +85,7 @@ void init_chained_arena(Arena *arena, size_t size_in_bytes){
     
     // Current block to first block and next free position to 0
     arena->current_block = arena->memory_blocks;
-    arena->next_free_position = 0;
+    arena->next_free_position = CHAINED_ARENA_BASE_POS;
 }
 
 // NOTE: only the contents of the arena are freed. If the arena itself was malloced, it is not freed!
@@ -111,9 +114,9 @@ void *allocate_chained_arena_(Arena *arena, size_t num_bytes){
     // Align the pointer that we will return for faster memory access.
     // NOTE: since malloc could return a 8-aligned starting address for the memory in memory blocks, it is
     //  not enough to align the next_free_position of arena, we have to check with the final returning address.
-    uintptr_t current_ptr = (uintptr_t)memory_block_start(block) + arena->next_free_position;
+    uintptr_t current_ptr = (uintptr_t)block + arena->next_free_position;
     uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
-    size_t new_offset = aligned_ptr - (uintptr_t)memory_block_start(block) + num_bytes;
+    size_t new_offset = aligned_ptr - (uintptr_t)block + num_bytes;
     
     if(new_offset > block->size){
         bool already_next_allocated = block->next != NULL;
@@ -141,7 +144,7 @@ void *allocate_chained_arena_(Arena *arena, size_t num_bytes){
         // Insert the new block in the Arena and make a recursive call to take the alignment into account.
         block->next = new_memory_block;
         arena->current_block = new_memory_block;
-        arena->next_free_position = 0;
+        arena->next_free_position = CHAINED_ARENA_BASE_POS;
         return allocate_chained_arena_(arena, num_bytes);
     }
     else { // There is enough space
@@ -165,10 +168,10 @@ void *callocate_chained_arena(Arena *arena, size_t num_bytes){
 
 
 LinearArena *create_linear_arena(size_t size_in_bytes) {
-    LinearArena *arena = malloc(sizeof(*arena) + size_in_bytes);
+    LinearArena *arena = malloc(size_in_bytes);
     CHECK_MALLOC(arena);
     arena->size = size_in_bytes;
-    arena->next_free_position = 0;
+    arena->next_free_position = LINEAR_ARENA_BASE_POS;
     return arena;
 }
 
@@ -178,9 +181,9 @@ void *allocate_linear_arena(LinearArena *arena, size_t num_bytes) {
     // Align the pointer that we will return for faster memory access.
     // NOTE: since malloc could return a 8-aligned starting address for the memory in arena, it is
     //  not enough to align the next_free_position of arena, we have to check with the final returning address.
-    uintptr_t current_ptr = (uintptr_t)linear_arena_memory(arena) + arena->next_free_position;
+    uintptr_t current_ptr = (uintptr_t)arena + arena->next_free_position;
     uintptr_t aligned_ptr = align_forward(current_ptr, DEFAULT_ALIGNMENT);
-    size_t new_offset = aligned_ptr - (uintptr_t)linear_arena_memory(arena) + num_bytes;
+    size_t new_offset = aligned_ptr - (uintptr_t)arena + num_bytes;
     
     if(new_offset > arena->size){
         fprintf(stderr, "NOT ENOUGH MEMORY IN LINEAR ARENA! EXITING THE PROGRAM...\n");

@@ -52,6 +52,9 @@ static inline void pop_to_state_chained_arena(ChainedArena *arena, ChainedArenaS
     arena->next_free_position = state.next_free_position;
 }
 
+//NOTE: we could implement pop(size) and pop_to(position) too, but I prefer pop_to_state. The other ones require
+//  more manual careful usage, while pop_to_state only needs to be paired with the correct register_state.
+
 
 typedef struct {
     size_t size;
@@ -141,5 +144,11 @@ typedef ChainedArenaState ArenaState;
         ChainedArena*: pop_to_state_chained_arena,     \
         LinearArena*: pop_to_state_linear_arena        \
     )(arena, state)
+
+
+#define PUSH_STRUCT(arena, T) allocate((arena), sizeof(T))
+#define PUSH_STRUCT_ZERO(arena, T) callocate((arena), sizeof(T))
+#define PUSH_ARRAY(arena, T, n) allocate((arena), sizeof(T) * (n))
+#define PUSH_ARRAY_ZERO(arena, T, n) callocate((arena), sizeof(T) * (n))
 
 #endif
