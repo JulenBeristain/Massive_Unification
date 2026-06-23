@@ -45,7 +45,7 @@ static PartitionListHeader *find_header_that_contains_block(IntrusiveList *heade
     return NULL;
 }
 
-void postprocess_to_mnf(Matrix *matrix) {
+void postprocess_to_mnf(Matrix *matrix, Arena operation_arena) {
     
     // NOTE: arena to store temporarily the denormalized schemas and dependencies of each row. They have to be included in the
     //  matrix's schemas arena only when we know they become the schemas and dependencies of a new block. It stores the temporal

@@ -2,6 +2,7 @@
 #define STRUCTURES_H
 
 #include <stdio.h>
+#include <time.h>
 
 /* Structs */
 typedef struct L2 L2;

@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// TODO: once the hash maps are generalized with macros, Dictionaries could be changed to simply use a 
+//  Hash Map from Strings to ints
+
 struct nlist { // Table entry
     struct nlist *next; // Next entry in chain
     char *name; // Defined name

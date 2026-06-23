@@ -1,3 +1,5 @@
+// TODO: review the notes, see if they are updated, and if not, remove the file
+
     NOTAS SOBRE CORE.C Y NUESTROS FICHEROS TEST
 
 =================================================================================================================

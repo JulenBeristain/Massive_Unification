@@ -255,7 +255,7 @@ void printdef_schema(Schema s);
 void print_set_schema(SetSchema set_schema, PrintingMode mode);
 void println_set_schema(SetSchema set_schema, PrintingMode mode);
 void printdef_set_schema(SetSchema set_schema);
-void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, char *schema_separator);
+void print_dependency_pair(DependencyPair pair, char opening_brace, char closing_brace, char* schema_separator, PrintingMode schema_mode);
 void print_set_dependencies(SetDependencies set_dependencies, PrintingMode mode);
 void println_set_dependencies(SetDependencies set_dependencies, PrintingMode mode);
 void printdef_set_dependencies(SetDependencies dependencies);
@@ -296,42 +296,49 @@ DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
 
 void starting_column_indexes(SetSchema fragment_set_schema, unsigned *starting_columns);
+
 Schema normalized_schema(Schema schema, SetDependencies dependencies, Arena* arena);
 static inline SetSchema normalized_set_schema(SetSchema set_schema, SetDependencies dependencies, Arena* arena){
     return normalized_schema(set_schema, dependencies, arena);
 }
+static inline SetSchema *normalized_set_schema_arena(SetSchema set_schema, SetDependencies dependencies, Arena* arena){
+    SetSchema *result = PUSH_SINGLE(arena, *result);
+    *result = normalized_schema(set_schema, dependencies, arena);
+    return result;
+}
+
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
 
 bool common_set_schema_free_vars_baseline(
     SetSchema set_schema1, SetDependencies dependencies1, ArrayListUInt free_var_positions1,
     SetSchema set_schema2, SetDependencies dependencies2, ArrayListUInt free_var_positions2,
     SetSchema *common_set_schema, SetDependencies *common_dependencies,
-    Arena *arena);
+    Arena *arena, Arena scratch);
 
 void mapping_column_indexes_side(
-    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    SetSchema normalized_common_set_schema,
+    SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema *normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
     Arena arena);
 
 void mapping_column_indexes_side_lineal(
-    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    SetSchema normalized_common_set_schema,
+    SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema *normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
     Arena arena);
 
 void extend_row(
-    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    SetSchema normalized_common_set_schema,
+    SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema *normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
     Arena arena);
 
 void extend_row_lineal(
-    SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
-    SetSchema normalized_common_set_schema,
+    SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
+    SetSchema *normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
     Arena arena);
@@ -369,7 +376,7 @@ enum {
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void denormalized_set_schema(
-    SetSchema normalized_set_schema, int *row, 
+    SetSchema *normalized_set_schema, int *row, 
     SetSchema *row_set_schema, SetDependencies *row_dependencies,
     Arena* arena, Arena scratch);
 

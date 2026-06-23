@@ -1,3 +1,5 @@
+// TODO: update README.md
+
 # Massive unification
 En este proyecto se implementa un sistema preliminar de unificación masivo para restricciones de igualdad sobre términos finitos. Este sistema se puede optimizar y acelerar mediante el uso de GPUs. En un futuro, se aspira a que una versión evolucionada de este sistema sirva de base para la implementación de un demostrador de teoremas automático para lógica de primer orden.
 

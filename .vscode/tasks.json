@@ -1,8 +1,65 @@
 {
 	"version": "2.0.0",
 	"tasks": [
+
 		{
-			"label": "build core optimized for debugging (gcc)",
+			"label": "MAC build core for debugging (clang)",
+			"type": "cppbuild",
+			"command": "/usr/bin/clang",
+			"args": [
+				"-o",
+				"${workspaceFolder}/c",
+				"${workspaceFolder}/core.c",
+				"-Wall",
+				"-Wextra",
+				"-g",
+				"-O0",
+				"${workspaceFolder}/structures.c",	// TODO: when no longer needed to compile core, remove it!
+				"${workspaceFolder}/Schemas/set_variables.c",
+				"${workspaceFolder}/Schemas/arena.c",
+				"${workspaceFolder}/Schemas/schemas.c",
+				"${workspaceFolder}/Schemas/utils.c",
+				"${workspaceFolder}/Schemas/cache_mapping.c", // TODO: when no longer needed to compile core, remove it!
+				"${workspaceFolder}/postprocessing_to_mnf.c",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		{
+			"label": "MAC build core O2 (clang)",
+			"type": "cppbuild",
+			"command": "/usr/bin/clang",
+			"args": [
+				"-o",
+				"${workspaceFolder}/c",
+				"${workspaceFolder}/core.c",
+				"-Wall",
+				"-Wextra",
+				"-O2",
+				"${workspaceFolder}/structures.c",	// TODO: when no longer needed to compile core, remove it!
+				"${workspaceFolder}/Schemas/set_variables.c",
+				"${workspaceFolder}/Schemas/arena.c",
+				"${workspaceFolder}/Schemas/schemas.c",
+				"${workspaceFolder}/Schemas/utils.c",
+				"${workspaceFolder}/Schemas/cache_mapping.c", // TODO: when no longer needed to compile core, remove it!
+				"${workspaceFolder}/postprocessing_to_mnf.c",
+				"-lm"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+
+		// TODO: adapt these to the latest version of the repository!
+		{
+			"label": "build core for debugging (gcc)",
 			"type": "shell",
 			"command": "gcc",
 			"args": [
@@ -29,155 +86,7 @@
 		},
 
 		{
-			"label": "MAC build core optimized for debugging (clang)",
-			"type": "cppbuild",
-			"command": "/usr/bin/clang",
-			"args": [
-				"-o",
-				"${workspaceFolder}/c",
-				"${workspaceFolder}/core_optimized.c",
-				"-Wall",
-				"-Wextra",
-				"-g",
-				"-O0",
-				"${workspaceFolder}/structures.c",
-				"${workspaceFolder}/Schemas/set_variables.c",
-				"${workspaceFolder}/Schemas/arena.c",
-				"${workspaceFolder}/Schemas/schemas.c",
-				"${workspaceFolder}/Schemas/utils.c",
-				"${workspaceFolder}/Schemas/cache_mapping.c",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "MAC build core optimized O2 (clang)",
-			"type": "cppbuild",
-			"command": "/usr/bin/clang",
-			"args": [
-				"-o",
-				"${workspaceFolder}/c",
-				"${workspaceFolder}/core_optimized.c",
-				"-Wall",
-				"-Wextra",
-				"-O2",
-				"${workspaceFolder}/structures.c",
-				"${workspaceFolder}/Schemas/set_variables.c",
-				"${workspaceFolder}/Schemas/arena.c",
-				"${workspaceFolder}/Schemas/schemas.c",
-				"${workspaceFolder}/Schemas/utils.c",
-				"${workspaceFolder}/Schemas/cache_mapping.c",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "build tests (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-g",
-				"-O0",
-				"-Wall",
-				"-Wextra",
-				"-Wno-format-truncation",
-				"Schemas/set_variables.c",
-				"Schemas/arena.c",
-				"Schemas/schemas.c",
-				"Schemas/utils.c",
-				"Schemas/tests.c",
-				"Schemas/cache_mapping.c",
-				"structures.c",
-				"-o",
-				"build/tests"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-		{
-			"label": "MAC build tests (clang)",
-			"type": "cppbuild",
-			"command": "/usr/bin/clang",
-			"args": [
-				"-g",
-				"-O0",
-				"-Wall",
-				"-Wextra",
-				"-Wno-format-truncation",
-				"${workspaceFolder}/Schemas/set_variables.c",
-				"${workspaceFolder}/Schemas/arena.c",
-				"${workspaceFolder}/Schemas/schemas.c",
-				"${workspaceFolder}/Schemas/utils.c",
-				"${workspaceFolder}/Schemas/tests.c",
-				"${workspaceFolder}/Schemas/cache_mapping.c",
-				"${workspaceFolder}/structures.c",
-				"-o",
-				"${workspaceFolder}/build/tests"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-
-        {
-            "label": "valgrind test schema management",
-            "type": "shell",
-            "command": "valgrind",
-            "args": [
-                "--leak-check=full",
-                "--show-leak-kinds=all",
-                "--track-origins=yes",
-                "--verbose",
-                "--log-file=${workspaceFolder}/build/valgrind-out.txt",
-                "${workspaceFolder}/build/tests",
-                "${workspaceFolder}/data/schemas/AGT006+1.txt",
-                "${workspaceFolder}/data/schemas/COM123+1.txt"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always",
-                "panel": "new"
-            },
-            "dependsOn": "build tests " 
-        },
-		{
-            "label": "valgrind test mgu_schema obtention",
-            "type": "shell",
-            "command": "valgrind",
-            "args": [
-                "--leak-check=full",
-                "--show-leak-kinds=all",
-                "--track-origins=yes",
-                "--verbose",
-                "--log-file=${workspaceFolder}/build/valgrind-out.txt",
-                "${workspaceFolder}/build/tests",
-                "${workspaceFolder}/data/experimentation_matrices/AGT002+1"
-            ],
-            "group": "test",
-            "presentation": {
-                "reveal": "always",
-                "panel": "new"
-            },
-            "dependsOn": "build tests " 
-        },
-		{
-            "label": "valgrind test core",
+            "label": "valgrind core",
             "type": "shell",
             "command": "valgrind",
             "args": [
@@ -199,49 +108,5 @@
             },
             "dependsOn": "build core no perfect hash for debugging (gcc)" 
         },
-
-		{
-			"label": "build core no perfect hash for debugging (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-g",
-				"-O0",
-				"structures.c",
-				"-DNO_PERF_HASH",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build core no perfect hash optimized (gcc)",
-			"type": "shell",
-			"command": "gcc",
-			"args": [
-				"-o",
-				"c",
-				"core.c",
-				"-Wall",
-				"-Wextra",
-				"-O3",
-				"structures.c",
-				"-DNO_PERF_HASH",
-				"-lm"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$gcc"
-			],
-			"group": "build"
-		}
 	]
 }

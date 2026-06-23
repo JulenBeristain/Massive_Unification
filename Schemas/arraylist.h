@@ -531,6 +531,13 @@ bool equal_array_lists_##type(ArrayList##Type list1, ArrayList##Type list2){    
         printf("%c", closing_brace);                                            \
     }
 
+#define DEFINE_ARRAYLIST_PRINT_1(Type, type, default_print_elem_parameter)  \
+    void print_array_list_##type(ArrayList##Type list){                     \
+        print_separators_array_list_##type(                                 \
+            list, '[', ']', ", ", false, 0, (default_print_elem_parameter)  \
+        );                                                                  \
+    }
+
 #define DEFINE_ARRAYLIST_PRINT_SEPARATORS(Type, type, print_function, ...)      \
     void print_separators_array_list_##type(                                    \
         ArrayList##Type list, char opening_brace, char closing_brace,           \

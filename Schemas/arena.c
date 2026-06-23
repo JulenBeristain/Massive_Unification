@@ -7,7 +7,7 @@
 #define CHAINED_ARENA_BASE_POS sizeof(MemoryBlock)
 #define LINEAR_ARENA_BASE_POS sizeof(LinearArena)
 
-#define DEFAULT_ALIGNMENT 16 // 16-byte alignment is safe for everything, including SIMD
+#define DEFAULT_ALIGNMENT (2 * sizeof(void *)) // 16-byte alignment is safe for everything, including SIMD
 
 static inline unsigned num_active_bits(size_t n) {
     unsigned result = 0;

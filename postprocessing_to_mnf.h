@@ -277,17 +277,17 @@ struct BlockRow {
 
 #include "Schemas/schemas.h"
 
-// TODO(YA): add starting_col_indices data 
+// TODO(YA): add starting_col_indices data if it is helpfull to avoid recomputations
 
 typedef struct Block Block, *BlockPtr;
 struct Block {
-    unsigned r;                     // Number of main terms
-    unsigned c;                     // Number of columns for all main terms within the block
-    IntrusiveList head_for_rows;    // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
-    IntrusiveList matrix_pos;       // The intrusive list that stablishes the position of this block in its matrix.
-    ArrayListSchema *schema;        // The common schema of the rows in the block. NOTE: we can deduce the block is lineal if the schema contains any variable.
-    SetDependencies *dependencies;  // The set of dependencies associated to the schema.
-    SetSchema *normalized_schema;   // The normalized common schema of the rows in the block. NOTE: its size equals c.
+    unsigned r;                         // Number of main terms
+    unsigned c;                         // Number of columns for all main terms within the block
+    IntrusiveList head_for_rows;        // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
+    IntrusiveList matrix_pos;           // The intrusive list that stablishes the position of this block in its matrix.
+    SetSchema *set_schema;              // The common set schema of the rows in the block. NOTE: we can deduce the block is lineal if it contains any schema variable.
+    SetSchema *normalized_set_schema;   // set_schema normalized. All these schemas and dependencies are stored in the Matrix's memory.
+    SetDependencies *dependencies;      // The set of dependencies associated to the schema.
 };
 
 // TODO(YA3): we could link matrices too, with an IntrusiveList program_pos, if we wanted to traverse all the Matrices in the program (f.ex., for when we
@@ -299,8 +299,7 @@ struct Matrix {
     unsigned b;                     // Number of blocks in the matrix
     IntrusiveList head_for_blocks;  // Anchor point for the blocks of this matrix.
     ArrayListCharPtr free_vars;     // Free var information (strings and array of pointers stored in the arena)
-    Arena blocks_arena;               // Arena to manage all the memory necessary for the matrix's blocks and rows
-    Arena schemas_arena;            // Arena to manage all the memory necessary for the schemas and dependencies
+    Arena arena;                    // Arena to manage all the memory necessary for the matrix's blocks, rows and final deepcopied schemas and dependencies
 };
 
 static inline void remove_block_row(BlockRow *row) {
@@ -388,7 +387,7 @@ static inline void init_empty_matrix(Matrix *matrix) {
     matrix->b = 0;
     init_intrusive_list(&matrix->head_for_blocks);
     matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
-    // TODO(ADJUST): when testing with real instances, we can take here a more appropriate value to reduce the number of Memory Blocks
+    // TODO: when testing with real instances, we can take here a more appropriate value to reduce the number of Memory Blocks
     init_arena(&matrix->blocks_arena, KILOBYTES(4));
     init_arena(&matrix->schemas_arena, KILOBYTES(4));
 }
@@ -405,7 +404,7 @@ static inline void init_empty_matrix_with_arena_size(Matrix *matrix, size_t aren
     init_arena(&matrix->schemas_arena, arena_size);
 }
 
-void postprocess_to_mnf(Matrix *matrix);
+void postprocess_to_mnf(Matrix *matrix, Arena operation_arena);
 
 
 typedef enum { 

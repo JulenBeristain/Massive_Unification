@@ -1,9 +1,11 @@
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <stdbool.h>
 
 #include "structures.h"
+
+// TODO: review if the structs defined are still relevant. If it isn't the case, remove these files (after
+//  checking there are no more useful functions)
 
 // ===<<< BEGIN EXCEPTION BLOCK >>>=== //
 exception_block create_null_exception_block() {

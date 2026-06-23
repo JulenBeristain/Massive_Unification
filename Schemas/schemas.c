@@ -36,11 +36,11 @@ unsigned find_equivalent_in_array_list_schema_ptr(ArrayListSchemaPtr list, Schem
     return pos;
 }
 
-static inline void print_schema_ptr(Schema *s) {
-    print_schema(*s, PRINT_VISUALLY);
+static inline void print_schema_ptr(Schema *s, PrintingMode schema_mode) {
+    print_schema(*s, schema_mode);
 }
-DEFINE_ARRAYLIST_PRINT_SEPARATORS(SchemaPtr, schema_ptr, print_schema_ptr)
-DEFINE_ARRAYLIST_PRINT(SchemaPtr, schema_ptr)
+DEFINE_ARRAYLIST_PRINT_SEPARATORS_1(SchemaPtr, schema_ptr, print_schema_ptr, PrintingMode, schema_mode)
+DEFINE_ARRAYLIST_PRINT_1(SchemaPtr, schema_ptr, PRINT_VISUALLY)
 DEFINE_ARRAYLIST_PRINTLN(SchemaPtr, schema_ptr)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -244,10 +244,10 @@ void printdef_set_schema(SetSchema set_schema){
 // Set dependencies /////////////////////////////////////////////////////////////////////////////////////////////
 void print_dependency_pair(
     DependencyPair pair, char opening_brace, char closing_brace,
-    char* schema_separator)
+    char* schema_separator, PrintingMode schema_mode)
 {
     printf("$%u <- ", pair.v);
-    print_separators_array_list_schema_ptr(pair.schemas, opening_brace, closing_brace, schema_separator, false, 0);
+    print_separators_array_list_schema_ptr(pair.schemas, opening_brace, closing_brace, schema_separator, false, 0, schema_mode);
 }
 void print_set_dependencies_(
     SetDependencies set_dependencies, char opening_brace, char closing_brace,
@@ -260,7 +260,7 @@ void print_set_dependencies_(
 
     foreach_in_arraylist(DependencyPair, pair, set_dependencies)
     {
-        print_dependency_pair(*pair, opening_brace, closing_brace, schema_separator);
+        print_dependency_pair(*pair, opening_brace, closing_brace, schema_separator, schema_mode);
         printf("\n");
     }
 }
@@ -496,7 +496,7 @@ void normalize_schema_variables_(Schema *s, Variable *mapping, unsigned *num_fou
         if (new) {
             s->v = new;
         } else {
-            *num_found++;
+            *num_found += 1;
             mapping[old] = *num_found;
             s->v = *num_found;
         }
@@ -801,7 +801,7 @@ bool equivalent_set_dependencies(SetDependencies dependencies1, SetDependencies 
 // NOTE: having the <> schema as a dependency of a variable is not important for normalization, so in most cases we consider
 //  equivalent sets of dependencies whose only difference is having empty schemas as extra dependencies.
 bool equivalent_set_dependencies_ignoring_empties(SetDependencies dependencies1, SetDependencies dependencies2, Variable* mapping) {
-    equal_helper_set_dependencies(dependencies1, dependencies2, true, mapping, true);
+    return equal_helper_set_dependencies(dependencies1, dependencies2, true, mapping, true);
 }
 
 
@@ -1538,10 +1538,10 @@ bool common_set_schema_free_vars_baseline(
     SetSchema set_schema1, SetDependencies dependencies1, ArrayListUInt free_var_positions1,
     SetSchema set_schema2, SetDependencies dependencies2, ArrayListUInt free_var_positions2,
     SetSchema *common_set_schema, SetDependencies *common_dependencies,
-    Arena *arena)
+    Arena *arena, Arena scratch)
 {
-    SetSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_var_positions1, arena);
-    SetSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_var_positions2, arena);
+    SetSchema set_schema1_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema1, free_var_positions1, &scratch);
+    SetSchema set_schema2_wrt_free_vars = set_schema_with_respect_to_free_vars(set_schema2, free_var_positions2, &scratch);
     
     return common_set_schema_baseline(
         set_schema1_wrt_free_vars, dependencies1, 
@@ -1865,7 +1865,7 @@ void extend_row(
     assert(num_free_vars > 0);
 
     int **row_vars_to_extending_vars = PUSH_ARRAY(&arena, *row_vars_to_extending_vars, n_cols_side);
-    unsigned *extending_vars = PUSH_ARRAY(&arena, *extending_vars, n_common - n_cols_side);
+    int *extending_vars = PUSH_ARRAY(&arena, *extending_vars, n_common - n_cols_side);
     // NOTE: we have at most as many row variables in the original row as its length.
     int *row_vars_to_new_columns = PUSH_ARRAY_ZERO(&arena, *row_vars_to_new_columns, n_cols_side);
     ArenaState schema_iterators_start_state = register_state_arena(&arena);
@@ -1954,7 +1954,7 @@ void extend_row(
                         int **var_s_extending_vars_ptr = row_vars_to_extending_vars - (old_col + 1);
                         if(is_already_in_extended_row){
                             // NOTE: repeated appearence of the row variable
-                            int *var_s_extending_vars = *var_s_extending_vars;
+                            int *var_s_extending_vars = *var_s_extending_vars_ptr;
                             for (unsigned i = 0; i < num_extending_vars; ++i) {
                                 extended_row[extended_pos++] = var_s_extending_vars[i];
                             }
