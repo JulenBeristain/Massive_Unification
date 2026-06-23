@@ -296,7 +296,10 @@ DECLARE_ARRAYLIST_PRINT(UInt, uint)
 DECLARE_ARRAYLIST_PRINTLN(UInt, uint)
 
 void starting_column_indexes(SetSchema fragment_set_schema, unsigned *starting_columns);
-SetSchema normalized_set_schema(SetSchema set_schema, SetDependencies dependencies, Arena* arena);
+Schema normalized_schema(Schema schema, SetDependencies dependencies, Arena* arena);
+static inline SetSchema normalized_set_schema(SetSchema set_schema, SetDependencies dependencies, Arena* arena){
+    return normalized_schema(set_schema, dependencies, arena);
+}
 ArrayListCharPtr final_free_vars_ordering(ArrayListCharPtr free_vars1, ArrayListCharPtr free_vars2, Arena *arena);
 
 bool common_set_schema_free_vars_baseline(
@@ -305,36 +308,33 @@ bool common_set_schema_free_vars_baseline(
     SetSchema *common_set_schema, SetDependencies *common_dependencies,
     Arena *arena);
 
-//TODO(YA): see if with pop_to is possible to simplify row_vars and schema_iterators arena to a single one 
 void mapping_column_indexes_side(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *row_vars_arena,
-    Arena *schema_iterator_arena);
+    Arena arena);
 
 void mapping_column_indexes_side_lineal(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     unsigned *mapping_side,
-    Arena *schema_iterator_arena);
+    Arena arena);
 
 void extend_row(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
-    Arena *row_vars_arena,
-    Arena *schema_iterator_arena);
+    Arena arena);
 
 void extend_row_lineal(
     SetSchema normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
     int *extended_row,
-    Arena *schema_iterator_arena);
+    Arena arena);
 
 static inline int is_original_var_first_appearence(int row_value) {
     return row_value == 0;
@@ -371,7 +371,7 @@ enum {
 void denormalized_set_schema(
     SetSchema normalized_set_schema, int *row, 
     SetSchema *row_set_schema, SetDependencies *row_dependencies,
-    Arena* arena);
+    Arena* arena, Arena scratch);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END POSTPROCESSING OF MATRICES: OBTAIN SET SCHEMA OF ROW DENORMALIZING NORMALIZED FRAGMENT SET SCHEMA BASED ON THE RESULTING ROW  ///
@@ -381,16 +381,13 @@ void denormalized_set_schema(
 /// DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Schema schema_deepcopy_except_root(Schema *schema, Arena *arena);
-static inline SetSchema set_schema_deepcopy_except_root(SetSchema *set_schema, Arena *arena) {
-    return schema_deepcopy_except_root(set_schema, arena);
-}
+
 Schema *schema_deepcopy(Schema *schema, Arena *arena);
 static inline SetSchema *set_schema_deepcopy(SetSchema *set_schema, Arena *arena){
     return schema_deepcopy(set_schema, arena);
 }
 
-ArrayListSchemaPtr deepcopy_arraylist_schema_ptr(ArrayListSchemaPtr list, Arena *arena);
+SetDependencies *set_dependencies_deepcopy(SetDependencies *dependencies, Arena *arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END DEEP COPYING  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

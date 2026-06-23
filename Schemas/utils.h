@@ -85,7 +85,7 @@ static inline size_t smallest_greater_power_of_2(size_t n) {
 
 
 // Operations return code types //////////////////////////////////////
-// TODO(FUT): define macros to create HashMaps of any types and move this definitions to that file...
+// TODO: define macros to create HashMaps of any types and move this definitions to that file...
 typedef enum MapInsertReturnCode MapInsertReturnCode;
 enum MapInsertReturnCode { 
     MAP_INSERT_ADDED,
@@ -93,7 +93,7 @@ enum MapInsertReturnCode {
     MAP_INSERT_ALREADY_CONTAINED
 };
 
-// TODO(FUT): define macros to create HashSets of any types and move this definitions to that file...
+// TODO: define macros to create HashSets of any types and move this definitions to that file...
 typedef enum SetInsertReturnCode SetInsertReturnCode;
 enum SetInsertReturnCode { 
     SET_INSERT_ADDED,
@@ -102,5 +102,12 @@ enum SetInsertReturnCode {
 };
 
 #define address_after_struct(struct_ptr) ((char *)(struct_ptr) + sizeof(*struct_ptr))
+
+// NOTE: put CHECK macros after!
+#define MALLOC_SINGLE(T) ((typeof(T) *) malloc(sizeof(T)))
+#define CALLOC_SINGLE(T) ((typeof(T) *) calloc(1, sizeof(T)))
+#define MALLOC_ARRAY(T, n) ((typeof(T) *) malloc((n) * sizeof(T)))
+#define CALLOC_ARRAY(T, n) ((typeof(T) *) calloc((n), sizeof(T)))
+
 
 #endif

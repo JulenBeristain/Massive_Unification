@@ -146,9 +146,9 @@ typedef ChainedArenaState ArenaState;
     )(arena, state)
 
 
-#define PUSH_STRUCT(arena, T) allocate((arena), sizeof(T))
-#define PUSH_STRUCT_ZERO(arena, T) callocate((arena), sizeof(T))
-#define PUSH_ARRAY(arena, T, n) allocate((arena), sizeof(T) * (n))
-#define PUSH_ARRAY_ZERO(arena, T, n) callocate((arena), sizeof(T) * (n))
+#define PUSH_SINGLE(arena, T) ((typeof(T) *) allocate((arena), sizeof(T)))
+#define PUSH_SINGLE_ZERO(arena, T) ((typeof(T) *) callocate((arena), sizeof(T)))
+#define PUSH_ARRAY(arena, T, n) ((typeof(T) *) allocate((arena), sizeof(T) * (n)))
+#define PUSH_ARRAY_ZERO(arena, T, n) ((typeof(T) *) callocate((arena), sizeof(T) * (n)))
 
 #endif

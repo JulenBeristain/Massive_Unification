@@ -4,8 +4,11 @@
 #include <string.h>
 
 // TODO: define the hash set of variables via general macros.
-//  In the same way, define general macros for linked lists...
+//  In the same way, define general macros for linked lists... ==> Try to use intrusive lists???
 //  After that, define only operations that are used for sets of variables, no unused operations for Variables...
+
+// TODO: rethink the Arena version operations taking into account the arena scratch/temporal arena/pop_to_state
+//  techniques... Adapt .h if necessary
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 /// HASH FUNCTION //////////////////////////////////////////////////////////////////////////

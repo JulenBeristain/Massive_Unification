@@ -3,6 +3,9 @@ To compile:
 gcc -Wall -Wextra -g Schemas/tests.c Schemas/set_variables.c -o build/tests
 */
 
+// TODO: remove this file. Separate unit tests for each module as much as possible (using AI would be interesting
+//  for this task...)
+
 #include "schemas.h"
 #include "utils.h"
 #include "set_variables.h"
@@ -889,12 +892,6 @@ bool onerdered_equal_array_lists_pair_uint(ArrayListPairUInt list1, ArrayListPai
 
 void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
 {
-    // TODO(CLEAN/OPT_MEM - not very relevant...):
-    //  we could perform a first read to the operand blocks to determine the total memory we need for them. With the result blocks, we could calculate the size
-    //  of the greatest one to allocate that amount of memory which would be reused. In the case of operand schemas we could also determine the total number of schemas in the
-    //  operand files to further limit the allocated memory for them. Another option would be to add a header to the files that summarizes the sizes of the operand blocks, the
-    //  largest possible resulting block, and so on... to avoid that first read.
-
     // Open the files and check so
     FILE *stream_M1 = fopen(path_m1, "r");
     FILE *stream_M2 = fopen(path_m2, "r");
@@ -1302,8 +1299,6 @@ void test_mapping_obtention_(char *path_m1, char *path_m2, char *path_m3)
 
                 printf("ok_set_schemas = %u\nok_dependencies = %u\n", ok_set_schemas, ok_dependendencies);
                 assert(ok_set_schemas);
-                // TODO(instance): some empty (<>) dependencies are removed in certain instances, why? Anyways, when normalizing
-                //  not having those empty dependencies is equivalent to having them...
             }
 
             SetSchema normalized_common_set_schema = normalized_common_set_schemas[(t1 - 1) * s2 + (t2 - 1)];
