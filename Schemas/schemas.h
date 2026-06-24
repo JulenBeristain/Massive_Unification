@@ -17,7 +17,12 @@
 /// SCHEMAS ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO(OPT): another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
+// TODO: for renormalization (and potentially other operations), interesting to have access to an iterable of tree-leaves 
+//  (since we know that all schema variables are leaves!). We would need to have next pointers in the leaves, and in the root
+//  node we would have a pointer to the first leaf. Additionally, if extra indirection is added, having parent pointers in the 
+//  nodes could help alongside the iterable of leaves with other operations like substitution.
+
+// TODO: another approach would be to use a simple struct where all the data is introduced (forgetting about the SchemaType)
 //  and use v to discern if it is a variable or not (if equal to 0, general schema). This optimization sinergizes with 
 //  extra indirection, uniqueness of leaves, Pool Allocation and RefCountingGC of Schema nodes.
 typedef enum { VARIABLE_SCHEMA, GENERAL_SCHEMA } SchemaType;
@@ -313,8 +318,11 @@ bool common_set_schema_free_vars_baseline(
     SetSchema set_schema1, SetDependencies dependencies1, ArrayListUInt free_var_positions1,
     SetSchema set_schema2, SetDependencies dependencies2, ArrayListUInt free_var_positions2,
     SetSchema *common_set_schema, SetDependencies *common_dependencies,
-    Arena *arena, Arena scratch);
+    Arena *arena, Arena scratch_arena);
 
+
+// TODO: see if starting_col_indices and free_var_positions are necessary or the computations they
+//  cache are so trivial that is better to simplify the interface
 void mapping_column_indexes_side(
     SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema *normalized_common_set_schema,
@@ -340,6 +348,23 @@ void extend_row_lineal(
     SetSchema *normalized_set_schema, ArrayListUInt free_var_positions, 
     SetSchema *normalized_common_set_schema,
     unsigned *starting_col_indices, int *row,
+    int *extended_row,
+    Arena arena);
+
+// TODO: change the names of these versions
+
+void extend_row_no_free_vars(
+    SetSchema *normalized_set_schema, SetSchema *normalized_common_set_schema, int *row, 
+    int *extended_row,
+    Arena arena);
+
+void extend_row_lineal_no_free_vars(
+    SetSchema *normalized_set_schema, SetSchema *normalized_common_set_schema, int *row, 
+    int *extended_row,
+    Arena arena);
+
+typedef void (*ExtendRowNoFreeVarsFunc)(
+    SetSchema *normalized_set_schema, SetSchema *normalized_common_set_schema, int *row, 
     int *extended_row,
     Arena arena);
 
@@ -376,9 +401,10 @@ enum {
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void denormalized_set_schema(
+    unsigned schema_variables_lower_bound_for_independence,
     SetSchema *normalized_set_schema, int *row, 
     SetSchema *row_set_schema, SetDependencies *row_dependencies,
-    Arena* arena, Arena scratch);
+    Arena* arena, Arena scratch_arena);
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// END POSTPROCESSING OF MATRICES: OBTAIN SET SCHEMA OF ROW DENORMALIZING NORMALIZED FRAGMENT SET SCHEMA BASED ON THE RESULTING ROW  ///

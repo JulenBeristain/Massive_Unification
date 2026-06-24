@@ -347,7 +347,7 @@ static int compare_results(result_block *rb1, result_block *rb2,
  *
  * @return 0 on success; 1 on failure.
  */
-static int read_num_blocks(FILE *stream, unsigned *s) {
+int read_num_blocks(FILE *stream, unsigned *s) {
     char  *line = NULL;
     size_t len  = 0;
 
@@ -369,7 +369,7 @@ static int read_num_blocks(FILE *stream, unsigned *s) {
  * @brief Reads a "% BEGIN: Matrix subsetX.Y (n,m)" header and extracts n and m.
  * Exits on any parse error.
  */
-static void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
+void read_dimensions(FILE *stream, unsigned *n, unsigned *m) {
     char  *line = NULL;
     size_t len  = 0;
     char  *e, *endptr;
@@ -419,7 +419,7 @@ static inline bool is_original_variable(char *tok) {
  * @param skip_first  When true, the first token (exception count) is skipped before
  *                    row values are read.
  */
-static void read_line(char *line, int *row, bool skip_first) {
+void read_line(char *line, int *row, bool skip_first) {
     char *tok = strtok(line, ",");
     if (skip_first) tok = strtok(NULL, ",\n");
 
@@ -487,7 +487,7 @@ static void get_mapping(char *line, unsigned n_pairs, unsigned *mapping) {
  *
  * @param result  When true, input is in result-file format (extra unifier lines present).
  */
-static void read_exception_blocks(FILE *stream, main_term *mt, bool result) {
+void read_exception_blocks(FILE *stream, main_term *mt, bool result) {
     char  *line = NULL;
     size_t len  = 0;
 
@@ -3179,10 +3179,10 @@ static void block_and(Block *b1, Block *b2, Block *b3, mgu_schema *schemas, bool
         BlockRow *br1 = address[-2];
         unsigned index_mt = *(((unsigned *)(address)) - 1);
 
-        BlockRow *br3 = allocate(arena_for_rows, sizeof(*br3));
+        BlockRow *br3 = PUSH_SINGLE(arena_for_rows, *br3);
         br3->c = b3->c;
         add_row_to_block(b3, br3);
-        br3->row = allocate(arena_for_rows, sizeof(*br3->row) * br3->c);
+        br3->row = PUSH_ARRAY(arena_for_rows, *br3->row, br3->c);
                                      
         apply_unifier_left_to_block_rows(br1, br2, br3, &unifiers[i * unifier_size]);
 
@@ -3195,7 +3195,7 @@ static void block_and(Block *b1, Block *b2, Block *b3, mgu_schema *schemas, bool
 
 
 
-Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
+Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena, Arena scratch_arena) {
     Matrix result; init_empty_matrix(&result);
     
     result.free_vars = final_free_vars_ordering(m1->free_vars, m2->free_vars, &result.arena);
@@ -3256,11 +3256,6 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
 
     // NOTE: loop to calculate the common set schemas, normalize them and calculate each resulting block
     {
-        // NOTE: arena used to keep track of the mapping from row variables to extending new virtual columns when calculating
-        //  the mapping column sides and the memory allocations necessary for Schema iterator stacks in those calculations, 
-        //  plus other temporary values during the resultant block calculations.
-        Arena temporal_arena; init_arena_defcapacity(&temporal_arena);
-
         unsigned t1 = 0;
         Block *block1;
         intrusive_list_for_each_entry(block1, &m1->head_for_blocks, matrix_pos) {
@@ -3277,17 +3272,17 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                 SetSchema *set_schema2 = block2->set_schema;
                 SetDependencies *dependencies2 = block2->dependencies;
 
-                SetSchema *computed_common_set_schema;
-                SetDependencies *computed_common_dependencies;
+                SetSchema *computed_common_set_schema = NULL;
+                SetDependencies *computed_common_dependencies = NULL;
 
-                clear_arena(&temporal_arena);
+                clear_arena(&scratch_arena);
                 ArenaState before_common_schema_state = register_state_arena(operation_arena);
 
                 bool exists_common_schema = common_set_schema_free_vars_baseline(
                     *set_schema1, *dependencies1, free_var_positions1,
                     *set_schema2, *dependencies2, free_var_positions2,
                     computed_common_set_schema, computed_common_dependencies,
-                    &operation_arena, temporal_arena);
+                    operation_arena, scratch_arena);
 
                 if (exists_common_schema) {
                     ArenaState before_block3_computation = register_state_arena(&result.arena);
@@ -3322,7 +3317,7 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                     unsigned num_cols2 = set_schema_size(normalized_set_schema2);
                     computed_mapping.new_b = computed_mapping.n_common - num_cols2;
 
-                    computed_mapping.common_columns = PUSH_ARRAY(&temporal_arena, *computed_mapping.common_columns, computed_mapping.n_common);
+                    computed_mapping.common_columns = PUSH_ARRAY(&scratch_arena, *computed_mapping.common_columns, computed_mapping.n_common);
                     for(unsigned i = 0; i < computed_mapping.n_common; ++i){ computed_mapping.common_columns[i] = i; }
 
                     unsigned mapping_side_size = computed_mapping.n_common * sizeof(unsigned);
@@ -3333,7 +3328,7 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                     bool block3_is_lineal = block1_is_lineal && block2_is_lineal;
 
                     if(block3_is_lineal){
-                        unsigned *mapping_sides = allocate(&temporal_arena, 2 * mapping_side_size);
+                        unsigned *mapping_sides = allocate(&scratch_arena, 2 * mapping_side_size);
                         unsigned *mappingL = mapping_sides;
                         unsigned *mappingR = mapping_sides + computed_mapping.n_common;
 
@@ -3342,25 +3337,25 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                         BlockRow *first_row1 = intrusive_list_first_entry(&block1->head_for_rows, BlockRow, block_pos);
                         mapping_column_indexes_side_lineal(
                             normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                            starting_col_indices1, first_row1->row, mappingL, temporal_arena);
+                            starting_col_indices1, first_row1->row, mappingL, scratch_arena);
                             
                         BlockRow *first_row2 = intrusive_list_first_entry(&block2->head_for_rows, BlockRow, block_pos);
                         mapping_column_indexes_side_lineal(
                             normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                            starting_col_indices2, first_row2->row, mappingR, temporal_arena);
+                            starting_col_indices2, first_row2->row, mappingR, scratch_arena);
 
                         // Only one mapping in linear result block
                         computed_mapping.common_L = mappingL;
                         computed_mapping.common_R = mappingR;
                     
                         // We only use a schema for lineal blocks
-                        schemas = PUSH_SINGLE(&temporal_arena, *schemas);
+                        schemas = PUSH_SINGLE(&scratch_arena, *schemas);
                         *schemas = computed_mapping;
 
                     } else {
                         // NOTE: the calculation of mappingL/R is independent of one another. We can precompute them in two linear loops instead of a quadratic nested loop.
-                        unsigned *mapping_sides = allocate(&temporal_arena, (block1->r + block2->r) * mapping_side_size);
-                        schemas = allocate(&temporal_arena, (block1->r)*(block2->r) * sizeof(*schemas));
+                        unsigned *mapping_sides = allocate(&scratch_arena, (block1->r + block2->r) * mapping_side_size);
+                        schemas = allocate(&scratch_arena, (block1->r)*(block2->r) * sizeof(*schemas));
 
                         unsigned *mapping_side = mapping_sides;
 
@@ -3368,14 +3363,14 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                         intrusive_list_for_each_entry(block_row, &block1->head_for_rows, block_pos) {
                             mapping_column_indexes_side(
                                 normalized_set_schema1, free_var_positions1, normalized_common_set_schema,
-                                starting_col_indices1, block_row->row, mapping_side, temporal_arena
+                                starting_col_indices1, block_row->row, mapping_side, scratch_arena
                             );
                             mapping_side += computed_mapping.n_common;
                         }
                         intrusive_list_for_each_entry(block_row, &block2->head_for_rows, block_pos) {
                             mapping_column_indexes_side(
                                 normalized_set_schema2, free_var_positions2, normalized_common_set_schema,
-                                starting_col_indices2, block_row->row, mapping_side, temporal_arena
+                                starting_col_indices2, block_row->row, mapping_side, scratch_arena
                             );
                             mapping_side += computed_mapping.n_common;  
                         }
@@ -3419,7 +3414,6 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena) {
                 }
             }
         }
-        free_arena(temporal_arena);
     }
 
     // TODO(YA): check if this operation is valid... I think it could be valid, but it has to be done after the deepcopying 
@@ -3469,11 +3463,13 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
 
     
     // TODO(YA): we might need to rename the operand matrix2's schemas and dependencies here, and restore them after the deepcopying.
-    Arena operation_arena; init_arena_defcapacity(&operation_arena);
-    Matrix computed_m3 = matrix_and(&m1, &m2, &operation_arena);
+    Arena operation_arena; init_arena(&operation_arena, sizeof(Schema) * 100000);
+    Arena scratch_arena; init_arena_defcapacity(&scratch_arena);
+    Matrix computed_m3 = matrix_and(&m1, &m2, &operation_arena, scratch_arena);
     // NOTE: passing operation_arena by value or by pointer is indifferent because it is freed just after the operation. Therefore, we pass by value to 
     //  avoid extra indirections in the function
-    postprocess_to_mnf(&computed_m3, operation_arena);
+    postprocess_to_mnf(&computed_m3, &operation_arena, scratch_arena);
+    free_arena(scratch_arena);
     free_arena(operation_arena);
     // TODO(YA): normalize and deepcopy the resultant common schemas and dependencies
 

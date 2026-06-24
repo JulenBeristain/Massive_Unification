@@ -89,7 +89,7 @@ void init_chained_arena(Arena *arena, size_t size_in_bytes){
 }
 
 // NOTE: only the contents of the arena are freed. If the arena itself was malloced, it is not freed!
-void free_arena_chained(Arena arena){
+void free_chained_arena(Arena arena){
     MemoryBlock *current = arena.memory_blocks;
     while(current){
         MemoryBlock *next = current->next;
@@ -98,7 +98,7 @@ void free_arena_chained(Arena arena){
     }
 }
 
-void clear_arena_chained(Arena *arena){
+void clear_chained_arena(Arena *arena){
     arena->current_block = arena->memory_blocks;
     arena->next_free_position = 0;
 }

@@ -62,12 +62,10 @@ static inline void __list_del(IntrusiveListDouble *prev, IntrusiveListDouble *ne
 }
 static inline void intrusive_list_double_del(IntrusiveListDouble *entry_list) {
 	__list_del(entry_list->prev, entry_list->next);
-	// TODO(YA): decide if in our case it would be helpful to init_intrusive_list(entry_list), or put it to NULL, or a POISON address
-    //  I think not, because every time a row is removed from a fragment, it has to be moved to another fragment (see
-    //  intrusive_list_move[_tail]). We cannot say the same about removed fragments, in that case, we could do something else.
-    //  Plus, if we keep entry_list's pointers, we can use the typical for_each macros without the need to use the safe versions.
+	// NOTE: entry_list's pointers could be set to NULL if I end up having hard to debug BUGs.
+    //  I keep those pointers to be able to use the basic for_each macros even if the current
+    //  entry is removed from the list (not when it is moved in the iteration!)
 }
-
 
 static inline void intrusive_list_double_move(IntrusiveListDouble *entry_list, IntrusiveListDouble *head) {
 	__list_del(entry_list->prev, entry_list->next);
@@ -114,7 +112,7 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 
 
 // NOTE: if intrusive_list_del doesn't modify the removed entry_list itself, so its next member keeps pointing to the next intrusive list
-//  instance, the safe versions could be removed.
+//  instance, these basic versions could be used instead of the safe versions (if the next pointer is not modified later!).
 #define intrusive_list_for_each(intrusive_list_ptr, head_ptr) \
 	for (intrusive_list_ptr = (head_ptr)->next; !intrusive_list_is_head(intrusive_list_ptr, (head_ptr)); intrusive_list_ptr = intrusive_list_ptr->next)
 
@@ -143,12 +141,12 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 // NOTE: exclusive end, until_ptr entry is not included.
 #define intrusive_list_for_each_entry_until(container_ptr, head_ptr, list_member_name, until_ptr)				\
     for (container_ptr = intrusive_list_first_entry(head_ptr, typeof(*container_ptr), list_member_name);	\
-         &container_ptr->list_member_name != (until_ptr);			\
+         &container_ptr->list_member_name != &(until_ptr)->list_member_name;			\
          container_ptr = intrusive_list_next_entry(container_ptr, list_member_name))
 
 // NOTE: exclusive end, until_ptr entry is not included.
 #define intrusive_list_for_each_entry_since_until(container_started_ptr, head_ptr, list_member_name, until_ptr)				\
-    for (; &container_started_ptr->list_member_name != (until_ptr);			\
+    for (; &container_started_ptr->list_member_name != &(until_ptr)->list_member_name;			\
          container_started_ptr = intrusive_list_next_entry(container_started_ptr, list_member_name))
 
 #define intrusive_list_for_each_entry_safe(container_ptr, next_buffer_ptr, head_ptr, list_member_name)			\
@@ -162,7 +160,7 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 /// INTRUSIVE LIST (Singly Linked) /////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO(OPT): see what kind of intrusive list is more efficient in terms of time.
+// TODO: see what kind of intrusive list is more efficient in terms of time.
 
 // NOTE: I think that singly linked intrusive lists are interesting in our use case, because we save a pointer per each
 //  row (we have a lot of them in resulting matrices), we don't care about the order of the rows (we can arbitrarily add
@@ -202,10 +200,9 @@ static inline void __list_del_single(IntrusiveListSingle *prev, IntrusiveListSin
 }
 static inline void intrusive_list_single_del(IntrusiveListSingle *entry_list, IntrusiveListSingle *prev) {
 	__list_del_single(prev, entry_list->next);
-	// TODO(YA): decide if in our case it would be helpful to init_intrusive_list(list), or put it to NULL, or a POISON address
-    //  I think not, because every time a row is removed from a fragment, it has to be moved to another fragment (see
-    //  intrusive_list_single_move). We cannot say the same about removed fragments, in that case, we could do something else.
-    //  Plus, if we keep entry_list's pointers, we can use the typical for_each macros (+ prev_ptr logic) without the need to use the safe versions.
+    // NOTE: entry_list's pointers could be set to NULL if I end up having hard to debug BUGs.
+    //  I keep those pointers to be able to use the basic for_each macros even if the current
+    //  entry is removed from the list (not when it is moved in the iteration!)
 }
 
 
@@ -251,15 +248,7 @@ typedef IntrusiveListDouble IntrusiveList, *IntrusiveListPtr;
 /// STRUCTURES /////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO(YA2): to manage the memory of the schemas and dependencies I think that we will need a separate Arena for them,
-//  since I believe that we can have the same subschemas present in schemas of several matrices... When the size of that
-//  arena (we could make a new Arena type...) reaches a certain point, we can create a new arena, traverse all the
-//  matrices in the program and deepcopy only the schema nodes we are using right now. If the size is still greater than
-//  the threshold, then we definitely need more memory.
-// On the other hand, for the memory of the rest of the data in matrices (primarily BlockRow's rows), their lifetime
-//  is consustantial to the Matrix itself. Therefore, the allocations should be done in a more standard way, following the
-//  structure of matrices (diminishing the number of calls to malloc as much as possible).
-// A operation shouldn't delete an operand matrix, because we might need to use an operand matrix several times.
+// TODO: rename block_pos ==> pos_in_block or position_of_row/row_s_position/row_position (same with matrix)
 
 typedef struct BlockRow BlockRow, *BlockRowPtr;
 struct BlockRow {
@@ -267,17 +256,10 @@ struct BlockRow {
 //    unsigned e;                   // Number of exception blocks for the main term
     int *row;                       // 1D array containing the values of the main term
     IntrusiveList block_pos;        // The intrusive list that stablishes the position of this main term in its block.
-
-// TODO(YA): UNNECESSARY FOR OUR FINAL DECITION TO HANDLE THE MEMORY OF SCHEMAS.
-//    ArrayListSchema *schema;        // The denormalized schema of the row in the block. NULL if not inside postrprocessing_to_MNF.
-//    SetDependencies *dependencies;  // The set of dependencies associated to the schema. All dependent schemas are normalized ones. NULL if not inside postrprocessing_to_MNF.
-
-//    exception_block *exceptions;  // Array with e exception blocks for the main term (TODO(FUT): we may need to modify to not have the array, but intrusive lists of exception blocks)
+//    exception_block *exceptions;  // Array with e exception blocks for the main term (TODO: we may need to modify to not have the array, but intrusive lists of exception blocks)
 };
 
 #include "Schemas/schemas.h"
-
-// TODO(YA): add starting_col_indices data if it is helpfull to avoid recomputations
 
 typedef struct Block Block, *BlockPtr;
 struct Block {
@@ -290,10 +272,6 @@ struct Block {
     SetDependencies *dependencies;      // The set of dependencies associated to the schema.
 };
 
-// TODO(YA3): we could link matrices too, with an IntrusiveList program_pos, if we wanted to traverse all the Matrices in the program (f.ex., for when we
-//  need to reinitialize the Arena of Schemas and Dependencies). Or we could organize them in other ways. Unlike Blocks and BlockRows, we will want to have 
-//  have the matrices identified, well ordered --> Dictionary name to matrix ...
-
 typedef struct Matrix Matrix, *MatrixPtr;
 struct Matrix {
     unsigned b;                     // Number of blocks in the matrix
@@ -301,14 +279,6 @@ struct Matrix {
     ArrayListCharPtr free_vars;     // Free var information (strings and array of pointers stored in the arena)
     Arena arena;                    // Arena to manage all the memory necessary for the matrix's blocks, rows and final deepcopied schemas and dependencies
 };
-
-static inline void remove_block_row(BlockRow *row) {
-    intrusive_list_del(&row->block_pos);
-}
-static inline void remove_block_row_from_block(Block *block, BlockRow *row) {
-    intrusive_list_del(&row->block_pos);
-    block->r--;
-}
 
 // NOTE: we introduce at the beginning because we don't care about the order, and it is possible with both kinds of IntrusiveLists.
 static inline void add_row_to_block(Block *block, BlockRow *row) {
@@ -325,7 +295,7 @@ static inline void remove_block(Block *block) {
     intrusive_list_del(&block->matrix_pos);
 }
 static inline void remove_block_from_matrix(Matrix *matrix, Block *block) {
-    intrusive_list_del(&block->matrix_pos);
+    remove_block(block);
     matrix->b--;
 }
 
@@ -335,64 +305,13 @@ static inline void add_block_to_matrix(Matrix *matrix, Block *block) {
     matrix->b++;
 }
 
-// TODO(YA): decide how to handle the memory of the new structs when adapting the core main function to add post-processing and its testing.
-//  Depending on that, we could implement some more functions to return directly the Block as a value.
-//  Plus, some of these functions might be completely unnecessary. See in the adapted core in which order are
-//  matrices, blocks and rows created... DELETE THE UNUSED / NOT GONNA BE USED FUNCTIONS!!!
-static inline void init_empty_block_row(BlockRow *block_row, unsigned c, int *row, Block *block) {
-    block_row->c = c;
-    block_row->row = row;
-    add_row_to_block(block, block_row);
-}
-
-static inline void init_empty_block(
-    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, Matrix *matrix)
-{
-    block->r = 0;
-    block->c = c;
-    block->schema = schema;
-    block->dependencies = dependencies;
-    
-    init_intrusive_list(&block->head_for_rows);
-    add_block_to_matrix(matrix, block);
-}
-
-// NOTE: row shouldn't have been removed from its previous block (it should still work, but we will have an unnecessary del operation).
-static inline void init_block_with_row(
-    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
-{
-    block->r = 1;
-    block->c = c;
-    block->schema = schema;
-    block->dependencies = dependencies;
-    
-    move_row_to_block(block, row);
-    add_block_to_matrix(matrix, block);
-}
-
-// NOTE: row must have been removed from its previous block.
-static inline void init_block_with_deleted_row(
-    Block *block, unsigned c, ArrayListSchema *schema, SetDependencies *dependencies, BlockRow *row, Matrix *matrix)
-{
-    block->r = 1;
-    block->c = c;
-    block->schema = schema;
-    block->dependencies = dependencies;
-    
-    add_row_to_block(block, row);
-    add_block_to_matrix(matrix, block);
-}
-
 static inline void init_empty_matrix(Matrix *matrix) {
     matrix->b = 0;
     init_intrusive_list(&matrix->head_for_blocks);
     matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
     // TODO: when testing with real instances, we can take here a more appropriate value to reduce the number of Memory Blocks
-    init_arena(&matrix->blocks_arena, KILOBYTES(4));
-    init_arena(&matrix->schemas_arena, KILOBYTES(4));
+    init_arena(&matrix->arena, KILOBYTES(4));
 }
-
-// TODO(FUT): when this function is used, we should try to adjust the arena_size based on the information in the file or the operand Matrices
 // NOTE: arena_size used as reference. The real size is the smallest greater power of 2 between 4kB and 4MB.
 static inline void init_empty_matrix_with_arena_size(Matrix *matrix, size_t arena_size) {
     matrix->b = 0;
@@ -400,11 +319,33 @@ static inline void init_empty_matrix_with_arena_size(Matrix *matrix, size_t aren
     matrix->free_vars = EMPTY_ARRAYLIST(CharPtr);
 
     arena_size = CLAMP(smallest_greater_power_of_2(arena_size), KILOBYTES(4), MEGABYTES(4));
-    init_arena(&matrix->blocks_arena, arena_size);
-    init_arena(&matrix->schemas_arena, arena_size);
+    init_arena(&matrix->arena, arena_size);
 }
 
-void postprocess_to_mnf(Matrix *matrix, Arena operation_arena);
+
+// NOTE: after freeing, shouldn't use the same Matrix variable without proper reinitialization
+static inline void free_matrix_v (Matrix m) {
+    free_arena(m.arena);
+}
+static inline void free_matrix_p (Matrix *m) { 
+    free_arena(m->arena); 
+}
+#define free_matrix(m)              \
+    _Generic((m),				    \
+		Matrix *: free_matrix_p,    \
+		Matrix:   free_matrix_v 	\
+	)(m)
+
+// NOTE: after clearing, you can use the same Matrix variable. It keeps the same memory usage as before.
+static inline void clear_matrix(Matrix *m){
+    clear_arena(&m->arena);
+    m->b = 0;
+    m->free_vars = EMPTY_ARRAYLIST(CharPtr);
+    init_intrusive_list(&m->head_for_blocks);
+}
+
+
+void postprocess_to_mnf(Matrix *matrix, Arena *operation_arena, Arena scratch_arena);
 
 
 typedef enum { 
@@ -425,32 +366,6 @@ typedef struct {
 #define EQUAL_MATRICES_RESULT(Type, Index) (EqualMatricesResult){ .type = (Type), .solitary_block = (Index) }
 
 EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2);
-
-
-
-// NOTE: after freeing, shouldn't use the same Matrix variable without proper reinitialization
-static inline void free_matrix_v (Matrix m) {
-    free_arena(m.blocks_arena);
-    free_arena(m.schemas_arena);
-}
-static inline void free_matrix_p (Matrix *m) { 
-    free_arena(m->blocks_arena); 
-    free_arena(m->schemas_arena);
-}
-#define free_matrix(m)              \
-    _Generic((m),				    \
-		Matrix *: free_matrix_p,    \
-		Matrix:   free_matrix_v 	\
-	)(m)
-
-// NOTE: after clearing, you can use the same Matrix variable. It keeps the same memory usage as before.
-static inline void clear_matrix(Matrix *m){
-    clear_arena(&m->blocks_arena);
-    clear_arena(&m->schemas_arena);
-    m->b = 0;
-    m->free_vars = EMPTY_ARRAYLIST(CharPtr);
-    init_intrusive_list(&m->head_for_blocks);
-}
 
 
 typedef enum {
