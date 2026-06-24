@@ -174,14 +174,6 @@ void decrement_variables_in_schema(Schema* schema, Variable decrement);
 static inline void decrement_variables_in_set_schema(SetSchema *set_schema, Variable decrement){
     decrement_variables_in_schema(set_schema, decrement);
 }
-void normalize_schema_variables_arena(Schema *schema, Arena *arena);
-static inline void normalize_set_schema_variables_arena(SetSchema *set_schema, Arena *arena){
-    normalize_schema_variables_arena(set_schema, arena);
-}
-void normalize_schema_variables(Schema *schema);
-static inline void normalize_set_schema_variables(SetSchema *set_schema){
-    normalize_schema_variables(set_schema);
-}
 
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema *result, Arena *arena);
 void substitute_vars_arena(Schema original, SetVariables vars, Schema substitution, Schema *result, Arena *arena);
@@ -220,7 +212,7 @@ DECLARE_ARRAYLIST_REMOVE_INDEX(DependencyPair, dependency_pair)
 unsigned find_v_in_array_list_dependency_pair(ArrayListDependencyPair list, Variable v);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// JOINED EQUIVALENCE TESTS OF SCHEMAS AND DEPENDENCIES ///////////////////////////////////////////////////////////////////
+/// JOINED OPERATIONS OF SCHEMAS AND DEPENDENCIES //////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // NOTE: check schema and dependency equivalence encapsulating the calculation of variable mapping.
@@ -232,6 +224,7 @@ bool equivalent_set_schemas_and_dependencies_ignoring_empties(
     SetSchema set_schema1, SetSchema set_schema2,
     SetDependencies dependencies1, SetDependencies dependencies2);
 
+void normalize_schema_variables(SetSchema *set_schema, SetDependencies *dependencies, Arena scratch);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// COMMON SET SCHEMAS /////////////////////////////////////////////////////////////////////////////////////////////////////

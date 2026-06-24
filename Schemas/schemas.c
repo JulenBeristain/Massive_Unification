@@ -489,45 +489,6 @@ void decrement_variables_in_schema(Schema *schema, Variable decrement)
     }
 }
 
-void normalize_schema_variables_(Schema *s, Variable *mapping, unsigned *num_found){
-    if(s->type == VARIABLE_SCHEMA) {
-        Variable old = s->v;
-        Variable new = mapping[old];
-        if (new) {
-            s->v = new;
-        } else {
-            *num_found += 1;
-            mapping[old] = *num_found;
-            s->v = *num_found;
-        }
-    } else {
-        foreach_in_schema(*s, sub) {
-            normalize_schema_variables_(sub, mapping, num_found);
-        }
-    }
-}
-void normalize_schema_variables_arena(Schema *schema, Arena *arena){
-    ArenaState initial_arena_state = register_state_arena(arena);
-    
-    Variable max_v = max_v_in_schema(*schema);
-    Variable *mapping = PUSH_ARRAY_ZERO(arena, *mapping, 1 + max_v);
-    
-    unsigned num_found = 0;
-
-    normalize_schema_variables_(schema, mapping, &num_found);
-
-    pop_to_state_arena(arena, initial_arena_state);
-}
-void normalize_schema_variables(Schema *schema){
-    Variable max_v = max_v_in_schema(*schema);
-    Variable *mapping = CALLOC_ARRAY(*mapping, 1 + max_v);
-    
-    unsigned num_found = 0;
-    
-    normalize_schema_variables_(schema, mapping, &num_found);
-    
-    free(mapping);
-}
 
 // NOTE: we are making shallow copies of substitution, not deep copies.
 void substitute_arena(Schema original, Variable v, Schema substitution, Schema* result, Arena* arena)
@@ -719,6 +680,31 @@ void union_of_dependencies_baseline(SetDependencies* destination, SetDependencie
     }
 }
 
+void increment_variables_in_set_dependencies(SetDependencies dependencies, Variable increment)
+{
+    foreach_in_arraylist(DependencyPair, pair, dependencies)
+    {
+        pair->v += increment;
+        foreach_in_arraylist(SchemaPtr, schema, pair->schemas)
+        {
+            increment_variables_in_schema(*schema, increment);
+        }
+    }
+}
+
+void decrement_variables_in_set_dependencies(SetDependencies dependencies, Variable decrement)
+{
+    foreach_in_arraylist(DependencyPair, pair, dependencies)
+    {
+        pair->v -= decrement;
+        foreach_in_arraylist(SchemaPtr, schema, pair->schemas)
+        {
+            decrement_variables_in_schema(*schema, decrement);
+        }
+    }
+}
+
+
 // NOTE: these two functions are for debugging asserts
 bool has_self_dependency_baseline(ArrayListSchemaPtr schemas, Variable v)
 {
@@ -741,7 +727,7 @@ bool contains_self_dependency_baseline(SetDependencies dependencies)
     return false;
 }
 
-bool equal_helper_set_dependencies(SetDependencies dependencies1, SetDependencies dependencies2, bool equivalence, Variable* mapping, bool ignore_empties)
+static bool equal_helper_set_dependencies(SetDependencies dependencies1, SetDependencies dependencies2, bool equivalence, Variable* mapping, bool ignore_empties)
 {
     if (dependencies1.size != dependencies2.size) {
         return false;
@@ -805,7 +791,7 @@ bool equivalent_set_dependencies_ignoring_empties(SetDependencies dependencies1,
 }
 
 
-bool equivalent_set_schemas_and_dependencies_helper(
+static bool equivalent_set_schemas_and_dependencies_helper(
     SetSchema set_schema1, SetSchema set_schema2,
     SetDependencies dependencies1, SetDependencies dependencies2,
     bool ignore_empties)
@@ -840,28 +826,50 @@ bool equivalent_set_schemas_and_dependencies_ignoring_empties(
     return equivalent_set_schemas_and_dependencies_helper(set_schema1, set_schema2, dependencies1, dependencies2, true);
 }
 
-void increment_variables_in_set_dependencies(SetDependencies dependencies, Variable increment)
-{
-    foreach_in_arraylist(DependencyPair, pair, dependencies)
-    {
-        pair->v += increment;
-        foreach_in_arraylist(SchemaPtr, schema, pair->schemas)
-        {
-            increment_variables_in_schema(*schema, increment);
+
+static void normalize_set_schema_and_register_mapping(Schema *s, Variable *mapping, unsigned *num_found){
+    if(s->type == VARIABLE_SCHEMA) {
+        Variable old = s->v;
+        Variable new = mapping[old];
+        if (new) {
+            s->v = new;
+        } else {
+            *num_found += 1;
+            mapping[old] = *num_found;
+            s->v = *num_found;
+        }
+    } else {
+        foreach_in_schema(*s, sub) {
+            normalize_set_schema_and_register_mapping(sub, mapping, num_found);
         }
     }
 }
-
-void decrement_variables_in_set_dependencies(SetDependencies dependencies, Variable decrement)
-{
-    foreach_in_arraylist(DependencyPair, pair, dependencies)
-    {
-        pair->v -= decrement;
-        foreach_in_arraylist(SchemaPtr, schema, pair->schemas)
-        {
-            decrement_variables_in_schema(*schema, decrement);
+static void normalize_set_schema(Schema *s, Variable *mapping) {
+    if(s->type == VARIABLE_SCHEMA) {
+        Variable old = s->v;
+        Variable new = mapping[old];
+        s->v = new;
+        
+    } else {
+        foreach_in_schema(*s, sub) {
+            normalize_set_schema(sub, mapping);
         }
     }
+}
+static void normalize_set_dependencies(SetDependencies *dependencies, Variable *mapping) {
+    foreach_in_arraylist(DependencyPair, dp, *dependencies) {
+        foreach_in_arraylist(SchemaPtr, s, dp->schemas) {
+            normalize_set_schema(*s, mapping);
+        }
+    }
+}
+void normalize_schema_variables(SetSchema *set_schema, SetDependencies *dependencies, Arena scratch) {
+    Variable max_v = max_v_in_schema(*set_schema);
+    Variable *mapping = PUSH_ARRAY_ZERO(&scratch, *mapping, 1 + max_v);
+    unsigned num_found = 0;
+
+    normalize_set_schema_and_register_mapping(set_schema, mapping, &num_found);
+    normalize_set_dependencies(dependencies, mapping);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -947,18 +955,6 @@ int read_set_schema_with_dependencies(
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// COMMON SCHEMA ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// TODO(YA): change common_schema to avoid the precondition of independent variable schema values! with max_op1...
-//  No normalization of the schema variables till much later, when they are deepcopied in the matrix's memory.
-//  Taking max_op1 is not valid right now for two reasons:
-//  1. We are making shallow copies in common schema in case of general schemas with different sizes, so in the 
-//      longest one we can have Schema variables 2 whose values are not incremented with max_op1...
-//  2. In common set schema, we make a union of dependencies with the original ones, so dependencies 2 will have
-//      schema variables 2 that are not incremented with max_op1...
-// Have to think a better solution for this problem. Maybe we can define a common set schema version that wraps
-//  schema variable renaming/normalization??? Take into account that we would want to minimize the amount of
-//  renaming performed, and most importantly, we have to be careful with several renamings to potentially shared
-//  schema nodes!!!
 
 // Returns the number of dependencies inserted, or -1 if a self-dependency was arised.
 int common_schema_baseline(Schema *s1, Schema *s2, Schema* common, SetDependencies* dependencies, Arena* arena)
@@ -1438,11 +1434,13 @@ bool common_set_schema_strict_baseline(
         return false;
     }
 
-    // TODO(YA): should make another version for which this operation is optional or completely removed (both, one
+    // TODO: should make another version for which this operation is optional or completely removed (both, one
     //  internal and another external). Have to see where is interesting to avoid calling this function. I would say
     //  that we should only call just before we make the deepcopies of the resultant schemas and dependencies to the
-    //  resultant matrix's arena. Además, las normalizaciones de los schema variables in place se harán después de 
-    //  estos deepcopies.
+    //  resultant matrix's arena.
+    //  ==> It is fine to define those versions, but take into account that if a common schema is used in another
+    //      common operation with another schema (like denormalized row_set_schemas) having as small dependencies
+    //      as possible is better. Therefore, I am not implementing those versions for now.
     remove_variables_not_in_set_schema_from_dependencies(common_set_schema, common_dependencies, arena);
     return true;
 }

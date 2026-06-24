@@ -1220,7 +1220,7 @@ static void reorder_unified(main_term *mt, mgu_schema *ms) {
                 after2[i] = after2[current_idx];
             } else {
                 /* First swap: make current_idx reference i, and i become the canonical 0. */
-                // TODO(YA): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
+                // TODO(YA-TEST): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
                 //  I think the code still works even if temp swaps a symbol, so the assertion could be temp >= 0 ...
                 int temp = after2[current_idx];
                 assert(is_var_first_appearence(temp));
@@ -3135,7 +3135,7 @@ static void reorder_unified_block_row(BlockRow *br, mgu_schema *ms) {
                 after2[i] = after2[current_idx];
             } else {
                 /* First swap: make current_idx reference i, and i become the canonical 0. */
-                // TODO(YA): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
+                // TODO(YA-TEST): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
                 //  I think the code still works even if temp swaps a symbol, so the assertion could be temp >= 0 ...
                 int temp = after2[current_idx];
                 assert(is_var_first_appearence(temp));
@@ -3236,21 +3236,6 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena, Arena scratch_
         intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos){
             starting_column_indexes(*block->normalized_set_schema, starting_indices);
             starting_indices += m2->free_vars.size;
-        }
-    }
-
-    // TODO(YA): see if this plus the final decrement is correct!
-    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
-    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2.
-    Variable max_v1 = 0;
-    {
-        Block *block;
-        intrusive_list_for_each_entry(block, &m1->head_for_blocks, matrix_pos) {
-            max_v1 = MAX(max_v1, max_v_in_set_schema(*block->set_schema));
-        }
-        intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos) {
-            increment_variables_in_set_schema(block->set_schema, max_v1);
-            increment_variables_in_set_dependencies(*block->dependencies, max_v1);
         }
     }
 
@@ -3416,22 +3401,10 @@ Matrix matrix_and(Matrix *m1, Matrix *m2, Arena *operation_arena, Arena scratch_
         }
     }
 
-    // TODO(YA): check if this operation is valid... I think it could be valid, but it has to be done after the deepcopying 
-    //  after postprocessing!!!
-    // NOTE: we set Schema variables in set_schemas2 back to original names, 1..max, subtracting max_v1.
-    {
-        Block *block;
-        intrusive_list_for_each_entry(block, &m2->head_for_blocks, matrix_pos) {
-            decrement_variables_in_set_schema(block->set_schema, max_v1);
-            decrement_variables_in_set_dependencies(*block->dependencies, max_v1);
-        }
-    }
-
     return result;
 }
 
 int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) {
-    // TODO(YA): I would say we need these globals to be accessible in read_matrix!!! ==> Move read_matrix (and implement read_matrix3) in this file OR extern them in the other file
     var_dict  = create_dictionary(501);
     unif_dict = create_dictionary(501);
     symbols_to_ids = create_dictionary(501);
@@ -3452,7 +3425,7 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         exit(1);
     }
 
-    // TODO(YA): implement the reading function for M3, to take into account the MNF:yes/no lines. See if those booleans can be stored
+    // TODO(YA-TEST): implement the reading function for M3, to take into account the MNF:yes/no lines. See if those booleans can be stored
     //  in a separate array in the same order as we will get the resulting blocks and rows (reversed, I think).
     Matrix m3;
     ReadMatrixResultType read3 = read_matrix(M3_file, &m3);
@@ -3461,8 +3434,20 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         exit(1);
     }
 
-    
-    // TODO(YA): we might need to rename the operand matrix2's schemas and dependencies here, and restore them after the deepcopying.
+    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
+    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2.
+    Variable max_v1 = 0;
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m1.head_for_blocks, matrix_pos) {
+            max_v1 = MAX(max_v1, max_v_in_set_schema(*block->set_schema));
+        }
+        intrusive_list_for_each_entry(block, &m2.head_for_blocks, matrix_pos) {
+            increment_variables_in_set_schema(block->set_schema, max_v1);
+            increment_variables_in_set_dependencies(*block->dependencies, max_v1);
+        }
+    }
+
     Arena operation_arena; init_arena(&operation_arena, sizeof(Schema) * 100000);
     Arena scratch_arena; init_arena_defcapacity(&scratch_arena);
     Matrix computed_m3 = matrix_and(&m1, &m2, &operation_arena, scratch_arena);
@@ -3471,9 +3456,28 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
     postprocess_to_mnf(&computed_m3, &operation_arena, scratch_arena);
     free_arena(scratch_arena);
     free_arena(operation_arena);
-    // TODO(YA): normalize and deepcopy the resultant common schemas and dependencies
 
-    // TODO(YA): for the first tests, we don't have to call to postprocess_to_mnf. Just implement a debugging/checking function for MNF:yes/no lines
+    // Normalize and deepcopy the resultant common schemas and dependencies
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m3.head_for_blocks, matrix_pos) {
+            block->normalized_set_schema = set_schema_deepcopy(block->normalized_set_schema, &m3.arena);
+            block->set_schema = set_schema_deepcopy(block->set_schema, &m3.arena);
+            block->dependencies = set_dependencies_deepcopy(block->dependencies, &m3.arena);
+
+            normalize_schema_variables(block->set_schema, block->dependencies, scratch_arena);
+        }
+    }
+    // Set Schema variables in set_schemas2 back to original names, 1..max, subtracting max_v1.
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m2.head_for_blocks, matrix_pos) {
+            decrement_variables_in_set_schema(block->set_schema, max_v1);
+            decrement_variables_in_set_dependencies(*block->dependencies, max_v1);
+        }
+    }
+
+    // TODO(YA-TEST): for the first tests, we don't have to call to postprocess_to_mnf. Just implement a debugging/checking function for MNF:yes/no lines
     EqualMatricesResult are_equal = equal_matrices(&m3, &computed_m3);
     assert(are_equal.type == EQUAL);
 
@@ -3576,7 +3580,7 @@ int main_dir(char *folder_path, bool verb){
 }
 
 int main(){
-    // TODO(YA): adapt the tests that are performed incrementally. First, check simply that the distinction between original and extending variables 
+    // TODO(YA-TEST): adapt the tests that are performed incrementally. First, check simply that the distinction between original and extending variables 
     //  is managed correctly, that the resulting rows are calculated well, as before, and that the rows that have to be moved are identified correctly.
     //  I.e., use only the M3 matrices, not M4 ones.
 
