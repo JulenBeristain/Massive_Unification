@@ -1220,7 +1220,7 @@ static void reorder_unified(main_term *mt, mgu_schema *ms) {
                 after2[i] = after2[current_idx];
             } else {
                 /* First swap: make current_idx reference i, and i become the canonical 0. */
-                // TODO(YA-TEST): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
+                // TODO(YA-TEST 3): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
                 //  I think the code still works even if temp swaps a symbol, so the assertion could be temp >= 0 ...
                 int temp = after2[current_idx];
                 assert(is_var_first_appearence(temp));
@@ -3135,7 +3135,7 @@ static void reorder_unified_block_row(BlockRow *br, mgu_schema *ms) {
                 after2[i] = after2[current_idx];
             } else {
                 /* First swap: make current_idx reference i, and i become the canonical 0. */
-                // TODO(YA-TEST): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
+                // TODO(YA-TEST 3): check if the assertion is right, and we always have the first apparition (0 or 1) in temp...
                 //  I think the code still works even if temp swaps a symbol, so the assertion could be temp >= 0 ...
                 int temp = after2[current_idx];
                 assert(is_var_first_appearence(temp));
@@ -3425,8 +3425,7 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         exit(1);
     }
 
-    // TODO(YA-TEST): implement the reading function for M3, to take into account the MNF:yes/no lines. See if those booleans can be stored
-    //  in a separate array in the same order as we will get the resulting blocks and rows (reversed, I think).
+    // TODO: this code is good to test with M4 files!
     Matrix m3;
     ReadMatrixResultType read3 = read_matrix(M3_file, &m3);
     if (read3 != RM_SUCCESS) {
@@ -3460,10 +3459,10 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
     // Normalize and deepcopy the resultant common schemas and dependencies
     {
         Block *block;
-        intrusive_list_for_each_entry(block, &m3.head_for_blocks, matrix_pos) {
-            block->normalized_set_schema = set_schema_deepcopy(block->normalized_set_schema, &m3.arena);
-            block->set_schema = set_schema_deepcopy(block->set_schema, &m3.arena);
-            block->dependencies = set_dependencies_deepcopy(block->dependencies, &m3.arena);
+        intrusive_list_for_each_entry(block, &computed_m3.head_for_blocks, matrix_pos) {
+            block->normalized_set_schema = set_schema_deepcopy(block->normalized_set_schema, &computed_m3.arena);
+            block->set_schema = set_schema_deepcopy(block->set_schema, &computed_m3.arena);
+            block->dependencies = set_dependencies_deepcopy(block->dependencies, &computed_m3.arena);
 
             normalize_schema_variables(block->set_schema, block->dependencies, scratch_arena);
         }
@@ -3477,7 +3476,6 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
         }
     }
 
-    // TODO(YA-TEST): for the first tests, we don't have to call to postprocess_to_mnf. Just implement a debugging/checking function for MNF:yes/no lines
     EqualMatricesResult are_equal = equal_matrices(&m3, &computed_m3);
     assert(are_equal.type == EQUAL);
 
@@ -3486,6 +3484,65 @@ int main_postprocessed_(char *M1_file, char *M2_file, char *M3_file, bool verb) 
     free_matrix(m1);
     free_matrix(m2);
     free_matrix(m3);
+
+    free_dictionary(var_dict);
+    free_dictionary(unif_dict);
+    free_dictionary(symbols_to_ids);
+
+    return 0;
+}
+
+
+int test_postprocessed_with_M3(char *M1_file, char *M2_file, char *M3_file, bool verb) {
+    var_dict  = create_dictionary(501);
+    unif_dict = create_dictionary(501);
+    symbols_to_ids = create_dictionary(501);
+
+    verbose = verb;
+
+    // TODO: might be more interesting to open all the streams first, to exit as fast as possible if any file is missing/incorrectly named
+
+    Matrix m1;
+    ReadMatrixResultType read1 = read_matrix(M1_file, &m1);
+    if (read1 != RM_SUCCESS) {
+        assert(0);
+        exit(1);
+    }
+
+    Matrix m2;
+    ReadMatrixResultType read2 = read_matrix(M2_file, &m2);
+    if (read2 != RM_SUCCESS) {
+        assert(0);
+        exit(1);
+    }
+
+    // NOTE: important to adapt set_schemas2 adding the max_v found in set_schemas1 because the variables are logically independent!
+    //  We are calculating the max variable among ALL set_schemas1, which is going to be summed to all set_schemas2.
+    Variable max_v1 = 0;
+    {
+        Block *block;
+        intrusive_list_for_each_entry(block, &m1.head_for_blocks, matrix_pos) {
+            max_v1 = MAX(max_v1, max_v_in_set_schema(*block->set_schema));
+        }
+        intrusive_list_for_each_entry(block, &m2.head_for_blocks, matrix_pos) {
+            increment_variables_in_set_schema(block->set_schema, max_v1);
+            increment_variables_in_set_dependencies(*block->dependencies, max_v1);
+        }
+    }
+
+    Arena operation_arena; init_arena(&operation_arena, sizeof(Schema) * 100000);
+    Arena scratch_arena; init_arena_defcapacity(&scratch_arena);
+    Matrix computed_m3 = matrix_and(&m1, &m2, &operation_arena, scratch_arena);
+    
+    check_with_m3_file(&computed_m3, M3_file);
+
+    free_arena(scratch_arena);
+    free_arena(operation_arena);
+
+    /* --- Cleanup --- */
+
+    free_matrix(m1);
+    free_matrix(m2);
 
     free_dictionary(var_dict);
     free_dictionary(unif_dict);
@@ -3580,9 +3637,7 @@ int main_dir(char *folder_path, bool verb){
 }
 
 int main(){
-    // TODO(YA-TEST): adapt the tests that are performed incrementally. First, check simply that the distinction between original and extending variables 
-    //  is managed correctly, that the resulting rows are calculated well, as before, and that the rows that have to be moved are identified correctly.
-    //  I.e., use only the M3 matrices, not M4 ones.
+#if 0
 
     // NOTE: instances must respect the format. Among other characteristics, the resulting fragments should be
     // in the expected order: 1-1, 1-2, ..., 1-n, 2-1, ... (with holes in case a resulting fragment doesn't exist
@@ -3604,6 +3659,13 @@ int main(){
     for (unsigned i = 0; i < n; ++i) {
         main_dir(folder_paths[i], verb);
     }
+#else
+    char *M1_file = "data/NUM/NUM291+1.p/test0001M1.csv";
+    char *M2_file = "data/NUM/NUM291+1.p/test0001M2.csv";
+    char *M3_file = "data/NUM/NUM291+1.p/test0001M3.csv";
+    bool verb = true;
+    test_postprocessed_with_M3(M1_file, M2_file, M3_file, verb);
+#endif
 }
 
 #endif

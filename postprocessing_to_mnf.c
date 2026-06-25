@@ -447,9 +447,6 @@ EqualMatricesResult equal_matrices(Matrix *m1, Matrix *m2) {
 
 
 
-// TODO(YA-TEST): would be great if we had loading and writing functions for some format of matrix_files (the ones of the last tests?)
-//  See if we need different versions depending on operand and resultant matrices...
-
 /**
  * @brief Reads one operand matrix from @p stream into @p ob.
  *
@@ -463,7 +460,8 @@ static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena) 
     // Read unflatened schema and the set of dependencies
     read_set_schema_with_dependencies(stream, block->set_schema, block->dependencies, matrix_arena);
     block->normalized_set_schema = normalized_set_schema_arena(*block->set_schema, *block->dependencies, matrix_arena);
-    set_schema_size(block->normalized_set_schema);
+    unsigned normalized_size = set_schema_size(block->normalized_set_schema);
+    assert(normalized_size == block->c);
 
     char   *line = NULL;
     size_t  len  = 0;
@@ -471,28 +469,33 @@ static void read_block_content(FILE *stream, Block *block, Arena *matrix_arena) 
     /* Skip the flattened schema line. */
     getline(&line, &len, stream);
 
-    /* Read main_term rows until the END marker or the expected row count is reached. */
+    /* Read block_rows until the expected row count is reached. */
     ssize_t read;
     unsigned row = 0;
     while ((read = getline(&line, &len, stream)) != -1 && row < block->r) {
-        if (strstr(line, "% END") || strstr(line, "% End")) break;
+        if (strstr(line, "% END") || strstr(line, "% End")) { break; }
 
         /* First token is the exception-block count. */
         char *line_copy = strdup(line);
         unsigned e = (unsigned)strtoul(strtok(line_copy, ","), NULL, 10);
         free(line_copy);
 
-        BlockRow *block_row = allocate(matrix_arena, sizeof(*block_row));
+        BlockRow *block_row = PUSH_SINGLE(matrix_arena, *block_row);
         block_row->c = block->c;
         intrusive_list_add(&block->head_for_rows, &block_row->block_pos);
 
         read_line(line, block_row->row, true);
 
-        // NOTE: obviously, update these when exception blocks are included!!!
+        // TODO: update this when exception blocks are included!!!
         if (e) read_exception_blocks(stream, (main_term *)block_row, false);
 
         row++;
     }
+    assert(row == block->r);
+
+    /* Skip the END marker line. */
+    getline(&line, &len, stream);
+    assert(strstr(line, "% END") || strstr(line, "% End"));
 
     free(line);
 }
@@ -514,7 +517,6 @@ void read_block(FILE *stream, Block *block, Arena *matrix_arena) {
 
 ReadMatrixResultType read_matrix(char *filename, Matrix *matrix) {
     FILE *stream = fopen(filename, "r");
-
     if (!stream) {
         fprintf(stderr, "Error opening file: %s\n", filename);
         if (stream) fclose(stream);
@@ -554,4 +556,327 @@ ReadMatrixResultType read_matrix(char *filename, Matrix *matrix) {
     
     fclose(stream);
     return RM_SUCCESS;
+}
+
+static void read_block_content_3(FILE *stream, TestingBlock *block, Arena *matrix_arena) {
+    // Read unflatened schema and the set of dependencies
+    read_set_schema_with_dependencies(stream, block->set_schema, block->dependencies, matrix_arena);
+    block->normalized_set_schema = normalized_set_schema_arena(*block->set_schema, *block->dependencies, matrix_arena);
+    unsigned normalized_size = set_schema_size(block->normalized_set_schema);
+    assert(normalized_size == block->c);
+
+    char   *line = NULL;
+    size_t  len  = 0;
+
+    /* Skip the mapping sides line. */
+    getline(&line, &len, stream);
+
+    /* Skip the flattened schema line. */
+    getline(&line, &len, stream);
+
+    /* Read block_rows until the end of block is reached. */
+    ssize_t read;
+    bool block_end_reached = false;
+    while ((read = getline(&line, &len, stream)) != -1) {
+        if (strstr(line, "% END") || strstr(line, "% End")) { 
+            block_end_reached = true;
+            break; 
+        }
+        
+        unsigned row1, row2;
+        int num_chars;
+        getline(&line, &len, stream);
+        int matches = sscanf(line, "Rows %u-%u: %n", &row1, &row2, &num_chars);
+        if (matches != 2) {
+            assert(0);
+            exit(1);
+        }
+
+        line += num_chars;
+        if(strstr(line, "not unifiable") == NULL) {
+            TestingBlockRow *block_row = PUSH_SINGLE(matrix_arena, *block_row);
+            block_row->op1 = row1;
+            block_row->op2 = row2;
+            block_row->c = block->c;
+            intrusive_list_add(&block->head_for_rows, &block_row->block_pos);
+
+            // Normal block_row in line
+            {
+                // TODO: could refactor this (not done now since its testing code...) 
+                /* First token is the exception-block count. */
+                char *line_copy = strdup(line);
+                unsigned e = (unsigned)strtoul(strtok(line_copy, ","), NULL, 10);
+                free(line_copy);
+
+                read_line(line, block_row->row, true);
+
+                // TODO: update this when exception blocks are included!!!
+                if (e) read_exception_blocks(stream, (main_term *)block_row, false);
+            }
+
+            /* Skip the unifier line. */
+            getline(&line, &len, stream);
+            
+            /* Read if the line has to remain in the block. */
+            getline(&line, &len, stream);
+            block_row->is_in_corresponding_block = strstr(line, "yes") != NULL;
+        }
+    }
+    assert(block_end_reached);
+
+    free(line);
+}
+
+static bool read_block_3(FILE *stream, TestingBlock *block, Arena *matrix_arena){
+    char   *line = NULL;
+    size_t  len  = 0;
+
+    // Read number of resultant columns and operand IDs
+    {
+        bool end_of_file = getline(&line, &len, stream) == -1;
+        if (end_of_file){
+            return true;
+        }
+
+        int matched = sscanf(line, "%% BEGIN: Matrix subset %u-%u (%*u-%*u,%*u-%*u,%u)", 
+            &block->op1,
+            &block->op2,
+            &block->c
+        );
+        if (matched != 3) {
+            assert(0);
+            exit(1);
+        }
+    }
+    
+    block->r = 0;
+    init_intrusive_list(&block->head_for_rows);
+    
+    read_block_content_3(stream, block, matrix_arena);
+
+    free(line);
+
+    return false;
+}
+
+ReadMatrixResultType read_matrix_3(char *M3_file, Matrix *matrix) {
+    char   *line = NULL;
+    size_t  len  = 0;
+    
+    FILE *stream = fopen(M3_file, "r");
+    if (!stream) {
+        fprintf(stderr, "Error opening file: %s\n", M3_file);
+        if (stream) fclose(stream);
+        return RM_FILE_NOT_OPENED;
+    }
+
+    /* Init block count to 0. Only incremented with blocks that contain at least one valid block_row */
+    matrix->b = 0;
+
+    /* Skip the header line. */
+    getline(&line, &len, stream);
+
+    // Read the row identifying the columns' free variables
+    {
+        if (getline(&line, &len, stream) == -1) { 
+            free(line);
+            return RM_NOT_FREE_VARS; 
+        }
+
+        unsigned num_free_vars = scan_num_free_vars(line);
+
+        init_arena(&matrix->arena, KILOBYTES(4));
+    
+        matrix->free_vars = scan_free_vars(line, num_free_vars, &matrix->arena);
+    }
+
+    init_intrusive_list(&matrix->head_for_blocks);
+    for(;;) {
+        ArenaState matrix_arena_before_new_block = register_state_arena(&matrix->arena);
+        TestingBlock *block = PUSH_SINGLE(&matrix->arena, *block);
+        bool end_of_file = read_block_3(stream, block, &matrix->arena);
+        if (end_of_file) {
+            break;
+        }
+        if (block->r) {
+            intrusive_list_add(&matrix->head_for_blocks, &block->matrix_pos);
+        } else {
+            pop_to_state_arena(&matrix->arena, matrix_arena_before_new_block);
+        }
+    };
+
+    fclose(stream);
+    free(line);
+    return RM_SUCCESS;
+}
+
+
+
+static void compare_block_rows(BlockRow *row1, TestingBlockRow *row2) {
+    if (row1->c != row2->c) {
+        assert(false);
+    }
+    unsigned c = row1->c;
+
+    for(unsigned i = 0; i < c; ++i) {
+        if (row1->row[i] != row2->row[i]) {
+            printf("Computed row: "); println_array_ints(row1->row, c);
+            printf("    Read row: "); println_array_ints(row2->row, c);
+            assert(false);
+        }
+    }
+}
+
+static bool row_is_in_corresponding_block(
+    unsigned max_schema_v, Block *block, int* row,
+    Arena scratch_arena1, Arena scratch_arena2)
+{
+    SetSchema *row_set_schema = PUSH_SINGLE(&scratch_arena1, *row_set_schema);
+    SetDependencies *row_dependencies = PUSH_SINGLE(&scratch_arena1, *row_dependencies);
+    denormalized_set_schema(max_schema_v, block->normalized_set_schema, row, row_set_schema, row_dependencies, &scratch_arena1, scratch_arena2);
+
+    SetSchema *common_set_schema = PUSH_SINGLE(&scratch_arena1, *common_set_schema);
+    SetDependencies *common_dependencies = PUSH_SINGLE(&scratch_arena1, *common_dependencies);
+    return common_set_schema_strict_baseline(
+        *row_set_schema, *row_dependencies,
+        *block->set_schema, *block->dependencies,
+        common_set_schema, common_dependencies,
+        &scratch_arena1);
+}
+
+static void check_blocks(
+    TestingBlock *testing_block, Block *block,
+    unsigned max_schema_v, Arena scratch_arena1, Arena scratch_arena2
+)
+{
+    if (testing_block->r != block->r) {
+        assert(false);
+    }
+    if (testing_block->c != block->c) {
+        assert(false);
+    }
+
+    TestingBlockRow *testing_block_row = intrusive_list_first_entry(&testing_block->head_for_rows, TestingBlockRow, block_pos);
+    BlockRow *block_row;
+    intrusive_list_for_each_entry(block_row, &block->head_for_rows, block_pos) {
+        compare_block_rows(block_row, testing_block_row);
+
+        bool is_in_corresponding_block = row_is_in_corresponding_block(
+            max_schema_v, block, block_row->row, scratch_arena1, scratch_arena2
+        );
+        if (testing_block_row->is_in_corresponding_block != is_in_corresponding_block) {
+            assert(false);
+        }
+
+        intrusive_list_next_entry(testing_block_row, block_pos);
+    }
+}
+
+void check_with_m3(Matrix *computed_m3, Matrix *m3) {
+    if (computed_m3->b != m3->b) {
+        assert(false);
+    }
+
+    // Calculate the maximum schema variable in the matrix to use independent values when denormalizing set schemas per row
+    unsigned max_schema_v = 0;
+    Block *block;
+    intrusive_list_for_each_entry(block, &computed_m3->head_for_blocks, matrix_pos) {
+        max_schema_v = MAX(max_schema_v, max_v_in_set_schema(*block->set_schema));
+    }
+
+    Arena scratch_arena1; init_arena_defcapacity(&scratch_arena1);
+    Arena scratch_arena2; init_arena_defcapacity(&scratch_arena2);
+
+    TestingBlock *testing_block = intrusive_list_first_entry(&m3->head_for_blocks, TestingBlock, matrix_pos);
+    intrusive_list_for_each_entry(block, &computed_m3->head_for_blocks, matrix_pos) {
+        check_blocks(testing_block, block, max_schema_v, scratch_arena1, scratch_arena2);
+
+        intrusive_list_next_entry(testing_block, matrix_pos);
+    }
+
+    free_arena(scratch_arena1);
+    free_arena(scratch_arena2);
+}
+
+
+void check_with_m3_file(Matrix *computed_m3, char *M3_file) {
+    char   *line = NULL;
+    size_t  len  = 0;
+    
+    FILE *stream = fopen(M3_file, "r");
+    if (!stream) {
+        fprintf(stderr, "Error opening file: %s\n", M3_file);
+        if (stream) fclose(stream);
+        assert(false);
+        exit(1);
+    }
+
+    /* Skip the header line. */
+    getline(&line, &len, stream);
+
+    Arena scratch_arena1; init_arena_defcapacity(&scratch_arena1);
+    Arena scratch_arena2; init_arena_defcapacity(&scratch_arena2);
+
+    // Read the row identifying the columns' free variables
+    {
+        if (getline(&line, &len, stream) == -1) { 
+            free(line);
+            assert(false);
+            exit(1); 
+        }
+
+        unsigned num_free_vars = scan_num_free_vars(line);
+    
+        ArrayListCharPtr free_vars = scan_free_vars(line, num_free_vars, &scratch_arena1);
+        assert(equal_array_lists_char_ptr(computed_m3->free_vars, free_vars));
+        clear_arena(&scratch_arena1);
+    }
+
+    // TODO: should refactor this code block since it is used in several places
+    // Calculate the maximum schema variable in the matrix to use independent values when denormalizing set schemas per row
+    unsigned max_schema_v = 0;
+    Block *block;
+    intrusive_list_for_each_entry(block, &computed_m3->head_for_blocks, matrix_pos) {
+        max_schema_v = MAX(max_schema_v, max_v_in_set_schema(*block->set_schema));
+    }
+
+    bool end_of_file = false;
+    unsigned num_traversed_blocks = 0;
+    TestingBlock *testing_block;
+    intrusive_list_double_for_each_entry_reverse(block, &computed_m3->head_for_blocks, matrix_pos) {
+        // blocks are iterated in the same order we read
+        ++num_traversed_blocks;
+        
+        testing_block = PUSH_SINGLE(&scratch_arena1, *testing_block);
+        for(;;) {
+            end_of_file = read_block_3(stream, testing_block, &scratch_arena1);
+            if (end_of_file) {
+                break;
+            }
+            if (testing_block->r) {
+                break;
+            }
+            clear_arena(&scratch_arena1);
+        }
+        // TODO: cleaner to use goto...
+        if (end_of_file) {
+            break;
+        }
+       
+        // Compare blocks all together
+        check_blocks(testing_block, block, max_schema_v, scratch_arena1, scratch_arena2);
+        
+    }
+    if (end_of_file) {
+        assert(num_traversed_blocks == computed_m3->b);
+    } else {
+        end_of_file = read_block_3(stream, testing_block, &scratch_arena1);
+        assert(end_of_file);
+    }
+
+    free_arena(scratch_arena1);
+    free_arena(scratch_arena2);
+
+    fclose(stream);
+    free(line);
 }

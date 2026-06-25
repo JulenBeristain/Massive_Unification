@@ -110,6 +110,8 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 #define intrusive_list_next_entry(current_container_ptr, list_member_name) \
     intrusive_list_entry((current_container_ptr)->list_member_name.next, typeof(*(current_container_ptr)), list_member_name)
 
+#define intrusive_list_double_prev_entry(current_container_ptr, list_member_name) \
+	intrusive_list_entry((current_container_ptr)->list_member_name.prev, typeof(*(current_container_ptr)), list_member_name)
 
 // NOTE: if intrusive_list_del doesn't modify the removed entry_list itself, so its next member keeps pointing to the next intrusive list
 //  instance, these basic versions could be used instead of the safe versions (if the next pointer is not modified later!).
@@ -155,6 +157,11 @@ static inline int intrusive_list_double_is_first(const IntrusiveListDouble *list
 	     !list_entry_is_head(container_ptr, head_ptr, list_member_name); 			\
 	     container_ptr = next_buffer_ptr, next_buffer_ptr = intrusive_list_next_entry(next_buffer_ptr, list_member_name))
 
+// NOTE: the reverse for each loop are exclusive for IntrusiveListDoubles, because we need the prev pointers.
+#define intrusive_list_double_for_each_entry_reverse(container_ptr, head_ptr, list_member_name)			\
+	for (container_ptr = intrusive_list_double_last_entry(head_ptr, typeof(*container_ptr), list_member_name);		\
+	     !list_entry_is_head(container_ptr, head_ptr, list_member_name); 			\
+	     container_ptr = intrusive_list_double_prev_entry(container_ptr, list_member_name))
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// INTRUSIVE LIST (Singly Linked) /////////////////////////////////////////////////////////////////////////////////////
@@ -250,19 +257,17 @@ typedef IntrusiveListDouble IntrusiveList, *IntrusiveListPtr;
 
 // TODO: rename block_pos ==> pos_in_block or position_of_row/row_s_position/row_position (same with matrix)
 
-typedef struct BlockRow BlockRow, *BlockRowPtr;
-struct BlockRow {
+typedef struct {
     unsigned c;                     // Number of columns in the main term
 //    unsigned e;                   // Number of exception blocks for the main term
     int *row;                       // 1D array containing the values of the main term
     IntrusiveList block_pos;        // The intrusive list that stablishes the position of this main term in its block.
 //    exception_block *exceptions;  // Array with e exception blocks for the main term (TODO: we may need to modify to not have the array, but intrusive lists of exception blocks)
-};
+} BlockRow, *BlockRowPtr;
 
 #include "Schemas/schemas.h"
 
-typedef struct Block Block, *BlockPtr;
-struct Block {
+typedef struct {
     unsigned r;                         // Number of main terms
     unsigned c;                         // Number of columns for all main terms within the block
     IntrusiveList head_for_rows;        // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
@@ -270,15 +275,44 @@ struct Block {
     SetSchema *set_schema;              // The common set schema of the rows in the block. NOTE: we can deduce the block is lineal if it contains any schema variable.
     SetSchema *normalized_set_schema;   // set_schema normalized. All these schemas and dependencies are stored in the Matrix's memory.
     SetDependencies *dependencies;      // The set of dependencies associated to the schema.
-};
+} Block, *BlockPtr;
 
-typedef struct Matrix Matrix, *MatrixPtr;
-struct Matrix {
+// TODO: could store a pointer to free_vars so free_vars is allocated in the arena, alongside its contents for better locality.
+typedef struct {
     unsigned b;                     // Number of blocks in the matrix
     IntrusiveList head_for_blocks;  // Anchor point for the blocks of this matrix.
     ArrayListCharPtr free_vars;     // Free var information (strings and array of pointers stored in the arena)
     Arena arena;                    // Arena to manage all the memory necessary for the matrix's blocks, rows and final deepcopied schemas and dependencies
-};
+} Matrix, *MatrixPtr;
+
+
+
+typedef struct {
+    unsigned op1;
+    unsigned op2;
+    bool is_in_corresponding_block;
+
+    unsigned c;                     // Number of columns in the main term
+//    unsigned e;                   // Number of exception blocks for the main term
+    int *row;                       // 1D array containing the values of the main term
+    IntrusiveList block_pos;        // The intrusive list that stablishes the position of this main term in its block.
+//    exception_block *exceptions;  // Array with e exception blocks for the main term (TODO: we may need to modify to not have the array, but intrusive lists of exception blocks)
+} TestingBlockRow, *TestingBlockRowPtr;
+
+typedef struct {
+    unsigned op1;
+    unsigned op2;
+    
+    unsigned r;                         // Number of main terms
+    unsigned c;                         // Number of columns for all main terms within the block
+    IntrusiveList head_for_rows;        // Anchor point for the rows of this block. NOTE: we only add resulting rows that have been unified (valid[i,j] = 0)
+    IntrusiveList matrix_pos;           // The intrusive list that stablishes the position of this block in its matrix.
+    SetSchema *set_schema;              // The common set schema of the rows in the block. NOTE: we can deduce the block is lineal if it contains any schema variable.
+    SetSchema *normalized_set_schema;   // set_schema normalized. All these schemas and dependencies are stored in the Matrix's memory.
+    SetDependencies *dependencies;      // The set of dependencies associated to the schema.
+} TestingBlock, *TestingBlockPtr;
+
+
 
 // NOTE: we introduce at the beginning because we don't care about the order, and it is possible with both kinds of IntrusiveLists.
 static inline void add_row_to_block(Block *block, BlockRow *row) {
@@ -347,7 +381,6 @@ static inline void clear_matrix(Matrix *m){
 
 void postprocess_to_mnf(Matrix *matrix, Arena *operation_arena, Arena scratch_arena);
 
-
 typedef enum { 
     DIMENSION_MISMATCH, 
     ELEMENT_MISMATCH, 
@@ -376,5 +409,10 @@ typedef enum {
 } ReadMatrixResultType;
 
 ReadMatrixResultType read_matrix(char *filename, Matrix *matrix);
+
+ReadMatrixResultType read_matrix_3(char *M3_file, Matrix *m3);
+
+void check_with_m3(Matrix *computed_m3, Matrix *m3);
+void check_with_m3_file(Matrix *computed_m3, char *M3_file);
 
 #endif
